@@ -1,0 +1,36 @@
+[package]
+name = "un-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Command line for Un: headless counting and lessons on a camera, an image or a simulated table; speech self-test; strategy and camera listing."
+
+[lib]
+name = "un_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "un"
+path = "src/main.rs"
+
+[features]
+default = []
+coreml = ["un-app/coreml"]
+cuda = ["un-app/cuda"]
+directml = ["un-app/directml"]
+
+[dependencies]
+un-core.workspace = true
+un-engine.workspace = true
+un-vision.workspace = true
+un-speech.workspace = true
+un-media.workspace = true
+un-app.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+env_logger.workspace = true
+log.workspace = true

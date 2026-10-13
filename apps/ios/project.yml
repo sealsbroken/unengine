@@ -1,0 +1,25 @@
+# XcodeGen project: `xcodegen generate` after building the Rust library (see README.md).
+name: UnApp
+options:
+  bundleIdPrefix: app.onym.un
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  UnApp:
+    type: application
+    platform: iOS
+    sources:
+      - UnApp
+      - Generated
+    resources:
+      - Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.onym.un
+        INFOPLIST_FILE: Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: Generated/un_ffiFFI.h
+        LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/Frameworks
+        # UniFFI scaffolding and link-time strategy registration live in the static library;
+        # -all_load keeps every object file.
+        OTHER_LDFLAGS: ["-lun_ffi", "-all_load", "-lc++"]
+        TARGETED_DEVICE_FAMILY: "1"

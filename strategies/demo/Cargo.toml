@@ -1,0 +1,12 @@
+[package]
+name = "un-strategy-demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A minimal open lesson strategy for Un: the tutor asks how many objects are on the table and checks the answer. Shows how a strategy plugs in."
+
+[dependencies]
+un-core.workspace = true
+inventory.workspace = true

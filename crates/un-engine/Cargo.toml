@@ -1,0 +1,19 @@
+[package]
+name = "un-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The Un lesson runtime: runs a strategy against perception, speech and taps; owns timers, listening and the HUD snapshot."
+
+[dependencies]
+un-core.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+log.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+un-strategy-demo.workspace = true

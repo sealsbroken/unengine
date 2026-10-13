@@ -1,0 +1,15 @@
+[package]
+name = "un-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop camera capture for Un (AVFoundation, Media Foundation, V4L2 through nokhwa) and image/video file sources."
+
+[dependencies]
+un-vision.workspace = true
+nokhwa.workspace = true
+image.workspace = true
+thiserror.workspace = true
+log.workspace = true

@@ -1,0 +1,415 @@
+//! `un`: the Un engine from the terminal, without a window.
+//!
+//! ```text
+//!     un strategies                       # lessons linked into this build
+//!     un cameras                          # usable cameras
+//!     un check-speech --language ru       # the voice says "три", the recogniser hears it
+//!     un run --camera 0                   # count objects; one JSON line per state change
+//!     un run --source photo.jpg --frames 30 --snapshot out.png
+//!     un lesson --sim 3 --answers 3,2 --voice console   # a scripted lesson on a drawn table
+//!     un lesson --camera 0 --language ru --strategy counting
+//! ```
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use anyhow::{anyhow, bail, Context, Result};
+use clap::{Args, Parser, Subcommand};
+use un_app::{
+    build_session, registry, MicChoice, ModelPaths, Perception, PerceptionConfig, SessionOptions, SimulatedTable, VoiceChoice,
+};
+use un_core::strategy::{PhaseKind, SessionConfig};
+use un_core::{Box2, DetectionTracker, EstimatorConfig, Language, TableStateEstimator, TrackerConfig};
+use un_engine::StatusKind;
+use un_media::{CameraSource, FileSource, FrameSource, Rotation};
+use un_vision::Provider;
+
+#[derive(Parser)]
+#[command(name = "un", version, about = "Un: the laptop camera counts what is on the table and the tutor talks about it.")]
+struct Cli {
+    /// Directory with the models (default: UN_MODELS, models/ next to the executable, or ./models).
+    #[arg(long, global = true)]
+    models: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
+enum Command {
+    /// List the lesson strategies linked into this build.
+    Strategies,
+    /// List usable cameras.
+    Cameras,
+    /// Self-test: the voice says a number and the recogniser hears it; no microphone or speakers needed.
+    CheckSpeech {
+        #[arg(long, default_value = "en")]
+        language: String,
+    },
+    /// Count objects: one JSON line per state change.
+    Run {
+        #[command(flatten)]
+        source: SourceArgs,
+        #[command(flatten)]
+        vision: VisionArgs,
+    },
+    /// Run a lesson headlessly: the tutor's lines and the state go to stdout as JSON.
+    Lesson {
+        #[command(flatten)]
+        source: SourceArgs,
+        #[command(flatten)]
+        vision: VisionArgs,
+        #[command(flatten)]
+        lesson: LessonArgs,
+    },
+}
+
+#[derive(Args)]
+struct SourceArgs {
+    /// Camera index (see `un cameras`).
+    #[arg(long, conflicts_with_all = ["source", "sim"])]
+    camera: Option<u32>,
+    /// Replay an image instead of the camera.
+    #[arg(long)]
+    source: Option<PathBuf>,
+    /// No camera: a simulated table with N objects.
+    #[arg(long, value_name = "N")]
+    sim: Option<u32>,
+    /// Requested camera resolution.
+    #[arg(long, default_value = "1280x720")]
+    size: String,
+    /// Rotate frames clockwise (0, 90, 180, 270).
+    #[arg(long, default_value_t = 0)]
+    rotate: u32,
+    /// Flip left/right so the picture matches the child's side of the table.
+    #[arg(long)]
+    mirror: bool,
+    /// Stop after this many frames (0 = until the lesson ends or Ctrl-C).
+    #[arg(long, default_value_t = 0)]
+    frames: u32,
+    /// Write the last frame here on exit.
+    #[arg(long)]
+    snapshot: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct VisionArgs {
+    /// Detector: a name in the models directory (detector, coco, table) or a path to an .onnx.
+    #[arg(long, default_value = "detector")]
+    model: String,
+    #[arg(long, default_value_t = 0.25)]
+    conf: f32,
+    /// Execution provider: cpu, coreml, cuda, directml, auto.
+    #[arg(long, default_value = "cpu")]
+    provider: String,
+    #[arg(long)]
+    no_hands: bool,
+    /// Count only this label.
+    #[arg(long, value_name = "LABEL")]
+    count: Option<String>,
+    /// Table area as normalized x1,y1,x2,y2.
+    #[arg(long)]
+    roi: Option<String>,
+}
+
+#[derive(Args)]
+struct LessonArgs {
+    /// Strategy id (see `un strategies`).
+    #[arg(long, default_value = "demo")]
+    strategy: String,
+    #[arg(long, default_value = "en")]
+    language: String,
+    #[arg(long)]
+    child_name: Option<String>,
+    /// How many objects the family owns.
+    #[arg(long, default_value_t = 10)]
+    total: u32,
+    /// Session length in tasks.
+    #[arg(long, default_value_t = 10)]
+    tasks: u32,
+    #[arg(long, default_value_t = 0)]
+    level: u32,
+    #[arg(long)]
+    seed: Option<u64>,
+    /// Scripted spoken answers, e.g. 3,2,4 (no microphone).
+    #[arg(long)]
+    answers: Option<String>,
+    /// Speech output: auto, piper, console, off.
+    #[arg(long, default_value = "auto")]
+    voice: String,
+    /// Speech input: auto, mic, off.
+    #[arg(long, default_value = "auto")]
+    mic: String,
+    /// Microphone name substring.
+    #[arg(long)]
+    mic_device: Option<String>,
+    #[arg(long)]
+    no_chime: bool,
+    /// Seconds between the tutor's reminders.
+    #[arg(long, default_value_t = 10.0)]
+    nudge: f64,
+}
+
+/// Parses the command line and runs it. Products call this from their own `main` after linking strategies.
+pub fn main() -> Result<()> {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    let cli = Cli::parse();
+    let paths = cli.models.map(ModelPaths::new).unwrap_or_else(ModelPaths::discover);
+    match cli.command {
+        Command::Strategies => {
+            for info in registry().infos() {
+                println!(
+                    "{:<12} {}  [{}]  {}",
+                    info.id,
+                    info.title,
+                    info.languages.iter().map(|l| l.code()).collect::<Vec<_>>().join(", "),
+                    info.license
+                );
+            }
+            Ok(())
+        }
+        Command::Cameras => {
+            let cameras = un_media::list_cameras().map_err(|e| anyhow!("{e}"))?;
+            for c in &cameras {
+                println!("camera {}: {}", c.index, c.name);
+            }
+            if cameras.is_empty() {
+                println!("no cameras found");
+            }
+            Ok(())
+        }
+        Command::CheckSpeech { language } => {
+            let language = parse_language(&language)?;
+            let models = paths.speech();
+            match un_speech::check_ok(&models, language) {
+                Ok((said, heard, ok)) => {
+                    println!(
+                        "speech check ({}): said {said:?}, heard {heard:?}{}",
+                        language.locale(),
+                        if ok { "" } else { " (not a 3)" }
+                    );
+                    if ok {
+                        Ok(())
+                    } else {
+                        std::process::exit(1)
+                    }
+                }
+                Err(error) => {
+                    eprintln!("speech check ({}) failed: {error}", language.locale());
+                    std::process::exit(1)
+                }
+            }
+        }
+        Command::Run { source, vision } => run(&paths, source, vision, None),
+        Command::Lesson { source, vision, lesson } => run(&paths, source, vision, Some(lesson)),
+    }
+}
+
+fn parse_language(text: &str) -> Result<Language> {
+    Language::parse(text).ok_or_else(|| anyhow!("unknown language {text:?}; use en or ru"))
+}
+
+fn parse_roi(text: &str) -> Result<Box2> {
+    let values: Vec<f32> =
+        text.split(',').map(|v| v.trim().parse::<f32>()).collect::<Result<_, _>>().context("--roi needs four numbers")?;
+    if values.len() != 4 {
+        bail!("--roi needs four numbers: x1,y1,x2,y2");
+    }
+    Ok(Box2::from_corners(values[0], values[1], values[2], values[3]).clipped())
+}
+
+enum Source {
+    Camera(CameraSource),
+    File(FileSource),
+    Sim(SimulatedTable),
+}
+
+fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Option<LessonArgs>) -> Result<()> {
+    let provider = Provider::parse(&vision.provider).ok_or_else(|| anyhow!("unknown provider {:?}", vision.provider))?;
+    let roi = source.sim.is_none().then(|| vision.roi.as_deref().map(parse_roi)).flatten().transpose()?;
+    let estimator_config = EstimatorConfig { roi, ..Default::default() };
+
+    let mut frame_source = match (source.sim, &source.source, source.camera) {
+        (Some(n), _, _) => Source::Sim(SimulatedTable::new(n)),
+        (None, Some(path), _) => {
+            Source::File(FileSource::open(&[path.as_path()], source.frames.max(1) as usize).map_err(|e| anyhow!("{e}"))?)
+        }
+        (None, None, camera) => {
+            let (w, h) = source
+                .size
+                .to_lowercase()
+                .split_once('x')
+                .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+                .ok_or_else(|| anyhow!("--size must look like 1280x720"))?;
+            let mut cam = CameraSource::open(camera.unwrap_or(0), w, h).map_err(|e| anyhow!("{e}"))?;
+            cam.rotate = Rotation::from_degrees(source.rotate).ok_or_else(|| anyhow!("--rotate must be 0, 90, 180 or 270"))?;
+            Source::Camera(cam)
+        }
+    };
+
+    let mut perception = match &frame_source {
+        Source::Sim(_) => None,
+        _ => Some(
+            Perception::load(
+                paths,
+                &PerceptionConfig {
+                    detector: vision.model.clone(),
+                    confidence: vision.conf,
+                    provider,
+                    hands: !vision.no_hands,
+                    count_label: vision.count.clone(),
+                    estimator: estimator_config.clone(),
+                    mirrored: source.mirror,
+                },
+            )
+            .map_err(|e| anyhow!("{e}"))?,
+        ),
+    };
+    let labels: Vec<String> = match &perception {
+        Some(p) => p.labels.clone(),
+        None => vec!["cube".into()],
+    };
+    if let Some(label) = &vision.count {
+        if !labels.contains(label) {
+            bail!("--count {label:?} is not a model label; labels are {labels:?}");
+        }
+    }
+    let mut sim_estimator = TableStateEstimator::new(estimator_config);
+    let mut sim_tracker = DetectionTracker::new(TrackerConfig::default());
+
+    let session = match lesson {
+        Some(args) => {
+            let language = parse_language(&args.language)?;
+            let answers = args
+                .answers
+                .as_deref()
+                .map(|a| a.split(',').map(|v| v.trim().parse::<u32>()).collect::<Result<Vec<_>, _>>())
+                .transpose()
+                .context("--answers must be numbers separated by commas")?;
+            let noun = args_noun(&vision, &labels, source.sim.is_some());
+            let config = SessionConfig {
+                language,
+                child_name: args.child_name.clone(),
+                total_objects: args.total,
+                max_tasks: args.tasks,
+                start_level: args.level,
+                nudge_interval: args.nudge,
+                seed: args.seed.unwrap_or_else(|| {
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(1)
+                }),
+                noun,
+                ..Default::default()
+            };
+            let options = SessionOptions {
+                strategy: args.strategy.clone(),
+                config,
+                mic: MicChoice::parse(&args.mic).ok_or_else(|| anyhow!("--mic must be auto, mic or off"))?,
+                mic_device: args.mic_device.clone(),
+                voice: VoiceChoice::parse(&args.voice).ok_or_else(|| anyhow!("--voice must be auto, piper, console or off"))?,
+                answers,
+                chime: !args.no_chime,
+            };
+            let log: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|text| println!("{}", serde_json::json!({ "lesson": text })));
+            Some(build_session(paths, options, Some(log)).map_err(|e| anyhow!("{e}"))?)
+        }
+        None => None,
+    };
+
+    eprintln!(
+        "labels: {labels:?}  counting: {}  hands: {}  {}",
+        vision.count.as_deref().unwrap_or("all"),
+        perception.as_ref().map(|p| p.hands.is_some()).unwrap_or(false),
+        session.as_ref().map(|s| format!("strategy: {}  speech: {}", s.options.strategy, s.speech_available)).unwrap_or_default()
+    );
+    if let Some(session) = &session {
+        session.engine.start();
+    }
+
+    let started = Instant::now();
+    let mut processed = 0u32;
+    let mut last_summary: Option<serde_json::Value> = None;
+    let mut last_frame = None;
+    let sim_period = Duration::from_millis(66);
+    loop {
+        let (state, tracked) = match &mut frame_source {
+            Source::Sim(table) => {
+                std::thread::sleep(sim_period);
+                let out = Perception::process_detections(
+                    &mut sim_estimator,
+                    &mut sim_tracker,
+                    &table.detections(),
+                    &[],
+                    started.elapsed().as_secs_f64(),
+                );
+                (out.state, out.tracked)
+            }
+            Source::Camera(cam) => {
+                let Some((frame, t)) = cam.next_frame().map_err(|e| anyhow!("{e}"))? else { break };
+                let frame = if source.mirror { frame.flipped() } else { frame };
+                let out = perception.as_mut().unwrap().process(&frame, t).map_err(|e| anyhow!("{e}"))?;
+                last_frame = Some(frame);
+                (out.state, out.tracked)
+            }
+            Source::File(file) => {
+                let Some((frame, t)) = file.next_frame().map_err(|e| anyhow!("{e}"))? else { break };
+                let frame = if source.mirror { frame.flipped() } else { frame };
+                let out = perception.as_mut().unwrap().process(&frame, t).map_err(|e| anyhow!("{e}"))?;
+                last_frame = Some(frame);
+                (out.state, out.tracked)
+            }
+        };
+        processed += 1;
+        if let Some(session) = &session {
+            session.engine.observe(&state);
+        }
+        let mut per_label: BTreeMap<String, u32> = BTreeMap::new();
+        for d in &state.detections {
+            *per_label.entry(d.label_or("object")).or_default() += 1;
+        }
+        let summary = serde_json::json!({
+            "count": state.cube_count, "stable": state.is_stable, "raw": state.raw_count,
+            "labels": per_label, "numbered": tracked.iter().map(|t| t.number).collect::<Vec<_>>(),
+            "hands": state.hands.len(), "fingers": state.finger_count,
+        });
+        if Some(&summary) != last_summary.as_ref() {
+            let mut line = summary.clone();
+            line["t"] = serde_json::json!((state.timestamp * 100.0).round() / 100.0);
+            println!("{line}");
+            last_summary = Some(summary);
+        }
+        if let Some(session) = &session {
+            let snap = session.engine.snapshot();
+            if snap.status.kind == StatusKind::Finished || snap.strategy.phase == PhaseKind::Finished {
+                break;
+            }
+        }
+        if source.frames > 0 && processed >= source.frames {
+            break;
+        }
+    }
+    if let Some(session) = &session {
+        session.engine.close();
+    }
+    if let (Some(path), Some(frame)) = (&source.snapshot, &last_frame) {
+        un_media::save_image(path, frame).map_err(|e| anyhow!("{e}"))?;
+        eprintln!("snapshot: {}", path.display());
+    }
+    let fps = processed as f64 / started.elapsed().as_secs_f64().max(1e-6);
+    eprintln!("processed {processed} frames at {fps:.1} fps");
+    Ok(())
+}
+
+fn args_noun(vision: &VisionArgs, labels: &[String], sim: bool) -> String {
+    if let Some(label) = &vision.count {
+        return label.clone();
+    }
+    if sim {
+        return "cube".into();
+    }
+    if labels.len() == 1 {
+        return labels[0].clone();
+    }
+    "object".into()
+}

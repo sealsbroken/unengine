@@ -1,0 +1,14 @@
+[package]
+name = "un-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Platform-independent core of Un: table perception state machines, number parsing, languages and the lesson strategy interface."
+
+[dependencies]
+serde.workspace = true
+inventory.workspace = true
+
+[dev-dependencies]

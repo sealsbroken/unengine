@@ -1,0 +1,15 @@
+/target
+/models/*.onnx
+/models/*.json
+/models/speech/
+/dist
+/apps/ios/Generated/
+/apps/ios/*.xcodeproj
+/apps/ios/Frameworks/
+/apps/android/.gradle/
+/apps/android/**/build/
+/apps/android/local.properties
+/apps/android/app/src/main/jniLibs/
+/apps/android/app/src/main/java/uniffi/
+__pycache__/
+.DS_Store

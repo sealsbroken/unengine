@@ -1,0 +1,35 @@
+[package]
+name = "un-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Un for macOS, Windows and Linux: the camera watches the table, the tutor talks, the child answers by voice, fingers or taps. Library plus a binary that ships the demo lesson."
+
+[lib]
+name = "un_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "un-desktop"
+path = "src/main.rs"
+
+[features]
+default = []
+coreml = ["un-app/coreml"]
+cuda = ["un-app/cuda"]
+directml = ["un-app/directml"]
+
+[dependencies]
+un-core.workspace = true
+un-engine.workspace = true
+un-vision.workspace = true
+un-media.workspace = true
+un-app.workspace = true
+un-strategy-demo.workspace = true
+eframe.workspace = true
+egui.workspace = true
+env_logger.workspace = true
+log.workspace = true
+parking_lot.workspace = true

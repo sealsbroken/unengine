@@ -1,0 +1,25 @@
+[package]
+name = "un-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "UniFFI bindings of the Un engine for Swift and Kotlin: sessions, snapshots, shared vision, and callback interfaces for platform speech."
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+name = "un_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+un-core.workspace = true
+un-engine.workspace = true
+un-vision.workspace = true
+un-app.workspace = true
+uniffi.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true

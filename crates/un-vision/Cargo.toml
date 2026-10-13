@@ -1,0 +1,24 @@
+[package]
+name = "un-vision"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Un's vision engine on ONNX Runtime: object detection (YOLO/DETR heads) and MediaPipe-style hand landmarks, identical on every platform."
+
+[features]
+default = []
+coreml = ["ort/coreml"]
+cuda = ["ort/cuda"]
+directml = ["ort/directml"]
+xnnpack = ["ort/xnnpack"]
+nnapi = ["ort/nnapi"]
+
+[dependencies]
+un-core.workspace = true
+ort.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true

@@ -1,0 +1,56 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/un-core",
+    "crates/un-vision",
+    "crates/un-speech",
+    "crates/un-media",
+    "crates/un-engine",
+    "crates/un-app",
+    "crates/un-ffi",
+    "crates/un-cli",
+    "apps/desktop",
+    "strategies/demo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+license = "LGPL-3.0-or-later"
+repository = "https://github.com/rinat-enikeev/un"
+authors = ["Rinat Enikeev"]
+
+[workspace.dependencies]
+un-core = { path = "crates/un-core" }
+un-vision = { path = "crates/un-vision" }
+un-speech = { path = "crates/un-speech" }
+un-media = { path = "crates/un-media" }
+un-engine = { path = "crates/un-engine" }
+un-app = { path = "crates/un-app" }
+un-strategy-demo = { path = "strategies/demo" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+inventory = "0.3"
+log = "0.4"
+env_logger = "0.11"
+clap = { version = "4", features = ["derive"] }
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+ort = { version = "2.0.0-rc.14", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "copy-dylibs", "api-17"] }
+ndarray = "0.17"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+fast_image_resize = "6"
+sherpa-rs = { version = "0.6", default-features = false, features = ["download-binaries", "tts"] }
+cpal = "0.18"
+nokhwa = { version = "0.10", features = ["input-native"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.36"
+uniffi = { version = "0.32", features = ["cli"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
