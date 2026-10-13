@@ -46,6 +46,7 @@ struct Setup {
     /// A microphone name, or `None` for the system default.
     mic_device: Option<String>,
     mics: Vec<String>,
+    chime: bool,
     sim_count: u32,
 }
 
@@ -94,6 +95,7 @@ impl UnApp {
                 mic: true,
                 mic_device: None,
                 mics: list_microphones(),
+                chime: false,
                 sim_count: 3,
             },
             live: None,
@@ -158,6 +160,7 @@ impl UnApp {
             config,
             mic: if s.mic { un_app::MicChoice::Auto } else { un_app::MicChoice::Off },
             mic_device: s.mic_device.clone(),
+            chime: s.chime,
             voice: s.voice,
             ..Default::default()
         };
@@ -250,6 +253,7 @@ impl UnApp {
                     s.mics = list_microphones();
                 }
             });
+            ui.checkbox(&mut s.chime, "Beep when the tutor starts listening");
         }
         ui.separator();
         if ui.add(egui::Button::new("Start").min_size(Vec2::new(120.0, 36.0))).clicked() {
@@ -424,13 +428,12 @@ impl UnApp {
                     egui::FontId::proportional(14.0),
                     Color32::WHITE,
                 );
-                if snap.status.kind == StatusKind::Listening {
-                    let bar = Rect::from_min_size(
-                        rect.left_bottom() + Vec2::new(16.0, -24.0),
-                        Vec2::new(200.0 * snap.mic_level.clamp(0.0, 1.0), 10.0),
-                    );
-                    painter.rect_filled(bar, 4.0, overlay::GREEN);
-                }
+                let listening = snap.status.kind == StatusKind::Listening;
+                let bar = Rect::from_min_size(
+                    rect.left_bottom() + Vec2::new(16.0, -24.0),
+                    Vec2::new(200.0 * snap.mic_level.clamp(0.0, 1.0), 10.0),
+                );
+                painter.rect_filled(bar, 4.0, if listening { overlay::GREEN } else { Color32::from_gray(160) });
             }
             if let Some(ago) = snap.celebrated_seconds_ago {
                 if ago < 1.5 {

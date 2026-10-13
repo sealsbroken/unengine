@@ -1,13 +1,14 @@
 //! Desktop audio: the microphone and the speakers through cpal, wired to the engine's traits.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel_shim::Channel;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock};
 use un_core::{Language, NumberParser};
 use un_engine::{CancelToken, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 
@@ -62,18 +63,60 @@ pub enum MicDevice {
     Named(String),
 }
 
-/// Microphone -> Silero VAD -> Zipformer, one utterance at a time; an [`un_engine::SpeechInput`].
+/// One decoded utterance from the always-on stream.
+struct Utterance {
+    text: String,
+    started: Instant,
+}
+
+/// The always-on capture thread: it owns the cpal stream (which cannot leave its thread).
+struct Capture {
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+    language: Language,
+    device_name: String,
+    failed: Arc<AtomicBool>,
+}
+
+impl Capture {
+    fn finish(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+type Heard = (Mutex<VecDeque<Utterance>>, Condvar);
+
+/// Microphone -> Silero VAD -> Zipformer, always on; an [`un_engine::SpeechInput`].
+///
+/// The stream opens at [`SpeechInput::prepare`] and stays open, decoding every utterance as it
+/// ends. A listen therefore starts instantly: it only waits for the next utterance that began
+/// after the listen did, so the tutor's own voice from the speakers is never taken as the answer.
 pub struct MicrophoneInput {
     models: SpeechModels,
     device: MicDevice,
     recognizers: RwLock<HashMap<Language, Arc<Recognizer>>>,
     device_name: Mutex<String>,
-    level: Mutex<f32>,
+    level: Arc<Mutex<f32>>,
     active: Mutex<Option<Arc<CancelToken>>>,
+    capture: Mutex<Option<Capture>>,
+    heard: Arc<Heard>,
     /// Quiet microphones (Bluetooth headsets, laptops far away) are boosted up to this much before the VAD.
     pub max_gain: f32,
     pub target_peak: f32,
 }
+
+/// An utterance that began this long before the listen still counts: the child often starts
+/// answering on the tutor's last word.
+const LEAD_IN: Duration = Duration::from_millis(300);
 
 impl MicrophoneInput {
     pub fn new(models: SpeechModels, device: MicDevice) -> Self {
@@ -82,8 +125,10 @@ impl MicrophoneInput {
             device,
             recognizers: RwLock::new(HashMap::new()),
             device_name: Mutex::new(String::new()),
-            level: Mutex::new(0.0),
+            level: Arc::new(Mutex::new(0.0)),
             active: Mutex::new(None),
+            capture: Mutex::new(None),
+            heard: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
             max_gain: 12.0,
             target_peak: 0.3,
         }
@@ -119,7 +164,45 @@ impl MicrophoneInput {
         device.ok_or_else(|| SpeechError::AudioEngineFailed("no microphone".into()))
     }
 
-    /// Records until `accept` returns a value for a transcript, the timeout, or cancellation.
+    /// Makes sure the stream runs on the wanted device for `language`, restarting it when the
+    /// device changed (a headset plugged in, a new system default) or it failed.
+    fn ensure_capture(&self, language: Language) -> Result<(), SpeechError> {
+        let recognizer = self.recognizer(language)?;
+        let device = self.input_device()?;
+        let name = device.description().map(|d| d.name().to_string()).unwrap_or_default();
+        let mut capture = self.capture.lock();
+        if let Some(c) = capture.as_mut() {
+            if c.language == language && c.device_name == name && !c.failed.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            c.finish();
+        }
+        *capture = None;
+        *self.device_name.lock() = name.clone();
+        let config = device.default_input_config().map_err(|e| SpeechError::AudioEngineFailed(format!("no microphone: {e}")))?;
+        let mut vad = recognizer.vad()?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let failed = Arc::new(AtomicBool::new(false));
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), SpeechError>>();
+        let worker = Worker {
+            stop: Arc::clone(&stop),
+            failed: Arc::clone(&failed),
+            heard: Arc::clone(&self.heard),
+            level: Arc::clone(&self.level),
+            max_gain: self.max_gain,
+            target_peak: self.target_peak,
+        };
+        let thread = thread::Builder::new()
+            .name("un-microphone".into())
+            .spawn(move || worker.run(device, config, recognizer, &mut vad, ready_tx))
+            .map_err(|e| SpeechError::AudioEngineFailed(format!("microphone thread: {e}")))?;
+        ready_rx.recv().unwrap_or_else(|_| Err(SpeechError::AudioEngineFailed("microphone thread died".into())))?;
+        *capture = Some(Capture { stop, thread: Some(thread), language, device_name: name, failed });
+        Ok(())
+    }
+
+    /// Waits for the first utterance that began after the listen (give or take [`LEAD_IN`]) and that
+    /// `accept` turns into a value; the timeout and cancellation end it.
     fn listen<T>(
         &self,
         language: Language,
@@ -127,16 +210,72 @@ impl MicrophoneInput {
         cancel: &CancelToken,
         accept: &dyn Fn(&str) -> Option<T>,
     ) -> Result<(T, String), SpeechError> {
-        let recognizer = self.recognizer(language)?;
-        let device = self.input_device()?;
-        *self.device_name.lock() = device.description().map(|d| d.name().to_string()).unwrap_or_default();
-        let config = device.default_input_config().map_err(|e| SpeechError::AudioEngineFailed(e.to_string()))?;
+        self.ensure_capture(language)?;
+        let since = Instant::now() - LEAD_IN;
+        let deadline = Instant::now() + timeout;
+        let mut last_transcript: Option<String> = None;
+        let (queue, cv) = &*self.heard;
+        let mut queue = queue.lock();
+        loop {
+            while let Some(u) = queue.pop_front() {
+                if u.started < since {
+                    continue;
+                }
+                last_transcript = Some(u.text.clone());
+                if let Some(value) = accept(&u.text) {
+                    return Ok((value, u.text));
+                }
+            }
+            if cancel.is_cancelled() {
+                return Err(SpeechError::Cancelled);
+            }
+            if self.capture.lock().as_ref().is_none_or(|c| c.failed.load(Ordering::SeqCst)) {
+                return Err(SpeechError::AudioEngineFailed("microphone stream stopped".into()));
+            }
+            if Instant::now() >= deadline {
+                return Err(SpeechError::Timeout { last_transcript });
+            }
+            cv.wait_for(&mut queue, Duration::from_millis(50));
+        }
+    }
+
+    /// Stops the stream; `prepare` or the next listen reopens it.
+    pub fn close(&self) {
+        *self.capture.lock() = None;
+        *self.level.lock() = 0.0;
+    }
+}
+
+impl Drop for MicrophoneInput {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+/// What the capture thread needs; it reads the stream, runs the VAD and decodes utterances.
+struct Worker {
+    stop: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
+    heard: Arc<Heard>,
+    level: Arc<Mutex<f32>>,
+    max_gain: f32,
+    target_peak: f32,
+}
+
+impl Worker {
+    fn run(
+        self,
+        device: cpal::Device,
+        config: cpal::SupportedStreamConfig,
+        recognizer: Arc<Recognizer>,
+        vad: &mut sherpa_rs::silero_vad::SileroVad,
+        ready: std::sync::mpsc::Sender<Result<(), SpeechError>>,
+    ) {
         let channels = config.channels() as usize;
         let rate = config.sample_rate();
         let queue: Arc<Channel<Vec<f32>>> = Arc::new(Channel::default());
         let producer = Arc::clone(&queue);
-        let failed = Arc::new(AtomicBool::new(false));
-        let failed_cb = Arc::clone(&failed);
+        let failed_cb = Arc::clone(&self.failed);
         let stream = device
             .build_input_stream(
                 config.config(),
@@ -150,24 +289,23 @@ impl MicrophoneInput {
                 },
                 None,
             )
-            .map_err(|e| SpeechError::AudioEngineFailed(format!("microphone: {e}")))?;
-        stream.play().map_err(|e| SpeechError::AudioEngineFailed(format!("microphone: {e}")))?;
+            .map_err(|e| SpeechError::AudioEngineFailed(format!("microphone: {e}")))
+            .and_then(|s| s.play().map(|_| s).map_err(|e| SpeechError::AudioEngineFailed(format!("microphone: {e}"))));
+        let stream = match stream {
+            Ok(stream) => {
+                let _ = ready.send(Ok(()));
+                stream
+            }
+            Err(error) => {
+                let _ = ready.send(Err(error));
+                return;
+            }
+        };
 
-        let mut vad = recognizer.vad()?;
-        let deadline = Instant::now() + timeout;
         let mut pending: Vec<f32> = Vec::new();
-        let mut last_transcript: Option<String> = None;
         let (mut gain, mut peak) = (1.0f32, 0.0f32);
-        let result = loop {
-            if cancel.is_cancelled() {
-                break Err(SpeechError::Cancelled);
-            }
-            if failed.load(Ordering::SeqCst) {
-                break Err(SpeechError::AudioEngineFailed("microphone stream stopped".into()));
-            }
-            if Instant::now() >= deadline {
-                break Err(SpeechError::Timeout { last_transcript: last_transcript.clone() });
-            }
+        let mut fed: usize = 0; // samples given to the VAD; its segment starts count the same way
+        while !self.stop.load(Ordering::SeqCst) && !self.failed.load(Ordering::SeqCst) {
             let Some(block) = queue.pop(Duration::from_millis(50)) else { continue };
             let block = if rate == SAMPLE_RATE { block } else { resample(&block, rate, SAMPLE_RATE) };
             // Automatic gain: track the recent peak and lift quiet audio towards the target.
@@ -182,38 +320,37 @@ impl MicrophoneInput {
             while pending.len() >= CHUNK {
                 let chunk: Vec<f32> = pending.drain(..CHUNK).collect();
                 vad.accept_waveform(chunk);
+                fed += CHUNK;
             }
-            let mut heard = None;
+            let now = Instant::now();
             while !vad.is_empty() {
                 let segment = vad.front();
                 vad.pop();
-                let text = recognizer.decode(&segment.samples)?;
-                if text.is_empty() {
-                    continue;
-                }
-                last_transcript = Some(text.clone());
-                if let Some(value) = accept(&text) {
-                    heard = Some((value, text));
-                    break;
+                let behind = fed.saturating_sub(segment.start.max(0) as usize) as f64 / SAMPLE_RATE as f64;
+                let started = now.checked_sub(Duration::from_secs_f64(behind)).unwrap_or(now);
+                match recognizer.decode(&segment.samples) {
+                    Ok(text) if !text.is_empty() => {
+                        let (queue, cv) = &*self.heard;
+                        let mut queue = queue.lock();
+                        if queue.len() > 32 {
+                            queue.pop_front();
+                        }
+                        queue.push_back(Utterance { text, started });
+                        cv.notify_all();
+                    }
+                    Ok(_) => {}
+                    Err(error) => log::warn!("recogniser: {error}"),
                 }
             }
-            if let Some(h) = heard {
-                break Ok(h);
-            }
-        };
+        }
         drop(stream);
         *self.level.lock() = 0.0;
-        result
     }
 }
 
 impl SpeechInput for MicrophoneInput {
     fn prepare(&self, language: Language) -> Result<(), SpeechError> {
-        self.recognizer(language)?;
-        let device = self.input_device()?;
-        *self.device_name.lock() = device.description().map(|d| d.name().to_string()).unwrap_or_default();
-        device.default_input_config().map_err(|e| SpeechError::AudioEngineFailed(format!("no microphone: {e}")))?;
-        Ok(())
+        self.ensure_capture(language)
     }
 
     fn listen_for_number(&self, language: Language, timeout: Duration, cancel: &CancelToken) -> Result<NumberHeard, SpeechError> {

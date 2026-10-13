@@ -71,6 +71,7 @@ pub struct EngineSnapshot {
 pub type Logger = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Options that are not part of the strategy's [`SessionConfig`].
+#[derive(Default)]
 pub struct EngineOptions {
     /// Play the "listen now" chime before each listen.
     pub chime: bool,
@@ -78,12 +79,6 @@ pub struct EngineOptions {
     pub always_show_number_pad: bool,
     /// Receives a one-line transcript of everything the engine does.
     pub log: Option<Logger>,
-}
-
-impl Default for EngineOptions {
-    fn default() -> Self {
-        Self { chime: true, always_show_number_pad: false, log: None }
-    }
 }
 
 struct State {

@@ -19,7 +19,7 @@ stays open and relinkable (see [Licence](#licence)).
 | `crates/un-core` | Pure, platform-independent: geometry, detections, hand joints and finger counting, the debounced table state and object numbering, languages and numerals, the forgiving number parser, and the **strategy interface**. Fully unit-tested. |
 | `crates/un-engine` | The lesson runtime: runs a strategy against perception, speech and taps; owns timers, listening, the finger watcher and the HUD snapshot. Speech is behind traits. |
 | `crates/un-vision` | ONNX Runtime (`ort`): object detector (Ultralytics raw heads, end-to-end rows, RT-DETR rows) and MediaPipe-style hand landmarks (palm detection + 21 landmarks, converted to ONNX). |
-| `crates/un-speech` | sherpa-onnx: Zipformer recognisers with Silero VAD on the microphone, Piper voices for the tutor, a "listen now" chime, and a round-trip self-test. |
+| `crates/un-speech` | sherpa-onnx: an always-on microphone (Silero VAD, Zipformer recognisers) so an answer is heard the moment the tutor stops talking, Piper voices for the tutor, an optional "listen now" chime, and a round-trip self-test. |
 | `crates/un-media` | Desktop camera capture (AVFoundation, Media Foundation, V4L2) and image files. |
 | `crates/un-app` | Assembles a session: finds models, builds speech in/out, runs perception, simulated table. |
 | `crates/un-cli` | `un`: headless counting and lessons, the speech self-test, camera and strategy listing. |

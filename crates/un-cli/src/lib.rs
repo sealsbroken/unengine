@@ -156,8 +156,9 @@ struct LessonArgs {
     /// Microphone name substring.
     #[arg(long)]
     mic_device: Option<String>,
+    /// Play a short chime when the tutor starts listening.
     #[arg(long)]
-    no_chime: bool,
+    chime: bool,
     /// Seconds between the tutor's reminders.
     #[arg(long, default_value_t = 10.0)]
     nudge: f64,
@@ -357,7 +358,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
                 mic_device: args.mic_device.clone(),
                 voice: VoiceChoice::parse(&args.voice).ok_or_else(|| anyhow!("--voice must be auto, piper, console or off"))?,
                 answers,
-                chime: !args.no_chime,
+                chime: args.chime,
             };
             let log: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|text| println!("{}", serde_json::json!({ "lesson": text })));
             Some(build_session(paths, options, Some(log)).map_err(|e| anyhow!("{e}"))?)

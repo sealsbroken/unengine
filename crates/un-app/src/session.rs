@@ -82,7 +82,7 @@ impl Default for SessionOptions {
             mic_device: None,
             voice: VoiceChoice::Auto,
             answers: None,
-            chime: true,
+            chime: false,
         }
     }
 }

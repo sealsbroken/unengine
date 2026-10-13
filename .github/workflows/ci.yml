@@ -26,4 +26,4 @@ jobs:
           python3 tools/fetch_models.py --speech --language en
           cargo run -p un-cli -- check-speech --language en
       - name: Scripted lesson on the simulated table
-        run: cargo run -p un-cli -- lesson --sim 3 --answers 3,2 --voice console --tasks 2 --seed 1 --no-chime --nudge 30
+        run: cargo run -p un-cli -- lesson --sim 3 --answers 3,2 --voice console --tasks 2 --seed 1 --nudge 30
