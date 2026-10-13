@@ -428,6 +428,15 @@ impl UnApp {
                     egui::FontId::proportional(14.0),
                     Color32::WHITE,
                 );
+                if !snap.heard_text.is_empty() {
+                    painter.text(
+                        rect.left_bottom() + Vec2::new(16.0, -52.0),
+                        egui::Align2::LEFT_BOTTOM,
+                        format!("heard: {}", snap.heard_text.to_lowercase()),
+                        egui::FontId::proportional(14.0),
+                        Color32::from_gray(220),
+                    );
+                }
                 let listening = snap.status.kind == StatusKind::Listening;
                 let bar = Rect::from_min_size(
                     rect.left_bottom() + Vec2::new(16.0, -24.0),

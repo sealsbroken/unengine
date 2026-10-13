@@ -65,6 +65,8 @@ pub struct EngineSnapshot {
     pub speech_available: bool,
     pub mic_name: String,
     pub mic_level: f32,
+    /// The latest transcript from the microphone, empty after a few seconds.
+    pub heard_text: String,
 }
 
 /// Receives one line per thing the engine does.
@@ -303,6 +305,7 @@ impl Engine {
             speech_available: state.speech_available,
             mic_name: self.inner.speech_in.as_ref().map(|s| s.device_name()).unwrap_or_default(),
             mic_level: self.inner.speech_in.as_ref().map(|s| s.level()).unwrap_or(0.0),
+            heard_text: self.inner.speech_in.as_ref().map(|s| s.last_transcript()).unwrap_or_default(),
         }
     }
 
@@ -381,6 +384,9 @@ impl Inner {
                     state.status = Status::new(StatusKind::Speaking);
                 }
                 self.log(&format!("tutor: {text}"));
+                if let Some(speech_in) = &self.speech_in {
+                    speech_in.tutor_speaking(&text, self.config.language);
+                }
                 let out = Arc::clone(&self.speech_out.read());
                 if let Err(error) = out.speak(&text, self.config.language) {
                     self.log(&format!("voice failed: {error}"));

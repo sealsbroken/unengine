@@ -21,8 +21,9 @@ use un_app::{
     build_session, registry, MicChoice, ModelPaths, Perception, PerceptionConfig, SessionOptions, SimulatedTable, VoiceChoice,
 };
 use un_core::strategy::{PhaseKind, SessionConfig};
+use un_core::NumberParser;
 use un_core::{Box2, DetectionTracker, EstimatorConfig, Language, TableStateEstimator, TrackedDetection, TrackerConfig};
-use un_engine::StatusKind;
+use un_engine::{CancelToken, SpeechError, SpeechInput, StatusKind};
 use un_media::{CameraSource, FileSource, FrameSource, Rotation};
 use un_vision::{Detector, DetectorConfig, Provider};
 
@@ -45,6 +46,16 @@ enum Command {
     Cameras,
     /// List microphones (`--mic-device` takes a part of a name).
     Mics,
+    /// Microphone test: prints every utterance the recogniser hears, with the number it would take.
+    Listen {
+        #[arg(long, default_value = "en")]
+        language: String,
+        #[arg(long, default_value_t = 20.0)]
+        seconds: f64,
+        /// Part of a microphone name (see `un mics`); default: the system default.
+        #[arg(long)]
+        mic_device: Option<String>,
+    },
     /// Self-test: the voice says a number and the recogniser hears it; no microphone or speakers needed.
     CheckSpeech {
         #[arg(long, default_value = "en")]
@@ -223,6 +234,27 @@ pub fn main() -> Result<()> {
                 println!("no microphones found");
             }
             Ok(())
+        }
+        Command::Listen { language, seconds, mic_device } => {
+            let language = parse_language(&language)?;
+            let device = match mic_device {
+                Some(name) => un_speech::audio::MicDevice::Named(name),
+                None => un_speech::audio::MicDevice::Default,
+            };
+            let mic = un_speech::MicrophoneInput::new(paths.speech(), device);
+            mic.prepare(language).map_err(|e| anyhow!("{e}"))?;
+            eprintln!("listening on {:?} for {seconds} s; speak now", mic.device_name());
+            let started = Instant::now();
+            let token = CancelToken::default();
+            let result = mic.listen_for_text(language, Duration::from_secs_f64(seconds), &token, &|text| {
+                let number = NumberParser::parse(text, language).map(|n| n.to_string()).unwrap_or_else(|| "-".into());
+                println!("{:6.2}s  {number:>2}  {text}", started.elapsed().as_secs_f64());
+                false
+            });
+            match result {
+                Err(SpeechError::Timeout { .. }) | Ok(_) => Ok(()),
+                Err(error) => Err(anyhow!("{error}")),
+            }
         }
         Command::CheckSpeech { language } => {
             let language = parse_language(&language)?;

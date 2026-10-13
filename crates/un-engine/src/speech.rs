@@ -91,6 +91,10 @@ pub trait SpeechInput: Send + Sync {
     /// Cancels any in-flight listen and releases the microphone.
     fn stop(&self);
 
+    /// The tutor is about to say `text`: an always-on microphone uses it to tell the tutor's own
+    /// voice from the child's.
+    fn tutor_speaking(&self, _text: &str, _language: Language) {}
+
     /// Name of the microphone in use, for the HUD.
     fn device_name(&self) -> String {
         String::new()
@@ -99,6 +103,12 @@ pub trait SpeechInput: Send + Sync {
     /// Smoothed input level 0...1 while listening, for the HUD.
     fn level(&self) -> f32 {
         0.0
+    }
+
+    /// What the recogniser heard most recently, for a few seconds, so the HUD can show why an
+    /// answer was not taken.
+    fn last_transcript(&self) -> String {
+        String::new()
     }
 }
 
