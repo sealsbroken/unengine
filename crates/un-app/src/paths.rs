@@ -44,6 +44,31 @@ impl ModelPaths {
         }
     }
 
+    /// Names of the detectors in the models directory (`.onnx` files with a `.json` sidecar), sorted.
+    pub fn detectors(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(&self.root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "onnx") && p.with_extension("json").exists())
+            .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The detector to start with: a fine-tuned `table` model when there is one, else the zero-shot `detector`.
+    pub fn default_detector(&self) -> String {
+        let names = self.detectors();
+        for name in ["table", "detector"] {
+            if names.iter().any(|n| n == name) {
+                return name.to_string();
+            }
+        }
+        names.first().cloned().unwrap_or_else(|| "detector".to_string())
+    }
+
     pub fn palm_detector(&self) -> PathBuf {
         self.root.join("palm_detection.onnx")
     }

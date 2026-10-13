@@ -100,6 +100,7 @@ impl Noun {
             "car" => Noun::new("car", "cars", "машинка", "машинки", "машинок", "ни одной машинки", "машинки"),
             "pencil" => Noun::new("pencil", "pencils", "карандаш", "карандаша", "карандашей", "ни одного карандаша", "карандаши"),
             "fruit" => Noun::new("fruit", "fruits", "фрукт", "фрукта", "фруктов", "ни одного фрукта", "фрукты"),
+            "stone" => Noun::new("stone", "stones", "камень", "камня", "камней", "ни одного камня", "камни"),
             "object" => Noun::new("object", "objects", "предмет", "предмета", "предметов", "ни одного предмета", "предметы"),
             other => Noun::new(other, &format!("{other}s"), other, other, other, &format!("ни одного {other}"), other),
         }
@@ -268,6 +269,11 @@ mod tests {
         assert_eq!(Numerals::objects(5, RU, &cap), "пять крышек");
         assert_eq!(Numerals::objects(0, RU, &cap), "ни одной крышки");
         assert_eq!(Numerals::objects(3, EN, &Noun::for_label("widget")), "three widgets");
+        let stone = Noun::for_label("stone");
+        assert_eq!(Numerals::objects(1, RU, &stone), "один камень");
+        assert_eq!(Numerals::objects(3, RU, &stone), "три камня");
+        assert_eq!(Numerals::objects(7, RU, &stone), "семь камней");
+        assert_eq!(Numerals::objects(7, EN, &stone), "seven stones");
         assert_eq!(capitalize("четыре кубика"), "Четыре кубика");
     }
 }

@@ -69,15 +69,17 @@ impl UnApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, registry: StrategyRegistry) -> Self {
         let cameras = un_media::list_cameras().map(|c| c.into_iter().map(|c| c.name).collect()).unwrap_or_default();
         let first = registry.infos().first().map(|i| i.id.clone()).unwrap_or_else(|| "demo".into());
+        let paths = ModelPaths::discover();
+        let detector = paths.default_detector();
         Self {
-            paths: ModelPaths::discover(),
+            paths,
             registry,
             setup: Setup {
                 source: SourceKind::Camera,
                 camera: 0,
                 cameras,
                 mirror: false,
-                detector: "detector".into(),
+                detector,
                 strategy: first,
                 language: Language::English,
                 child_name: String::new(),
@@ -186,10 +188,19 @@ impl UnApp {
                     }
                 });
             ui.checkbox(&mut s.mirror, "Mirror (picture matches the child's side)");
-            ui.horizontal(|ui| {
-                ui.label("Detector");
-                ui.text_edit_singleline(&mut s.detector);
-            });
+            let detectors = self.paths.detectors();
+            if detectors.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.label("Detector");
+                    ui.text_edit_singleline(&mut s.detector);
+                });
+            } else {
+                egui::ComboBox::from_label("Detector").selected_text(s.detector.clone()).show_ui(ui, |ui| {
+                    for name in &detectors {
+                        ui.selectable_value(&mut s.detector, name.clone(), name);
+                    }
+                });
+            }
         } else {
             ui.add(egui::Slider::new(&mut s.sim_count, 0..=10).text("objects on the table"));
         }

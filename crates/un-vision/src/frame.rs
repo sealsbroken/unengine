@@ -65,6 +65,25 @@ impl RgbFrame {
     }
 
     /// Mirrors left/right.
+    /// Draws a rectangle outline; corners are normalized frame coordinates.
+    pub fn draw_rect(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, rgb: [u8; 3], thickness: u32) {
+        let (w, h) = (self.width as i64, self.height as i64);
+        if w == 0 || h == 0 {
+            return;
+        }
+        let px = |v: f32, max: i64| ((v * max as f32).round() as i64).clamp(0, max - 1);
+        let (ax, ay, bx, by) = (px(x1, w), px(y1, h), px(x2, w), px(y2, h));
+        let t = thickness.max(1) as i64;
+        for y in ay.min(by)..=ay.max(by) {
+            for x in ax.min(bx)..=ax.max(bx) {
+                if x - ax < t || bx - x < t || y - ay < t || by - y < t {
+                    let i = ((y * w + x) * 3) as usize;
+                    self.data[i..i + 3].copy_from_slice(&rgb);
+                }
+            }
+        }
+    }
+
     pub fn flipped(&self) -> RgbFrame {
         let mut out = Vec::with_capacity(self.data.len());
         for y in 0..self.height {
@@ -144,5 +163,15 @@ mod tests {
         assert!((out[0] - 114.0 / 255.0).abs() < 1e-6); // top padding, red channel
         assert!((out[4] - 1.0).abs() < 1e-6); // first real row, red
         assert!((out[plane + 4]).abs() < 1e-6); // green of the real row is 0
+    }
+
+    #[test]
+    fn draw_rect_marks_the_outline_only() {
+        let mut frame = RgbFrame::filled(10, 10, [0, 0, 0]);
+        frame.draw_rect(0.2, 0.2, 0.6, 0.6, [255, 0, 0], 1);
+        assert_eq!(frame.pixel(2, 2), [255, 0, 0]);
+        assert_eq!(frame.pixel(6, 4), [255, 0, 0]);
+        assert_eq!(frame.pixel(4, 4), [0, 0, 0]);
+        assert_eq!(frame.pixel(0, 0), [0, 0, 0]);
     }
 }

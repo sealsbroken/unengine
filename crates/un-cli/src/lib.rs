@@ -21,10 +21,10 @@ use un_app::{
     build_session, registry, MicChoice, ModelPaths, Perception, PerceptionConfig, SessionOptions, SimulatedTable, VoiceChoice,
 };
 use un_core::strategy::{PhaseKind, SessionConfig};
-use un_core::{Box2, DetectionTracker, EstimatorConfig, Language, TableStateEstimator, TrackerConfig};
+use un_core::{Box2, DetectionTracker, EstimatorConfig, Language, TableStateEstimator, TrackedDetection, TrackerConfig};
 use un_engine::StatusKind;
 use un_media::{CameraSource, FileSource, FrameSource, Rotation};
-use un_vision::Provider;
+use un_vision::{Detector, DetectorConfig, Provider};
 
 #[derive(Parser)]
 #[command(name = "un", version, about = "Un: the laptop camera counts what is on the table and the tutor talks about it.")]
@@ -63,6 +63,15 @@ enum Command {
         vision: VisionArgs,
         #[command(flatten)]
         lesson: LessonArgs,
+    },
+    /// Record auto-labelled camera frames (YOLO txt labels) to fine-tune a detector with tools/teach.py.
+    Collect {
+        #[command(flatten)]
+        source: SourceArgs,
+        #[command(flatten)]
+        vision: VisionArgs,
+        #[command(flatten)]
+        collect: CollectArgs,
     },
 }
 
@@ -152,6 +161,28 @@ struct LessonArgs {
     nudge: f64,
 }
 
+#[derive(Args)]
+struct CollectArgs {
+    /// Dataset directory: images/, labels/ and classes.json (default datasets/table).
+    #[arg(long, default_value = "datasets/table")]
+    out: PathBuf,
+    /// Comma-separated model labels to keep (default: every non-decoy label).
+    #[arg(long)]
+    labels: Option<String>,
+    /// How long to record.
+    #[arg(long, default_value_t = 90.0)]
+    seconds: f64,
+    /// Seconds between saved frames.
+    #[arg(long, default_value_t = 0.5)]
+    every: f64,
+    /// Also save frames in which the model found nothing.
+    #[arg(long)]
+    keep_empty: bool,
+    /// Start a fresh dataset instead of adding to it.
+    #[arg(long)]
+    force: bool,
+}
+
 /// Parses the command line and runs it. Products call this from their own `main` after linking strategies.
 pub fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
@@ -204,6 +235,7 @@ pub fn main() -> Result<()> {
         }
         Command::Run { source, vision } => run(&paths, source, vision, None),
         Command::Lesson { source, vision, lesson } => run(&paths, source, vision, Some(lesson)),
+        Command::Collect { source, vision, collect: args } => collect(&paths, source, vision, args),
     }
 }
 
@@ -226,12 +258,8 @@ enum Source {
     Sim(SimulatedTable),
 }
 
-fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Option<LessonArgs>) -> Result<()> {
-    let provider = Provider::parse(&vision.provider).ok_or_else(|| anyhow!("unknown provider {:?}", vision.provider))?;
-    let roi = source.sim.is_none().then(|| vision.roi.as_deref().map(parse_roi)).flatten().transpose()?;
-    let estimator_config = EstimatorConfig { roi, ..Default::default() };
-
-    let mut frame_source = match (source.sim, &source.source, source.camera) {
+fn open_source(source: &SourceArgs) -> Result<Source> {
+    Ok(match (source.sim, &source.source, source.camera) {
         (Some(n), _, _) => Source::Sim(SimulatedTable::new(n)),
         (None, Some(path), _) => {
             Source::File(FileSource::open(&[path.as_path()], source.frames.max(1) as usize).map_err(|e| anyhow!("{e}"))?)
@@ -247,7 +275,15 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
             cam.rotate = Rotation::from_degrees(source.rotate).ok_or_else(|| anyhow!("--rotate must be 0, 90, 180 or 270"))?;
             Source::Camera(cam)
         }
-    };
+    })
+}
+
+fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Option<LessonArgs>) -> Result<()> {
+    let provider = Provider::parse(&vision.provider).ok_or_else(|| anyhow!("unknown provider {:?}", vision.provider))?;
+    let roi = source.sim.is_none().then(|| vision.roi.as_deref().map(parse_roi)).flatten().transpose()?;
+    let estimator_config = EstimatorConfig { roi, ..Default::default() };
+
+    let mut frame_source = open_source(&source)?;
 
     let mut perception = match &frame_source {
         Source::Sim(_) => None,
@@ -328,6 +364,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
     }
 
     let started = Instant::now();
+    let mut last_tracked: Vec<TrackedDetection> = Vec::new();
     let mut processed = 0u32;
     let mut last_summary: Option<serde_json::Value> = None;
     let mut last_frame = None;
@@ -361,6 +398,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
             }
         };
         processed += 1;
+        last_tracked = tracked.clone();
         if let Some(session) = &session {
             session.engine.observe(&state);
         }
@@ -392,12 +430,116 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
     if let Some(session) = &session {
         session.engine.close();
     }
-    if let (Some(path), Some(frame)) = (&source.snapshot, &last_frame) {
-        un_media::save_image(path, frame).map_err(|e| anyhow!("{e}"))?;
+    if let (Some(path), Some(mut frame)) = (&source.snapshot, last_frame) {
+        for t in &last_tracked {
+            let b = &t.detection.bbox;
+            frame.draw_rect(b.x1, b.y1, b.x2, b.y2, [80, 220, 120], 3);
+        }
+        if let Some(roi) = perception.as_ref().and_then(|p| p.estimator.roi()) {
+            frame.draw_rect(roi.x1, roi.y1, roi.x2, roi.y2, [255, 190, 60], 2);
+        }
+        un_media::save_image(path, &frame).map_err(|e| anyhow!("{e}"))?;
         eprintln!("snapshot: {}", path.display());
     }
     let fps = processed as f64 / started.elapsed().as_secs_f64().max(1e-6);
     eprintln!("processed {processed} frames at {fps:.1} fps");
+    Ok(())
+}
+
+fn collect(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, args: CollectArgs) -> Result<()> {
+    let provider = Provider::parse(&vision.provider).ok_or_else(|| anyhow!("unknown provider {:?}", vision.provider))?;
+    let detector_path = paths.detector(&vision.model);
+    if !detector_path.exists() {
+        bail!("detector {} not found", detector_path.display());
+    }
+    let mut detector = Detector::load(&detector_path, DetectorConfig { confidence: vision.conf, provider, ..Default::default() })
+        .map_err(|e| anyhow!("{e}"))?;
+    let mut classes = detector.object_labels();
+    if let Some(wanted) = &args.labels {
+        let wanted: Vec<String> = wanted.split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+        let unknown: Vec<&String> = wanted.iter().filter(|l| !classes.contains(l)).collect();
+        if !unknown.is_empty() {
+            bail!("{unknown:?} are not labels of this model; it knows {classes:?}");
+        }
+        classes = wanted;
+    }
+    let roi = vision.roi.as_deref().map(parse_roi).transpose()?;
+
+    let (images, labels, classes_file) = (args.out.join("images"), args.out.join("labels"), args.out.join("classes.json"));
+    if args.force && args.out.exists() {
+        std::fs::remove_dir_all(&args.out).with_context(|| format!("removing {}", args.out.display()))?;
+    }
+    if let Ok(text) = std::fs::read_to_string(&classes_file) {
+        let existing: Vec<String> = serde_json::from_str(&text).context("classes.json")?;
+        if existing != classes {
+            bail!(
+                "{} was collected with classes {existing:?}, now {classes:?}; pass the same --labels or --force to start over",
+                args.out.display()
+            );
+        }
+    }
+    std::fs::create_dir_all(&images)?;
+    std::fs::create_dir_all(&labels)?;
+    std::fs::write(&classes_file, serde_json::to_string(&classes)? + "\n")?;
+
+    let mut frame_source = open_source(&source)?;
+    if matches!(frame_source, Source::Sim(_)) {
+        bail!("collect needs a camera or a file");
+    }
+    eprintln!("teacher: {}  classes: {classes:?}  -> {}", detector_path.display(), args.out.display());
+    eprintln!("move the objects around between grabs; Ctrl-C stops early");
+
+    let warmup = 1.0; // let auto-exposure settle before the first grab
+    let started = Instant::now();
+    let (mut saved, mut boxes, mut processed) = (0usize, 0usize, 0u32);
+    let mut next_save = warmup;
+    loop {
+        let frame = match &mut frame_source {
+            Source::Camera(cam) => cam.next_frame().map_err(|e| anyhow!("{e}"))?.map(|(f, _)| f),
+            Source::File(file) => file.next_frame().map_err(|e| anyhow!("{e}"))?.map(|(f, _)| f),
+            Source::Sim(_) => None,
+        };
+        let Some(frame) = frame else { break };
+        let frame = if source.mirror { frame.flipped() } else { frame };
+        processed += 1;
+        let elapsed = started.elapsed().as_secs_f64();
+        if elapsed >= args.seconds + warmup {
+            break;
+        }
+        if elapsed >= next_save || matches!(frame_source, Source::File(_)) {
+            next_save = elapsed + args.every;
+            let detections = detector.detect(&frame).map_err(|e| anyhow!("{e}"))?;
+            let lines: Vec<String> = detections
+                .iter()
+                .filter(|d| d.label.as_ref().is_some_and(|l| classes.contains(l)))
+                .filter(|d| roi.is_none_or(|r| r.contains(d.bbox.cx(), d.bbox.cy())))
+                .map(|d| {
+                    let b = &d.bbox;
+                    let class = classes.iter().position(|c| Some(c) == d.label.as_ref()).unwrap_or(0);
+                    format!("{class} {:.6} {:.6} {:.6} {:.6}", b.cx(), b.cy(), b.width(), b.height())
+                })
+                .collect();
+            if !lines.is_empty() || args.keep_empty {
+                let millis =
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+                let stem = format!("{millis}-{saved:04}");
+                un_media::save_image(&images.join(format!("{stem}.jpg")), &frame).map_err(|e| anyhow!("{e}"))?;
+                let mut text = lines.join("\n");
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                std::fs::write(labels.join(format!("{stem}.txt")), text)?;
+                saved += 1;
+                boxes += lines.len();
+                eprintln!("saved {stem}: {} boxes", lines.len());
+            }
+        }
+        if source.frames > 0 && processed >= source.frames {
+            break;
+        }
+    }
+    let total = std::fs::read_dir(&images).map(|d| d.count()).unwrap_or(0);
+    eprintln!("saved {saved} frames with {boxes} boxes; {} now holds {total} frames", args.out.display());
     Ok(())
 }
 

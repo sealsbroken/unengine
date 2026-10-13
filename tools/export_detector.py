@@ -42,6 +42,7 @@ DEFAULT_CLASSES = [
     "car=toy car",
     "ball=small ball",
     "fruit=apple,orange,banana",
+    "stone=stone,pebble,rock,small grey stone",
     # Decoys: soak up boxes on things that are always in view.
     "_keyboard=laptop keyboard,computer keyboard,trackpad",
     "_hand=hand",

@@ -27,7 +27,7 @@ stays open and relinkable (see [Licence](#licence)).
 | `apps/desktop` | The desktop window (egui): camera view with overlay, tutor HUD, number pad. A library plus a binary that ships the demo lesson. |
 | `apps/ios`, `apps/android` | SwiftUI and Compose shells over `un-ffi`: the phone's camera and speech APIs, the shared engine. |
 | `strategies/demo` | The smallest strategy: "how many are on the table?" |
-| `tools/` | `fetch_models.py` (hand, speech models), `export_detector.py` (train/export a detector). |
+| `tools/` | `fetch_models.py` (hand, speech models), `export_detector.py` (export a detector), `teach.py` (fine-tune on `un collect` frames). |
 | `docs/architecture.md` | Design, the strategy boundary, and the per-platform feasibility matrix. |
 
 ## Setup
@@ -45,6 +45,19 @@ The object detector is not downloaded: it is trained or exported for the objects
 Ultralytics model (zero-shot YOLOE prompts or your own weights) or any detector whose output
 matches one of the supported heads. Note the licence of the weights you ship (Ultralytics'
 are AGPL-3.0; RT-DETR, D-FINE and YOLOX are Apache-2.0).
+
+The zero-shot prompts cover cubes, caps, circles, coins, pencils, toy cars, balls, fruit and
+stones. For new objects, or for a detector that is sure of *your* objects on *your* table,
+teach it: record auto-labelled frames with the CLI, then fine-tune and export.
+
+```sh
+python3 tools/export_detector.py --name stones --class "stone=stone,pebble,rock" --class "_hand=hand"
+cargo run --release -p un-cli -- collect --camera 0 --model stones --conf 0.15 --labels stone --out datasets/stones
+uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset datasets/stones --name table
+```
+
+Move the objects between grabs, add and remove some, cover a few with a hand. The result,
+`models/table.onnx`, is what the desktop app picks by default when it exists.
 
 ## Run
 

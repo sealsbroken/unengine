@@ -13,3 +13,6 @@
 /apps/android/app/src/main/java/uniffi/
 __pycache__/
 .DS_Store
+/datasets/
+/runs/
+/weights/
