@@ -13,5 +13,7 @@ pub mod sim;
 
 pub use paths::ModelPaths;
 pub use perception::{Perception, PerceptionConfig, PerceptionOutput};
-pub use session::{build_session, list_microphones, registry, speech_setup, MicChoice, Session, SessionOptions, VoiceChoice};
+pub use session::{
+    build_session, list_microphones, pick_microphone, registry, speech_setup, MicChoice, Session, SessionOptions, VoiceChoice,
+};
 pub use sim::SimulatedTable;

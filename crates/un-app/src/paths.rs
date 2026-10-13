@@ -58,15 +58,18 @@ impl ModelPaths {
         names
     }
 
-    /// The detector to start with: a fine-tuned `table` model when there is one, else the zero-shot `detector`.
+    /// The detector to start with: the one most recently exported or trained, since that is the
+    /// one being worked on; `detector` when the directory is empty.
     pub fn default_detector(&self) -> String {
-        let names = self.detectors();
-        for name in ["table", "detector"] {
-            if names.iter().any(|n| n == name) {
-                return name.to_string();
-            }
-        }
-        names.first().cloned().unwrap_or_else(|| "detector".to_string())
+        self.detectors()
+            .into_iter()
+            .filter_map(|name| {
+                let modified = std::fs::metadata(self.detector(&name)).and_then(|m| m.modified()).ok()?;
+                Some((modified, name))
+            })
+            .max()
+            .map(|(_, name)| name)
+            .unwrap_or_else(|| "detector".to_string())
     }
 
     pub fn palm_detector(&self) -> PathBuf {

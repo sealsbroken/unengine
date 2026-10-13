@@ -4076,6 +4076,8 @@ dependencies = [
  "env_logger",
  "log",
  "parking_lot",
+ "serde",
+ "serde_json",
  "un-app",
  "un-core",
  "un-engine",

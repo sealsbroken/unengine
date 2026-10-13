@@ -5,7 +5,8 @@ use std::time::Instant;
 
 use egui::{Color32, Key, Pos2, Rect, Sense, TextureHandle, TextureOptions, Vec2};
 use un_app::{
-    build_session, list_microphones, ModelPaths, PerceptionConfig, Session, SessionOptions, SimulatedTable, VoiceChoice,
+    build_session, list_microphones, pick_microphone, ModelPaths, PerceptionConfig, Session, SessionOptions, SimulatedTable,
+    VoiceChoice,
 };
 use un_core::strategy::{SessionConfig, StrategyRegistry};
 use un_core::{Box2, EstimatorConfig, Language};
@@ -13,6 +14,7 @@ use un_engine::StatusKind;
 use un_vision::RgbFrame;
 
 use crate::overlay::{self, Mapper};
+use crate::settings::{self, Saved};
 use crate::worker::{SourceSpec, Worker};
 
 /// Opens the window with the given strategies. Returns when the window closes.
@@ -73,29 +75,44 @@ pub struct UnApp {
 
 impl UnApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, registry: StrategyRegistry) -> Self {
-        let cameras = un_media::list_cameras().map(|c| c.into_iter().map(|c| c.name).collect()).unwrap_or_default();
+        let cameras: Vec<String> = un_media::list_cameras().map(|c| c.into_iter().map(|c| c.name).collect()).unwrap_or_default();
         let first = registry.infos().first().map(|i| i.id.clone()).unwrap_or_else(|| "demo".into());
         let paths = ModelPaths::discover();
-        let detector = paths.default_detector();
+        let saved = settings::load();
+        let detectors = paths.detectors();
+        let detector = match saved.detector.clone() {
+            Some(name) if detectors.contains(&name) => name,
+            _ => paths.default_detector(),
+        };
+        let strategy = match saved.strategy.clone() {
+            Some(id) if registry.get(&id).is_some() => id,
+            _ => first,
+        };
+        let mics = list_microphones();
+        // A remembered microphone that is plugged in wins; otherwise the best one present.
+        let mic_device = match saved.mic_device.clone() {
+            Some(name) if mics.contains(&name) => Some(name),
+            _ => pick_microphone(&mics),
+        };
         Self {
             paths,
             registry,
             setup: Setup {
                 source: SourceKind::Camera,
-                camera: 0,
+                camera: saved.camera.filter(|c| (*c as usize) < cameras.len()).unwrap_or(0),
                 cameras,
-                mirror: false,
+                mirror: saved.mirror.unwrap_or(false),
                 detector,
-                strategy: first,
-                language: Language::English,
-                child_name: String::new(),
-                total: 10,
-                tasks: 10,
-                voice: VoiceChoice::Auto,
-                mic: true,
-                mic_device: None,
-                mics: list_microphones(),
-                chime: false,
+                strategy,
+                language: saved.language.unwrap_or(Language::English),
+                child_name: saved.child_name.unwrap_or_default(),
+                total: saved.total.unwrap_or(10),
+                tasks: saved.tasks.unwrap_or(10),
+                voice: saved.voice.as_deref().and_then(VoiceChoice::parse).unwrap_or(VoiceChoice::Auto),
+                mic: saved.mic.unwrap_or(true),
+                mic_device,
+                mics,
+                chime: saved.chime.unwrap_or(false),
                 sim_count: 3,
             },
             live: None,
@@ -103,7 +120,34 @@ impl UnApp {
         }
     }
 
+    fn remember(&self) {
+        let s = &self.setup;
+        settings::save(&Saved {
+            camera: Some(s.camera),
+            mirror: Some(s.mirror),
+            detector: Some(s.detector.clone()),
+            strategy: Some(s.strategy.clone()),
+            language: Some(s.language),
+            child_name: Some(s.child_name.clone()),
+            total: Some(s.total),
+            tasks: Some(s.tasks),
+            voice: Some(
+                match s.voice {
+                    VoiceChoice::Auto => "auto",
+                    VoiceChoice::Piper => "piper",
+                    VoiceChoice::Console => "console",
+                    VoiceChoice::Off => "off",
+                }
+                .to_string(),
+            ),
+            mic: Some(s.mic),
+            mic_device: s.mic_device.clone(),
+            chime: Some(s.chime),
+        });
+    }
+
     fn start_watching(&mut self) {
+        self.remember();
         let s = &self.setup;
         let (source, sim) = match s.source {
             SourceKind::Camera => (SourceSpec::Camera { index: s.camera, width: 1280, height: 720, mirror: s.mirror }, None),

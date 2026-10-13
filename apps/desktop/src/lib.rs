@@ -6,6 +6,7 @@
 
 mod app;
 mod overlay;
+mod settings;
 mod worker;
 
 pub use app::{run, UnApp};

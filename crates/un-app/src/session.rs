@@ -102,6 +102,57 @@ pub fn list_microphones() -> Vec<String> {
     un_speech::MicrophoneInput::list_devices()
 }
 
+/// The microphone to start with when the user has not chosen one: a dedicated microphone (a
+/// USB or XLR mic by name) beats the laptop's built-in one, which beats webcams and virtual
+/// devices. `None` means the system default is as good as any.
+pub fn pick_microphone(names: &[String]) -> Option<String> {
+    const GOOD: &[&str] = &[
+        "yeti",
+        "blue ",
+        "rode",
+        "røde",
+        "shure",
+        "audio-technica",
+        "at20",
+        "samson",
+        "fifine",
+        "hyperx",
+        "elgato",
+        "wave",
+        "microphone",
+        "mic",
+    ];
+    const BAD: &[&str] = &[
+        "macbook",
+        "built-in",
+        "imac",
+        "internal",
+        "cam",
+        "display",
+        "monitor",
+        "teams",
+        "zoom",
+        "virtual",
+        "blackhole",
+        "loopback",
+        "aggregate",
+        "soundflower",
+        "obs",
+    ];
+    let score = |name: &str| -> i32 {
+        let n = name.to_lowercase();
+        let good = GOOD.iter().any(|k| n.contains(k));
+        let bad = BAD.iter().any(|k| n.contains(k));
+        match (good, bad) {
+            (true, false) => 2,
+            (true, true) => -1,
+            (false, false) => 0,
+            (false, true) => -2,
+        }
+    };
+    names.iter().map(|n| (score(n), n)).filter(|(s, _)| *s > 0).max_by_key(|(s, _)| *s).map(|(_, n)| n.clone())
+}
+
 /// The microphone and the voice for `language`, per the choices and what is installed.
 pub fn speech_setup(
     paths: &ModelPaths,
@@ -178,4 +229,22 @@ pub fn build_session(
         EngineOptions { chime: options.chime, always_show_number_pad: false, log },
     );
     Ok(Session { engine, options, speech_available })
+}
+
+#[cfg(test)]
+mod microphone_tests {
+    use super::pick_microphone;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_usb_microphone_beats_the_built_in_one_and_webcams() {
+        let mics = names(&["Samsung SlimFit Cam", "Yeti X", "MacBook Air Microphone", "Microsoft Teams Audio"]);
+        assert_eq!(pick_microphone(&mics).as_deref(), Some("Yeti X"));
+        assert_eq!(pick_microphone(&names(&["MacBook Air Microphone"])), None);
+        assert_eq!(pick_microphone(&names(&["Samsung SlimFit Cam", "MacBook Pro Microphone"])), None);
+        assert_eq!(pick_microphone(&names(&["Logitech Webcam Microphone", "Shure MV7"])).as_deref(), Some("Shure MV7"));
+    }
 }

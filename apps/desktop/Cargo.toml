@@ -32,4 +32,6 @@ eframe.workspace = true
 egui.workspace = true
 env_logger.workspace = true
 log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 parking_lot.workspace = true
