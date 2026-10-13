@@ -19,7 +19,7 @@ stays open and relinkable (see [Licence](#licence)).
 | `crates/un-core` | Pure, platform-independent: geometry, detections, hand joints and finger counting, the debounced table state and object numbering, languages and numerals, the forgiving number parser, and the **strategy interface**. Fully unit-tested. |
 | `crates/un-engine` | The lesson runtime: runs a strategy against perception, speech and taps; owns timers, listening, the finger watcher and the HUD snapshot. Speech is behind traits. |
 | `crates/un-vision` | ONNX Runtime (`ort`): object detector (Ultralytics raw heads, end-to-end rows, RT-DETR rows) and MediaPipe-style hand landmarks (palm detection + 21 landmarks, converted to ONNX). |
-| `crates/un-speech` | sherpa-onnx: an always-on microphone (Silero VAD, Zipformer recognisers) so an answer is heard the moment the tutor stops talking, Piper voices for the tutor, an optional "listen now" chime, and a round-trip self-test. |
+| `crates/un-speech` | sherpa-onnx: an always-on microphone (Silero VAD, Whisper or the small Zipformer recognisers) so an answer is heard the moment the tutor stops talking, Piper voices for the tutor, an optional "listen now" chime, and a round-trip self-test. |
 | `crates/un-media` | Desktop camera capture (AVFoundation, Media Foundation, V4L2) and image files. |
 | `crates/un-app` | Assembles a session: finds models, builds speech in/out, runs perception, simulated table. |
 | `crates/un-cli` | `un`: headless counting and lessons, the speech self-test, camera and strategy listing. |
@@ -39,6 +39,11 @@ python3 tools/fetch_models.py --speech     # hand models (15 MB) + EN/RU recogni
 cargo build --release --workspace
 cargo run --release -p un-cli -- check-speech --language ru   # the voice says "три", the recogniser hears it
 ```
+
+The Zipformers are small and quick but mishear short answers ("ten caps" became "and cabs").
+`python3 tools/fetch_models.py --whisper small` adds a multilingual Whisper (about 250 MB) that
+the engine then prefers for every language; it decodes an answer in about half a second on an
+Apple laptop. `un listen` prints what the microphone hears, for checking a setup.
 
 The object detector is not downloaded: it is trained or exported for the objects you count.
 `tools/export_detector.py` produces `models/detector.onnx` plus its `.json` sidecar from an
@@ -122,4 +127,4 @@ cargo run -p un-cli -- check-speech
 
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it refers to in `LICENSE.GPL`). Third-party
 components: ONNX Runtime, `ort`, egui, nokhwa, cpal (MIT/Apache-2.0); sherpa-onnx, the
-Zipformer models and MediaPipe's hand models (Apache-2.0); Silero VAD and Piper voices (MIT).
+Zipformer models and MediaPipe's hand models (Apache-2.0); Whisper, Silero VAD and Piper voices (MIT).

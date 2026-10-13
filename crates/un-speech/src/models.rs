@@ -14,7 +14,12 @@ use un_engine::SpeechError;
 ///   sherpa-onnx-zipformer-ru-int8-2025-04-20/{encoder.int8.onnx, decoder.onnx, joiner.int8.onnx, tokens.txt}
 ///   vits-piper-en_US-lessac-medium/{en_US-lessac-medium.onnx, tokens.txt, espeak-ng-data/}
 ///   vits-piper-ru_RU-irina-medium/{ru_RU-irina-medium.onnx, tokens.txt, espeak-ng-data/}
+///   sherpa-onnx-whisper-<size>/{<size>-encoder.int8.onnx, <size>-decoder.int8.onnx, <size>-tokens.txt}   (optional)
 /// ```
+///
+/// When a Whisper directory is present it is used for every language instead of the Zipformers:
+/// it hears short answers far better. `UN_WHISPER=off` forces the Zipformers, `UN_WHISPER=base`
+/// picks a size when several are installed.
 #[derive(Debug, Clone)]
 pub struct SpeechModels {
     pub root: PathBuf,
@@ -27,6 +32,17 @@ pub struct RecognizerFiles {
     pub joiner: PathBuf,
     pub tokens: PathBuf,
 }
+
+#[derive(Debug, Clone)]
+pub struct WhisperFiles {
+    pub size: String,
+    pub encoder: PathBuf,
+    pub decoder: PathBuf,
+    pub tokens: PathBuf,
+}
+
+/// Largest first: the engine takes the best one installed.
+pub const WHISPER_SIZES: [&str; 5] = ["turbo", "medium", "small", "base", "tiny"];
 
 #[derive(Debug, Clone)]
 pub struct VoiceFiles {
@@ -76,6 +92,37 @@ impl SpeechModels {
         }
     }
 
+    /// The Whisper model to use, if one is installed (see the module notes on `UN_WHISPER`).
+    pub fn whisper(&self) -> Option<WhisperFiles> {
+        let wanted = std::env::var("UN_WHISPER").ok().map(|v| v.trim().to_lowercase());
+        if wanted.as_deref() == Some("off") {
+            return None;
+        }
+        WHISPER_SIZES
+            .iter()
+            .filter(|size| wanted.as_deref().is_none_or(|w| w.is_empty() || w == **size))
+            .map(|size| self.whisper_files(size))
+            .find(|f| f.encoder.exists() && f.decoder.exists() && f.tokens.exists())
+    }
+
+    pub fn whisper_files(&self, size: &str) -> WhisperFiles {
+        let dir = self.root.join(format!("sherpa-onnx-whisper-{size}"));
+        let pick = |stem: &str| {
+            let int8 = dir.join(format!("{size}-{stem}.int8.onnx"));
+            if int8.exists() {
+                int8
+            } else {
+                dir.join(format!("{size}-{stem}.onnx"))
+            }
+        };
+        WhisperFiles {
+            size: size.to_string(),
+            encoder: pick("encoder"),
+            decoder: pick("decoder"),
+            tokens: dir.join(format!("{size}-tokens.txt")),
+        }
+    }
+
     pub fn voice(&self, language: Language) -> VoiceFiles {
         let name = Self::voice_name(language);
         let dir = self.root.join(format!("vits-piper-{name}"));
@@ -88,14 +135,25 @@ impl SpeechModels {
 
     /// The first missing file for the language, if any.
     pub fn missing(&self, language: Language) -> Option<PathBuf> {
-        let r = self.recognizer(language);
         let v = self.voice(language);
-        [self.vad(), r.encoder, r.decoder, r.joiner, r.tokens, v.model, v.tokens, v.data_dir].into_iter().find(|p| !p.exists())
+        let mut files = vec![self.vad()];
+        if self.whisper().is_none() {
+            let r = self.recognizer(language);
+            files.extend([r.encoder, r.decoder, r.joiner, r.tokens]);
+        }
+        files.extend([v.model, v.tokens, v.data_dir]);
+        files.into_iter().find(|p| !p.exists())
     }
 
     pub fn recognizer_installed(&self, language: Language) -> bool {
+        if !self.vad().exists() {
+            return false;
+        }
+        if self.whisper().is_some() {
+            return true;
+        }
         let r = self.recognizer(language);
-        self.vad().exists() && [r.encoder, r.decoder, r.joiner, r.tokens].iter().all(|p| p.exists())
+        [r.encoder, r.decoder, r.joiner, r.tokens].iter().all(|p| p.exists())
     }
 
     pub fn voice_installed(&self, language: Language) -> bool {

@@ -243,6 +243,7 @@ pub fn main() -> Result<()> {
             };
             let mic = un_speech::MicrophoneInput::new(paths.speech(), device);
             mic.prepare(language).map_err(|e| anyhow!("{e}"))?;
+            eprintln!("recogniser: {}", recognizer_name(&paths.speech()));
             eprintln!("listening on {:?} for {seconds} s; speak now", mic.device_name());
             let started = Instant::now();
             let token = CancelToken::default();
@@ -259,6 +260,7 @@ pub fn main() -> Result<()> {
         Command::CheckSpeech { language } => {
             let language = parse_language(&language)?;
             let models = paths.speech();
+            eprintln!("recogniser: {}", recognizer_name(&models));
             match un_speech::check_ok(&models, language) {
                 Ok((said, heard, ok)) => {
                     println!(
@@ -282,6 +284,10 @@ pub fn main() -> Result<()> {
         Command::Lesson { source, vision, lesson } => run(&paths, source, vision, Some(lesson)),
         Command::Collect { source, vision, collect: args } => collect(&paths, source, vision, args),
     }
+}
+
+fn recognizer_name(models: &un_speech::SpeechModels) -> String {
+    models.whisper().map(|w| format!("whisper-{}", w.size)).unwrap_or_else(|| "zipformer".into())
 }
 
 fn parse_language(text: &str) -> Result<Language> {

@@ -52,7 +52,7 @@ itself; this matters for third parties reusing the engine.)
 
 ## Speech
 
-* **Desktop**: sherpa-onnx everywhere. Zipformer transducers (EN small, RU int8) cut into utterances by
+* **Desktop**: sherpa-onnx everywhere. Whisper when installed, else Zipformer transducers (EN small, RU int8), cut into utterances by
   Silero VAD, with automatic gain for quiet headsets; Piper voices through sherpa-onnx's VITS runtime
   (no Python, no espeak binary). `un check-speech` runs the voice into the recogniser with no audio device.
 * **Phones**: the shell implements `SpeechInputCallback`/`SpeechOutputCallback` over the platform's

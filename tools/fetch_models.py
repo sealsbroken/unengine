@@ -4,6 +4,7 @@
     python3 tools/fetch_models.py             # hand landmarks (palm detector + landmark model, 15 MB)
     python3 tools/fetch_models.py --speech    # + recognisers, VAD and voices for EN and RU (~400 MB)
     python3 tools/fetch_models.py --speech --language en
+    python3 tools/fetch_models.py --whisper small    # better recogniser for both languages (~250 MB)
     python3 tools/fetch_models.py --dest /path/to/models
 
 Sources (all Apache-2.0 / MIT):
@@ -35,6 +36,9 @@ SHERPA_ASR = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models
 SHERPA_TTS = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
 RECOGNIZERS = {"en": "sherpa-onnx-zipformer-small-en-2023-06-26", "ru": "sherpa-onnx-zipformer-ru-int8-2025-04-20"}
 VOICES = {"en": "vits-piper-en_US-lessac-medium", "ru": "vits-piper-ru_RU-irina-medium"}
+# Whisper hears short answers far better than the small Zipformers and covers both languages;
+# the engine prefers it whenever one of these directories is present.
+WHISPER_SIZES = ("tiny", "base", "small", "medium", "turbo")
 
 
 def shown(path: Path) -> str:
@@ -79,6 +83,8 @@ def fetch_archive(url: str, folder: Path) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--speech", action="store_true", help="Also fetch speech recognition and synthesis models.")
+    parser.add_argument("--whisper", choices=WHISPER_SIZES, metavar="SIZE",
+                        help="Also fetch a multilingual Whisper recogniser (tiny, base, small, medium, turbo).")
     parser.add_argument("--language", nargs="+", choices=["en", "ru"], default=["en", "ru"],
                         help="Languages to fetch speech models for (default: both).")
     parser.add_argument("--dest", type=Path, default=ROOT / "models", help="Target directory (default: models/).")
@@ -98,6 +104,9 @@ def main() -> int:
             ok &= fetch_archive(f"{SHERPA_ASR}/{RECOGNIZERS[lang]}.tar.bz2", speech / RECOGNIZERS[lang])
             print(f"{lang}: voice")
             ok &= fetch_archive(f"{SHERPA_TTS}/{VOICES[lang]}.tar.bz2", speech / VOICES[lang])
+    if args.whisper:
+        name = f"sherpa-onnx-whisper-{args.whisper}"
+        ok &= fetch_archive(f"{SHERPA_ASR}/{name}.tar.bz2", speech / name)
     print("done" if ok else "some downloads failed", file=sys.stderr)
     return 0 if ok else 1
 
