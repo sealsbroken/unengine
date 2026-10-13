@@ -97,6 +97,11 @@ pub fn registry() -> StrategyRegistry {
 /// A speech input (or none: number pad only) and a speech output.
 pub type SpeechPair = (Option<Arc<dyn SpeechInput>>, Arc<dyn SpeechOutput>);
 
+/// Names of the microphones the system offers, in system order.
+pub fn list_microphones() -> Vec<String> {
+    un_speech::MicrophoneInput::list_devices()
+}
+
 /// The microphone and the voice for `language`, per the choices and what is installed.
 pub fn speech_setup(
     paths: &ModelPaths,

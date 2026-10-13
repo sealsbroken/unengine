@@ -43,6 +43,8 @@ enum Command {
     Strategies,
     /// List usable cameras.
     Cameras,
+    /// List microphones (`--mic-device` takes a part of a name).
+    Mics,
     /// Self-test: the voice says a number and the recogniser hears it; no microphone or speakers needed.
     CheckSpeech {
         #[arg(long, default_value = "en")]
@@ -208,6 +210,16 @@ pub fn main() -> Result<()> {
             }
             if cameras.is_empty() {
                 println!("no cameras found");
+            }
+            Ok(())
+        }
+        Command::Mics => {
+            let mics = un_app::list_microphones();
+            for name in &mics {
+                println!("{name}");
+            }
+            if mics.is_empty() {
+                println!("no microphones found");
             }
             Ok(())
         }

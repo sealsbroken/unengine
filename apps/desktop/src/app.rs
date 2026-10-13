@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use egui::{Color32, Key, Pos2, Rect, Sense, TextureHandle, TextureOptions, Vec2};
-use un_app::{build_session, ModelPaths, PerceptionConfig, Session, SessionOptions, SimulatedTable, VoiceChoice};
+use un_app::{
+    build_session, list_microphones, ModelPaths, PerceptionConfig, Session, SessionOptions, SimulatedTable, VoiceChoice,
+};
 use un_core::strategy::{SessionConfig, StrategyRegistry};
 use un_core::{Box2, EstimatorConfig, Language};
 use un_engine::StatusKind;
@@ -41,6 +43,9 @@ struct Setup {
     tasks: u32,
     voice: VoiceChoice,
     mic: bool,
+    /// A microphone name, or `None` for the system default.
+    mic_device: Option<String>,
+    mics: Vec<String>,
     sim_count: u32,
 }
 
@@ -87,6 +92,8 @@ impl UnApp {
                 tasks: 10,
                 voice: VoiceChoice::Auto,
                 mic: true,
+                mic_device: None,
+                mics: list_microphones(),
                 sim_count: 3,
             },
             live: None,
@@ -150,6 +157,7 @@ impl UnApp {
             strategy: s.strategy.clone(),
             config,
             mic: if s.mic { un_app::MicChoice::Auto } else { un_app::MicChoice::Off },
+            mic_device: s.mic_device.clone(),
             voice: s.voice,
             ..Default::default()
         };
@@ -229,6 +237,20 @@ impl UnApp {
             ui.radio_value(&mut s.voice, VoiceChoice::Off, "off");
         });
         ui.checkbox(&mut s.mic, "Listen on the microphone");
+        if s.mic {
+            ui.horizontal(|ui| {
+                let shown = s.mic_device.clone().unwrap_or_else(|| "System default".to_string());
+                egui::ComboBox::from_id_salt("mic").selected_text(shown).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut s.mic_device, None, "System default");
+                    for name in &s.mics {
+                        ui.selectable_value(&mut s.mic_device, Some(name.clone()), name);
+                    }
+                });
+                if ui.button("⟳").on_hover_text("Look for microphones again").clicked() {
+                    s.mics = list_microphones();
+                }
+            });
+        }
         ui.separator();
         if ui.add(egui::Button::new("Start").min_size(Vec2::new(120.0, 36.0))).clicked() {
             self.start_watching();
@@ -393,12 +415,22 @@ impl UnApp {
                 egui::FontId::proportional(18.0),
                 Color32::WHITE,
             );
-            if snap.status.kind == StatusKind::Listening && snap.speech_available {
-                let bar = Rect::from_min_size(
-                    rect.left_bottom() + Vec2::new(16.0, -24.0),
-                    Vec2::new(200.0 * snap.mic_level.clamp(0.0, 1.0), 10.0),
+            if snap.speech_available {
+                let mic = if snap.mic_name.is_empty() { "system default".to_string() } else { snap.mic_name.clone() };
+                painter.text(
+                    rect.left_bottom() + Vec2::new(16.0, -34.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    format!("🎤 {mic}"),
+                    egui::FontId::proportional(14.0),
+                    Color32::WHITE,
                 );
-                painter.rect_filled(bar, 4.0, overlay::GREEN);
+                if snap.status.kind == StatusKind::Listening {
+                    let bar = Rect::from_min_size(
+                        rect.left_bottom() + Vec2::new(16.0, -24.0),
+                        Vec2::new(200.0 * snap.mic_level.clamp(0.0, 1.0), 10.0),
+                    );
+                    painter.rect_filled(bar, 4.0, overlay::GREEN);
+                }
             }
             if let Some(ago) = snap.celebrated_seconds_ago {
                 if ago < 1.5 {
