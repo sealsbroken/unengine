@@ -127,3 +127,60 @@ fn nothing_heard_escalates_and_fingers_answer() {
     assert_eq!(engine.strategy_snapshot().correct, 1);
     engine.close();
 }
+
+/// Records what the engine tells it; answers nothing.
+struct Recorder {
+    events: Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>,
+    phase: PhaseKind,
+}
+
+impl un_core::strategy::Strategy for Recorder {
+    fn handle(&mut self, event: un_core::strategy::Event) -> Vec<un_core::strategy::Effect> {
+        use un_core::strategy::{Effect, Event, ListenMode};
+        self.events.lock().push(event.clone());
+        match event {
+            Event::Start => {
+                self.phase = PhaseKind::Asking;
+                vec![Effect::listen(ListenMode::Voice, 10.0)]
+            }
+            _ => vec![],
+        }
+    }
+    fn snapshot(&self) -> un_core::strategy::StrategySnapshot {
+        un_core::strategy::StrategySnapshot {
+            phase: self.phase,
+            level: 0,
+            level_count: 1,
+            tasks_completed: 0,
+            correct: 0,
+            task: None,
+            target_count: None,
+            expected_answer: None,
+        }
+    }
+}
+
+#[test]
+fn words_are_reported_and_listening_goes_on_until_a_number() {
+    use un_core::strategy::Event;
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let speech_in = Arc::new(ScriptedSpeechInput::saying(
+        vec!["Mia".into(), "I don't know".into(), "three caps".into()],
+        Duration::from_millis(20),
+    ));
+    let engine = Engine::new(
+        Box::new(Recorder { events: Arc::clone(&events), phase: PhaseKind::Idle }),
+        SessionConfig::default(),
+        Some(speech_in),
+        Arc::new(SilentSpeechOutput::new(false)),
+        EngineOptions { log: Some(Arc::new(|_| {})), ..Default::default() },
+    );
+    engine.start();
+    assert!(wait_for(|| events.lock().contains(&Event::Heard(3)), Duration::from_secs(5)));
+    let seen = events.lock().clone();
+    let said: Vec<&str> = seen.iter().filter_map(|e| if let Event::Said(t) = e { Some(t.as_str()) } else { None }).collect();
+    assert_eq!(said, vec!["Mia", "I don't know"]);
+    // One listen served all three lines: the words did not end it.
+    assert!(!seen.contains(&Event::NothingHeard));
+    engine.close();
+}

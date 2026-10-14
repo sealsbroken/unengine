@@ -77,6 +77,14 @@ struct Spoken {
     at: Instant,
 }
 
+/// When the tutor's voice was (or is) coming out of the speakers.
+#[derive(Debug, Clone, Copy)]
+struct TutorVoice {
+    started: Instant,
+    /// `None` while still speaking.
+    ended: Option<Instant>,
+}
+
 /// The always-on capture thread: it owns the cpal stream (which cannot leave its thread).
 struct Capture {
     stop: Arc<AtomicBool>,
@@ -103,12 +111,13 @@ impl Drop for Capture {
 
 type Heard = (Mutex<VecDeque<Utterance>>, Condvar);
 
-/// Microphone -> Silero VAD -> Zipformer, always on; an [`un_engine::SpeechInput`].
+/// Microphone -> Silero VAD -> Whisper or Zipformer, always on; an [`un_engine::SpeechInput`].
 ///
 /// The stream opens at [`SpeechInput::prepare`] and stays open, decoding every utterance as it
-/// ends, so a listen starts instantly. An answer often overlaps the tutor's last words and lands
-/// in the same voice segment as them; such a segment is kept, with the number words the tutor
-/// just said removed, so the tutor's own voice from the speakers is never taken as the answer.
+/// ends, so a listen starts instantly. The tutor's own voice comes back through the microphone:
+/// an utterance that overlaps the tutor's speech is kept only if it still holds a number once
+/// the number words the tutor just said are removed (the child answering over the tutor), and
+/// is dropped as echo otherwise.
 pub struct MicrophoneInput {
     models: SpeechModels,
     device: MicDevice,
@@ -119,7 +128,10 @@ pub struct MicrophoneInput {
     capture: Mutex<Option<Capture>>,
     heard: Arc<Heard>,
     spoken: Mutex<VecDeque<Spoken>>,
+    tutor: Mutex<Option<TutorVoice>>,
     last_heard: Mutex<(String, Instant)>,
+    /// The end of the last utterance a listen returned; the next listen continues from there.
+    returned_until: Mutex<Option<Instant>>,
     /// Quiet microphones (Bluetooth headsets, laptops far away) are boosted up to this much before the VAD.
     pub max_gain: f32,
     pub target_peak: f32,
@@ -127,6 +139,12 @@ pub struct MicrophoneInput {
 
 /// How long the tutor's words are remembered for filtering.
 const SPOKEN_MEMORY: Duration = Duration::from_secs(20);
+/// Speaker latency plus the VAD's trailing silence: the tutor's voice counts for this long after
+/// playback ended.
+const TUTOR_TAIL: Duration = Duration::from_millis(600);
+/// A listen takes utterances from this long before it began, so nothing said between two
+/// listens of one conversation turn is lost.
+const CARRY_OVER: Duration = Duration::from_millis(1500);
 
 impl MicrophoneInput {
     pub fn new(models: SpeechModels, device: MicDevice) -> Self {
@@ -140,7 +158,9 @@ impl MicrophoneInput {
             capture: Mutex::new(None),
             heard: Arc::new((Mutex::new(VecDeque::new()), Condvar::new())),
             spoken: Mutex::new(VecDeque::new()),
+            tutor: Mutex::new(None),
             last_heard: Mutex::new((String::new(), Instant::now())),
+            returned_until: Mutex::new(None),
             max_gain: 12.0,
             target_peak: 0.3,
         }
@@ -222,6 +242,21 @@ impl MicrophoneInput {
         spoken.iter().flat_map(|s| s.numbers.iter().cloned()).collect()
     }
 
+    /// Whether an utterance overlaps the tutor's voice from the speakers (or the moment this
+    /// listen began, when the tutor spoke right before it).
+    fn overlaps_tutor(&self, u: &Utterance, since: Instant) -> bool {
+        if u.started < since {
+            return true;
+        }
+        match *self.tutor.lock() {
+            Some(TutorVoice { started, ended }) => {
+                let until = ended.map(|e| e + TUTOR_TAIL).unwrap_or(Instant::now() + TUTOR_TAIL);
+                u.started < until && u.ended > started
+            }
+            None => false,
+        }
+    }
+
     /// Waits for the first utterance still going on, or starting, after the listen began that
     /// `accept` turns into a value; the timeout and cancellation end it.
     fn listen<T>(
@@ -232,8 +267,12 @@ impl MicrophoneInput {
         accept: &dyn Fn(&str) -> Option<T>,
     ) -> Result<(T, String), SpeechError> {
         self.ensure_capture(language)?;
-        let since = Instant::now();
-        let deadline = since + timeout;
+        let now = Instant::now();
+        let since = match *self.returned_until.lock() {
+            Some(until) if now.duration_since(until) < CARRY_OVER => until,
+            _ => now,
+        };
+        let deadline = now + timeout;
         let mut last_transcript: Option<String> = None;
         let (queue, cv) = &*self.heard;
         let mut queue = queue.lock();
@@ -242,7 +281,8 @@ impl MicrophoneInput {
                 if u.ended < since {
                     continue;
                 }
-                let text = if u.started < since {
+                let overlaps = self.overlaps_tutor(&u, since);
+                let text = if overlaps {
                     // Overlaps the tutor: drop the numbers the tutor just said, keep the child's.
                     let tutor = self.tutor_numbers(since);
                     without_words(&u.text, &tutor)
@@ -251,7 +291,12 @@ impl MicrophoneInput {
                 };
                 last_transcript = Some(u.text.clone());
                 *self.last_heard.lock() = (u.text.clone(), Instant::now());
+                if overlaps && NumberParser::parse(&text, language).is_none() {
+                    log::debug!("microphone: dropped the tutor's echo {:?}", u.text);
+                    continue;
+                }
                 if let Some(value) = accept(&text) {
+                    *self.returned_until.lock() = Some(u.ended);
                     return Ok((value, u.text));
                 }
             }
@@ -409,6 +454,7 @@ impl SpeechInput for MicrophoneInput {
     }
 
     fn tutor_speaking(&self, text: &str, language: Language) {
+        *self.tutor.lock() = Some(TutorVoice { started: Instant::now(), ended: None });
         let numbers: Vec<String> = tokenize(text).into_iter().filter(|w| NumberParser::parse(w, language).is_some()).collect();
         if numbers.is_empty() {
             return;
@@ -420,12 +466,22 @@ impl SpeechInput for MicrophoneInput {
         }
     }
 
+    fn tutor_silent(&self) {
+        if let Some(voice) = self.tutor.lock().as_mut() {
+            voice.ended = Some(Instant::now());
+        }
+    }
+
     fn device_name(&self) -> String {
         self.device_name.lock().clone()
     }
 
     fn level(&self) -> f32 {
         *self.level.lock()
+    }
+
+    fn meters_level(&self) -> bool {
+        true
     }
 
     fn last_transcript(&self) -> String {

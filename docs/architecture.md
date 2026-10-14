@@ -24,9 +24,21 @@ same thing on a laptop and on a phone.
 
 `un_core::strategy` is the contract: a strategy is a reducer `handle(Event) -> Vec<Effect>`
 with a `snapshot()` for the HUD. Events are `Start`, `Stop`, `Table(observation)`, `Heard(n)`,
-`NothingHeard`, `TimerFired`, `RepeatRequested`, `SkipRequested`. Effects are `Say`, `Listen`,
-`StopListening`, `HighlightCount`, `Celebrate`, `StartTimer`, `CancelTimer`, `SessionEnded`.
-The engine never sees a task or a phrase; the strategy never sees a pixel or a sample.
+`Said(words)` (an utterance that is not a number: a name, "yes", "I don't understand"; the
+listen goes on), `NothingHeard`, `Sound(bool)` (the microphone picks up sound or has gone quiet,
+only with a metered microphone), `TimerFired`, `RepeatRequested`, `SkipRequested`. Effects are
+`Say`, `Listen`, `StopListening`, `HighlightCount`, `Celebrate`, `StartTimer`, `CancelTimer`,
+`SessionEnded`. The engine never sees a task or a phrase; the strategy never sees a pixel or a
+sample.
+
+A session's summary carries `remember`, a string map the strategy wants back next time as
+`SessionConfig::extra` (the child's name, where a paused lesson stopped); products store it
+(the desktop app in `desktop.json`) and `paused` tells them the lesson can be resumed.
+
+The always-on microphone hears the tutor through the speakers. The engine tells the speech
+input when the tutor starts and stops talking (`tutor_speaking`, `tutor_silent`); an utterance
+overlapping that window is kept only if it still holds a number once the tutor's own number
+words are removed, otherwise it is dropped as echo.
 
 Strategies register at link time (`inventory`), so a product is just a binary that links the
 engine and the strategy crates it has the rights to. The engine stays LGPL; the strategies may

@@ -89,6 +89,11 @@ impl Noun {
         Noun::new("cube", "cubes", "кубик", "кубика", "кубиков", "ни одного кубика", "кубики")
     }
 
+    /// Russian grammatical gender, read off the "not a single" form: "ни одной крышки" is feminine.
+    pub fn ru_feminine(&self) -> bool {
+        self.ru_none.starts_with("ни одной")
+    }
+
     /// The noun for a detector label; unknown labels get a plain English plural.
     pub fn for_label(label: &str) -> Noun {
         match label {
@@ -190,7 +195,8 @@ impl Numerals {
         }
     }
 
-    /// "four cubes" / "четыре кубика". Zero becomes "no cubes" / "ни одного кубика".
+    /// "four cubes" / "четыре кубика". Zero becomes "no cubes" / "ни одного кубика". Russian
+    /// "one" and "two" agree with the noun's gender: "одна крышка", "две крышки".
     pub fn objects(n: u32, language: Language, noun: &Noun) -> String {
         if n == 0 {
             return match language {
@@ -198,7 +204,12 @@ impl Numerals {
                 Language::Russian => noun.ru_none.clone(),
             };
         }
-        format!("{} {}", Self::word(n, language), Self::noun(n, language, noun))
+        let number = match (language, noun.ru_feminine(), n % 10, n % 100) {
+            (Language::Russian, true, 1, m) if m != 11 => Self::word(n, language).replace("один", "одна"),
+            (Language::Russian, true, 2, m) if m != 12 => Self::word(n, language).replace("два", "две"),
+            _ => Self::word(n, language),
+        };
+        format!("{number} {}", Self::noun(n, language, noun))
     }
 
     /// "one, two, three" / "один, два, три" for counting aloud.
@@ -268,6 +279,10 @@ mod tests {
         assert_eq!(Numerals::objects(2, EN, &cap), "two caps");
         assert_eq!(Numerals::objects(5, RU, &cap), "пять крышек");
         assert_eq!(Numerals::objects(0, RU, &cap), "ни одной крышки");
+        assert_eq!(Numerals::objects(1, RU, &cap), "одна крышка");
+        assert_eq!(Numerals::objects(2, RU, &cap), "две крышки");
+        assert_eq!(Numerals::objects(12, RU, &cap), "двенадцать крышек");
+        assert_eq!(Numerals::objects(2, RU, &Noun::cube()), "два кубика");
         assert_eq!(Numerals::objects(3, EN, &Noun::for_label("widget")), "three widgets");
         let stone = Noun::for_label("stone");
         assert_eq!(Numerals::objects(1, RU, &stone), "один камень");

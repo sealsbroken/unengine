@@ -80,8 +80,15 @@ pub enum Event {
     Table(TableObservation),
     /// A number was heard (voice), shown (fingers) or tapped.
     Heard(u32),
+    /// Words were heard that are not a number: a name, "yes", "I don't understand", chatter.
+    /// Listening goes on afterwards unless the strategy replaces or stops it.
+    Said(String),
     /// Listening ended without a usable number.
     NothingHeard,
+    /// The microphone started picking up sound (`true`) or has been quiet for a few seconds
+    /// (`false`). Sent when that changes, and once with `false` when a metered microphone is
+    /// in use at all; never sent without one.
+    Sound(bool),
     TimerFired(u64),
     RepeatRequested,
     SkipRequested,
@@ -140,12 +147,32 @@ pub struct TaskRecord {
     pub skipped: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub tasks_completed: u32,
     pub correct: u32,
     pub final_level: u32,
     pub records: Vec<TaskRecord>,
+    /// The lesson stopped before its end (contact with the child was lost) and can be resumed.
+    #[serde(default)]
+    pub paused: bool,
+    /// What the strategy wants back next time in [`SessionConfig::extra`]: the child's name,
+    /// where the lesson stopped. An empty value forgets the key.
+    #[serde(default)]
+    pub remember: HashMap<String, String>,
+}
+
+impl SessionSummary {
+    /// Applies `remember` to a product's stored `extra` map.
+    pub fn apply_remembered(&self, extra: &mut HashMap<String, String>) {
+        for (key, value) in &self.remember {
+            if value.is_empty() {
+                extra.remove(key);
+            } else {
+                extra.insert(key.clone(), value.clone());
+            }
+        }
+    }
 }
 
 /// Where the lesson is, in terms every strategy shares (for the HUD).
@@ -153,12 +180,16 @@ pub struct SessionSummary {
 #[serde(rename_all = "snake_case")]
 pub enum PhaseKind {
     Idle,
+    /// Talking with the child before the tasks: names, "shall we begin?".
+    Meeting,
     /// Waiting for the first objects to appear.
     AwaitingObjects,
     /// Instruction given; the child is rearranging the table.
     Performing,
     /// Question asked; listening for the answer.
     Asking,
+    /// Stopped early with the state kept; the next session can pick it up.
+    Paused,
     Finished,
 }
 

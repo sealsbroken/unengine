@@ -70,7 +70,7 @@ Move the objects between grabs, add and remove some, cover a few with a hand. Th
 cargo run --release -p un-desktop                 # the window: camera or a simulated table, demo lesson
 cargo run --release -p un-cli -- cameras
 cargo run --release -p un-cli -- run --camera 0 --model coco     # one JSON line per state change
-cargo run --release -p un-cli -- lesson --sim 3 --answers 3,2 --voice console   # a scripted lesson, no camera
+cargo run --release -p un-cli -- lesson --sim 3 --answers 3,2 --voice console   # a scripted lesson, no camera (words work too: Mia,yes,3)
 cargo run --release -p un-cli -- lesson --camera 0 --language ru                # the real thing, headless
 ```
 

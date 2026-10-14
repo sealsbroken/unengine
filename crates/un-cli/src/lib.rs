@@ -155,7 +155,7 @@ struct LessonArgs {
     level: u32,
     #[arg(long)]
     seed: Option<u64>,
-    /// Scripted spoken answers, e.g. 3,2,4 (no microphone).
+    /// Scripted lines the child says, e.g. 3,2,4 or Mia,yes,3 (no microphone).
     #[arg(long)]
     answers: Option<String>,
     /// Speech output: auto, piper, console, off.
@@ -372,9 +372,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
             let answers = args
                 .answers
                 .as_deref()
-                .map(|a| a.split(',').map(|v| v.trim().parse::<u32>()).collect::<Result<Vec<_>, _>>())
-                .transpose()
-                .context("--answers must be numbers separated by commas")?;
+                .map(|a| a.split(',').map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).collect::<Vec<_>>());
             let noun = args_noun(&vision, &labels, source.sim.is_some());
             let config = SessionConfig {
                 language,

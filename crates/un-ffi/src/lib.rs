@@ -19,6 +19,7 @@
 //! own `cdylib`/`staticlib` (see the `unmethod` repository's `apps/mobile`); the strategies register
 //! themselves at link time.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -110,6 +111,8 @@ pub struct UnSessionConfig {
     pub nudge_interval: f64,
     pub seed: u64,
     pub noun: String,
+    /// Strategy-specific settings, including what an earlier session asked to `remember`.
+    pub extra: HashMap<String, String>,
 }
 
 #[uniffi::export]
@@ -130,7 +133,7 @@ impl From<UnSessionConfig> for SessionConfig {
             nudge_interval: c.nudge_interval,
             seed: c.seed,
             noun: c.noun,
-            extra: Default::default(),
+            extra: c.extra,
         }
     }
 }
@@ -148,6 +151,7 @@ impl From<SessionConfig> for UnSessionConfig {
             nudge_interval: c.nudge_interval,
             seed: c.seed,
             noun: c.noun,
+            extra: c.extra,
         }
     }
 }
@@ -172,9 +176,11 @@ pub enum UnStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum UnPhase {
     Idle,
+    Meeting,
     AwaitingObjects,
     Performing,
     Asking,
+    Paused,
     Finished,
 }
 
@@ -193,6 +199,10 @@ pub struct UnSummary {
     pub correct: u32,
     pub final_level: u32,
     pub records: Vec<UnTaskRecord>,
+    /// Stopped early; `remember` holds what the next session needs to continue.
+    pub paused: bool,
+    /// Store it and pass it back as `UnSessionConfig::extra` (an empty value forgets the key).
+    pub remember: HashMap<String, String>,
 }
 
 /// Everything the HUD needs.
@@ -237,9 +247,11 @@ impl From<un_engine::EngineSnapshot> for UnSnapshot {
             }),
             phase: match s.strategy.phase {
                 PhaseKind::Idle => UnPhase::Idle,
+                PhaseKind::Meeting => UnPhase::Meeting,
                 PhaseKind::AwaitingObjects => UnPhase::AwaitingObjects,
                 PhaseKind::Performing => UnPhase::Performing,
                 PhaseKind::Asking => UnPhase::Asking,
+                PhaseKind::Paused => UnPhase::Paused,
                 PhaseKind::Finished => UnPhase::Finished,
             },
             level: s.strategy.level,
@@ -266,6 +278,8 @@ impl From<un_engine::EngineSnapshot> for UnSnapshot {
                         skipped: r.skipped,
                     })
                     .collect(),
+                paused: m.paused,
+                remember: m.remember,
             }),
             warning: s.warning,
             show_number_pad: s.show_number_pad,
@@ -278,7 +292,9 @@ impl From<un_engine::EngineSnapshot> for UnSnapshot {
 // ------------------------------------------------------------------ platform speech
 
 /// Implemented by the platform over its recogniser. `listen_for_number` must block until it has
-/// a number, the timeout passes (return `None`), or `cancel_listening` was called.
+/// a number, the timeout passes (return `None`), or `cancel_listening` was called. The engine
+/// parses the transcript itself, so a platform may return any words with `value` 0: the
+/// strategy then hears them as speech ("yes", a name) rather than a number.
 #[uniffi::export(with_foreign)]
 pub trait SpeechInputCallback: Send + Sync {
     fn prepare(&self, language: UnLanguage) -> Result<(), UnError>;
@@ -320,12 +336,13 @@ impl SpeechInput for CallbackInput {
 
     fn listen_for_text(
         &self,
-        _language: Language,
-        _timeout: Duration,
-        _cancel: &CancelToken,
+        language: Language,
+        timeout: Duration,
+        cancel: &CancelToken,
         _accept: &dyn Fn(&str) -> bool,
     ) -> Result<String, SpeechError> {
-        Err(SpeechError::Other("free text listening is not exposed over FFI".into()))
+        let heard = self.listen_for_number(language, timeout, cancel)?;
+        Ok(if heard.transcript.trim().is_empty() { heard.value.to_string() } else { heard.transcript })
     }
 
     fn stop(&self) {

@@ -3,14 +3,15 @@
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use un_core::Language;
+use un_core::{Language, NumberParser};
 
 use crate::speech::{CancelToken, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 
-/// Each listen consumes the next scripted answer; an `Err` entry is raised. When the script is
-/// exhausted, listening times out.
+/// Each listen consumes the next scripted line; an `Err` entry is raised. When the script is
+/// exhausted, listening times out. Lines may be numbers (`"3"`) or anything else the child
+/// might say (`"Mia"`, `"yes"`).
 pub struct ScriptedSpeechInput {
-    answers: Mutex<Vec<Result<u32, SpeechError>>>,
+    answers: Mutex<Vec<Result<String, SpeechError>>>,
     delay: Duration,
     prepared: Mutex<Vec<Language>>,
     cancel: Mutex<Option<u64>>,
@@ -19,8 +20,13 @@ pub struct ScriptedSpeechInput {
 
 impl ScriptedSpeechInput {
     pub fn new(answers: Vec<u32>, delay: Duration) -> Self {
+        Self::saying(answers.iter().map(|n| n.to_string()).collect(), delay)
+    }
+
+    /// Lines the child says, in order: numbers or words.
+    pub fn saying(lines: Vec<String>, delay: Duration) -> Self {
         Self {
-            answers: Mutex::new(answers.into_iter().map(Ok).collect()),
+            answers: Mutex::new(lines.into_iter().map(Ok).collect()),
             delay,
             prepared: Mutex::new(Vec::new()),
             cancel: Mutex::new(None),
@@ -30,6 +36,7 @@ impl ScriptedSpeechInput {
 
     /// A full script: `Ok(n)` is heard, `Err(e)` is raised at once (for example a `Timeout`).
     pub fn with_script(script: Vec<Result<u32, SpeechError>>, delay: Duration) -> Self {
+        let script = script.into_iter().map(|r| r.map(|n| n.to_string())).collect();
         Self { answers: Mutex::new(script), ..Self::new(vec![], delay) }
     }
 
@@ -41,7 +48,30 @@ impl ScriptedSpeechInput {
     }
 
     pub fn push(&self, answer: u32) {
-        self.answers.lock().push(Ok(answer));
+        self.answers.lock().push(Ok(answer.to_string()));
+    }
+
+    fn next_line(&self, timeout: Duration, cancel: &CancelToken) -> Result<String, SpeechError> {
+        *self.cancel.lock() = Some(cancel.generation);
+        if !self.delay.is_zero() {
+            self.wait(self.delay, cancel)?;
+        }
+        let next = {
+            let mut answers = self.answers.lock();
+            if answers.is_empty() {
+                None
+            } else {
+                Some(answers.remove(0))
+            }
+        };
+        match next {
+            None => {
+                // Script exhausted: behave like a quiet room and honour the timeout.
+                self.wait(timeout, cancel)?;
+                Err(SpeechError::Timeout { last_transcript: None })
+            }
+            Some(line) => line,
+        }
     }
 
     pub fn prepared(&self) -> Vec<Language> {
@@ -66,43 +96,29 @@ impl SpeechInput for ScriptedSpeechInput {
         Ok(())
     }
 
-    fn listen_for_number(
-        &self,
-        _language: Language,
-        timeout: Duration,
-        cancel: &CancelToken,
-    ) -> Result<NumberHeard, SpeechError> {
-        *self.cancel.lock() = Some(cancel.generation);
-        if !self.delay.is_zero() {
-            self.wait(self.delay, cancel)?;
-        }
-        let next = {
-            let mut answers = self.answers.lock();
-            if answers.is_empty() {
-                None
-            } else {
-                Some(answers.remove(0))
+    /// Lines that are not numbers are skipped, as a number-only recogniser would.
+    fn listen_for_number(&self, language: Language, timeout: Duration, cancel: &CancelToken) -> Result<NumberHeard, SpeechError> {
+        loop {
+            let transcript = self.next_line(timeout, cancel)?;
+            if let Some(value) = NumberParser::parse(&transcript, language) {
+                return Ok(NumberHeard { value, transcript });
             }
-        };
-        match next {
-            None => {
-                // Script exhausted: behave like a quiet room and honour the timeout.
-                self.wait(timeout, cancel)?;
-                Err(SpeechError::Timeout { last_transcript: None })
-            }
-            Some(Err(error)) => Err(error),
-            Some(Ok(value)) => Ok(NumberHeard { value, transcript: value.to_string() }),
         }
     }
 
     fn listen_for_text(
         &self,
-        language: Language,
+        _language: Language,
         timeout: Duration,
         cancel: &CancelToken,
-        _accept: &dyn Fn(&str) -> bool,
+        accept: &dyn Fn(&str) -> bool,
     ) -> Result<String, SpeechError> {
-        self.listen_for_number(language, timeout, cancel).map(|h| h.transcript)
+        loop {
+            let line = self.next_line(timeout, cancel)?;
+            if accept(&line) {
+                return Ok(line);
+            }
+        }
     }
 
     fn stop(&self) {}
@@ -171,8 +187,9 @@ mod tests {
 
     #[test]
     fn scripted_answers_then_timeout() {
-        let input = ScriptedSpeechInput::new(vec![3], Duration::ZERO);
+        let input = ScriptedSpeechInput::saying(vec!["Mia".into(), "three".into()], Duration::ZERO);
         let cancel = CancelToken::default();
+        assert_eq!(input.listen_for_text(Language::English, Duration::from_millis(10), &cancel, &|_| true).unwrap(), "Mia");
         assert_eq!(input.listen_for_number(Language::English, Duration::from_millis(10), &cancel).unwrap().value, 3);
         assert!(matches!(
             input.listen_for_number(Language::English, Duration::from_millis(10), &cancel),

@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use un_core::strategy::{
     Effect, Event, ListenMode, PhaseKind, SessionConfig, SessionSummary, Strategy, StrategySnapshot, TableObservation,
 };
-use un_core::TableState;
+use un_core::{NumberParser, TableState};
 
 pub use speech::{CancelToken, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 
@@ -96,6 +96,9 @@ struct State {
     always_show_number_pad: bool,
     last_observation: Option<TableObservation>,
     finger_count: Option<u32>,
+    /// Whether the microphone currently picks up sound, as last told to the strategy.
+    sound: Option<bool>,
+    sound_heard_at: Option<Instant>,
     timers: HashMap<u64, Arc<TimerHandle>>,
     listen: Option<Arc<CancelToken>>,
     closed: bool,
@@ -162,6 +165,8 @@ impl Engine {
                 always_show_number_pad: always,
                 last_observation: None,
                 finger_count: None,
+                sound: None,
+                sound_heard_at: None,
                 timers: HashMap::new(),
                 listen: None,
                 closed: false,
@@ -214,6 +219,7 @@ impl Engine {
         }
         self.inner.state.lock().status = Status::new(StatusKind::Watching);
         self.inner.dispatch(Event::Start);
+        self.inner.sense_sound();
     }
 
     /// Ends the lesson politely: the tutor says goodbye, then the summary appears.
@@ -279,6 +285,7 @@ impl Engine {
     }
 
     pub fn observe_table(&self, observation: TableObservation) {
+        self.inner.sense_sound();
         {
             let mut state = self.inner.state.lock();
             state.finger_count = observation.finger_count;
@@ -391,6 +398,9 @@ impl Inner {
                 if let Err(error) = out.speak(&text, self.config.language) {
                     self.log(&format!("voice failed: {error}"));
                 }
+                if let Some(speech_in) = &self.speech_in {
+                    speech_in.tutor_silent();
+                }
                 let mut state = self.state.lock();
                 if state.status.kind == StatusKind::Speaking {
                     state.status = Status::new(StatusKind::Watching);
@@ -451,31 +461,83 @@ impl Inner {
         }
     }
 
+    /// Tells the strategy when the microphone starts or stops picking up sound. Called on the
+    /// perception heartbeat; only a metered microphone (see [`SpeechInput::meters_level`]) counts.
+    fn sense_sound(&self) {
+        const THRESHOLD: f32 = 0.1;
+        const QUIET_AFTER: Duration = Duration::from_secs(2);
+        let Some(speech_in) = &self.speech_in else { return };
+        if !speech_in.meters_level() {
+            return;
+        }
+        let level = speech_in.level();
+        let event = {
+            let mut state = self.state.lock();
+            if !state.speech_available {
+                return;
+            }
+            let now = Instant::now();
+            if level >= THRESHOLD {
+                state.sound_heard_at = Some(now);
+            }
+            let hears = state.sound_heard_at.is_some_and(|t| now.duration_since(t) < QUIET_AFTER);
+            if state.sound == Some(hears) {
+                return;
+            }
+            state.sound = Some(hears);
+            hears
+        };
+        self.log(if event { "microphone: sound" } else { "microphone: quiet" });
+        self.dispatch(Event::Sound(event));
+    }
+
+    /// One listen: every utterance until the timeout is reported, words as `Said`, and the
+    /// first number ends it as `Heard`.
     fn listen(&self, speech_in: Arc<dyn SpeechInput>, timeout: f64, token: Arc<CancelToken>) {
         if self.options.chime {
             self.speech_out.read().play_chime();
         }
-        if token.is_cancelled() {
-            return;
-        }
-        match speech_in.listen_for_number(self.config.language, Duration::from_secs_f64(timeout), &token) {
-            Ok(heard) => {
-                if token.is_cancelled() {
-                    return;
-                }
-                self.log(&format!("heard {} ({:?})", heard.value, heard.transcript));
-                self.finish_listening(Some(&token), false);
-                self.dispatch(Event::Heard(heard.value));
+        let language = self.config.language;
+        let deadline = Instant::now() + Duration::from_secs_f64(timeout);
+        loop {
+            if token.is_cancelled() {
+                return;
             }
-            Err(SpeechError::Cancelled) => {}
-            Err(error) => {
-                if token.is_cancelled() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let result = if remaining.is_zero() {
+                Err(SpeechError::Timeout { last_transcript: None })
+            } else {
+                speech_in.listen_for_text(language, remaining, &token, &|_| true)
+            };
+            match result {
+                Ok(text) => {
+                    if token.is_cancelled() {
+                        return;
+                    }
+                    match NumberParser::parse(&text, language) {
+                        Some(value) => {
+                            self.log(&format!("heard {value} ({text:?})"));
+                            self.finish_listening(Some(&token), false);
+                            self.dispatch(Event::Heard(value));
+                            return;
+                        }
+                        None => {
+                            self.log(&format!("child: {text}"));
+                            self.dispatch(Event::Said(text));
+                        }
+                    }
+                }
+                Err(SpeechError::Cancelled) => return,
+                Err(error) => {
+                    if token.is_cancelled() {
+                        return;
+                    }
+                    let kind = if matches!(error, SpeechError::Timeout { .. }) { "heard nothing" } else { "listening failed" };
+                    self.log(&format!("{kind} ({error})"));
+                    self.finish_listening(Some(&token), false);
+                    self.dispatch(Event::NothingHeard);
                     return;
                 }
-                let kind = if matches!(error, SpeechError::Timeout { .. }) { "heard nothing" } else { "listening failed" };
-                self.log(&format!("{kind} ({error})"));
-                self.finish_listening(Some(&token), false);
-                self.dispatch(Event::NothingHeard);
             }
         }
     }

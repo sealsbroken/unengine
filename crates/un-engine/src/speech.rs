@@ -95,6 +95,9 @@ pub trait SpeechInput: Send + Sync {
     /// voice from the child's.
     fn tutor_speaking(&self, _text: &str, _language: Language) {}
 
+    /// The tutor has finished its utterance.
+    fn tutor_silent(&self) {}
+
     /// Name of the microphone in use, for the HUD.
     fn device_name(&self) -> String {
         String::new()
@@ -103,6 +106,12 @@ pub trait SpeechInput: Send + Sync {
     /// Smoothed input level 0...1 while listening, for the HUD.
     fn level(&self) -> f32 {
         0.0
+    }
+
+    /// Whether [`SpeechInput::level`] is a real meter; the engine then tells the strategy when
+    /// the microphone picks up sound at all (`Event::Sound`).
+    fn meters_level(&self) -> bool {
+        false
     }
 
     /// What the recogniser heard most recently, for a few seconds, so the HUD can show why an

@@ -1,5 +1,6 @@
 //! The window: setup panel, camera view with overlay, tutor HUD and number pad.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -50,6 +51,8 @@ struct Setup {
     mics: Vec<String>,
     chime: bool,
     sim_count: u32,
+    /// What the lessons remember between sessions.
+    extra: HashMap<String, String>,
 }
 
 struct Live {
@@ -63,6 +66,8 @@ struct Live {
     drag: Option<Box2>,
     pad_buffer: String,
     pad_deadline: Option<Instant>,
+    /// The finished session's `remember` map has been saved.
+    remembered: bool,
 }
 
 pub struct UnApp {
@@ -114,6 +119,7 @@ impl UnApp {
                 mics,
                 chime: saved.chime.unwrap_or(false),
                 sim_count: 3,
+                extra: saved.extra,
             },
             live: None,
             error: None,
@@ -143,6 +149,7 @@ impl UnApp {
             mic: Some(s.mic),
             mic_device: s.mic_device.clone(),
             chime: Some(s.chime),
+            extra: s.extra.clone(),
         });
     }
 
@@ -175,6 +182,7 @@ impl UnApp {
             drag: None,
             pad_buffer: String::new(),
             pad_deadline: None,
+            remembered: false,
         });
         self.error = None;
     }
@@ -197,6 +205,7 @@ impl UnApp {
             max_tasks: s.tasks,
             seed: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(1),
             noun,
+            extra: s.extra.clone(),
             ..Default::default()
         };
         let options = SessionOptions {
@@ -212,9 +221,25 @@ impl UnApp {
             Ok(session) => {
                 session.engine.start();
                 live.session = Some(session);
+                live.remembered = false;
             }
             Err(error) => self.error = Some(error.to_string()),
         }
+    }
+
+    /// Keeps what a finished lesson asked to remember (the child's name, where it stopped).
+    fn remember_session(&mut self) {
+        let Some(live) = &mut self.live else { return };
+        if live.remembered {
+            return;
+        }
+        let Some(summary) = live.session.as_ref().and_then(|s| s.engine.snapshot().summary) else { return };
+        live.remembered = true;
+        summary.apply_remembered(&mut self.setup.extra);
+        if let Some(name) = self.setup.extra.get("child_name") {
+            self.setup.child_name = name.clone();
+        }
+        self.remember();
     }
 
     fn stop_lesson(&mut self) {
@@ -340,6 +365,9 @@ impl UnApp {
         let snapshot = live.session.as_ref().map(|s| s.engine.snapshot());
         if let (Some(session), Some(state)) = (&live.session, &state) {
             session.engine.observe(state);
+        }
+        if snapshot.as_ref().is_some_and(|s| s.summary.is_some()) {
+            self.remember_session();
         }
 
         // Top bar.
@@ -501,13 +529,12 @@ impl UnApp {
             }
             if let Some(summary) = &snap.summary {
                 let card = Rect::from_center_size(rect.center(), Vec2::new(420.0, 140.0));
-                overlay::bubble(
-                    &painter,
-                    card,
-                    &format!("{} of {} right\nlevel {}", summary.correct, summary.tasks_completed, summary.final_level + 1),
-                    28.0,
-                    Color32::from_rgba_unmultiplied(30, 30, 60, 230),
-                );
+                let text = if summary.paused {
+                    format!("Paused\n{} of {} right so far", summary.correct, summary.tasks_completed)
+                } else {
+                    format!("{} of {} right\nlevel {}", summary.correct, summary.tasks_completed, summary.final_level + 1)
+                };
+                overlay::bubble(&painter, card, &text, 28.0, Color32::from_rgba_unmultiplied(30, 30, 60, 230));
             }
             if let Some(warning) = &snap.warning {
                 painter.text(

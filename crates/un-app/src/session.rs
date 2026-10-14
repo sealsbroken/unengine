@@ -68,8 +68,8 @@ pub struct SessionOptions {
     pub mic: MicChoice,
     pub mic_device: Option<String>,
     pub voice: VoiceChoice,
-    /// Scripted spoken answers (demos and tests); replaces the microphone.
-    pub answers: Option<Vec<u32>>,
+    /// Scripted lines the child says (demos and tests); replaces the microphone.
+    pub answers: Option<Vec<String>>,
     pub chime: bool,
 }
 
@@ -160,7 +160,7 @@ pub fn speech_setup(
     mic: MicChoice,
     mic_device: Option<&str>,
     voice: VoiceChoice,
-    answers: Option<Vec<u32>>,
+    answers: Option<Vec<String>>,
 ) -> SpeechPair {
     let models = paths.speech();
     let speech_out: Arc<dyn SpeechOutput> = match voice {
@@ -176,7 +176,7 @@ pub fn speech_setup(
         }
     };
     let speech_in: Option<Arc<dyn SpeechInput>> = if let Some(answers) = answers {
-        Some(Arc::new(ScriptedSpeechInput::new(answers, std::time::Duration::from_millis(500))))
+        Some(Arc::new(ScriptedSpeechInput::saying(answers, std::time::Duration::from_millis(500))))
     } else {
         match mic {
             MicChoice::Off => None,

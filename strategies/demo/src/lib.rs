@@ -71,8 +71,13 @@ impl DemoStrategy {
         let active = !matches!(self.phase, Phase::Idle | Phase::Finished);
         self.phase = Phase::Finished;
         let correct = self.records.iter().filter(|r| r.correct).count() as u32;
-        let summary =
-            SessionSummary { tasks_completed: self.records.len() as u32, correct, final_level: 0, records: self.records.clone() };
+        let summary = SessionSummary {
+            tasks_completed: self.records.len() as u32,
+            correct,
+            final_level: 0,
+            records: self.records.clone(),
+            ..Default::default()
+        };
         let mut effects = vec![Effect::StopListening, Effect::CancelTimer(self.timer)];
         if active {
             let text = match self.language() {
@@ -163,7 +168,7 @@ impl Strategy for DemoStrategy {
                 self.timer += 1;
                 vec![self.say(text), Effect::StartTimer { token: self.timer, seconds: self.config.nudge_interval }]
             }
-            Event::TimerFired(_) => vec![],
+            Event::TimerFired(_) | Event::Said(_) | Event::Sound(_) => vec![],
             Event::RepeatRequested => {
                 let mut effects = vec![];
                 if let Some(prompt) = self.last_prompt.clone() {

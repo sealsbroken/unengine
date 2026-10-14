@@ -1,5 +1,6 @@
 //! The setup panel's choices, kept between runs in the user's config directory.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,9 @@ pub struct Saved {
     /// A microphone name; `None` for the system default.
     pub mic_device: Option<String>,
     pub chime: Option<bool>,
+    /// What the lessons asked to remember between sessions (names, where a lesson stopped);
+    /// handed back as `SessionConfig::extra`.
+    pub extra: HashMap<String, String>,
 }
 
 /// `~/Library/Application Support/un/desktop.json` on macOS, `$XDG_CONFIG_HOME/un/desktop.json`
