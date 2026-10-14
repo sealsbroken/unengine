@@ -100,6 +100,8 @@ struct State {
     sound: Option<bool>,
     sound_heard_at: Option<Instant>,
     timers: HashMap<u64, Arc<TimerHandle>>,
+    /// Timers cancelled before their (queued) start ran.
+    cancelled_early: Vec<u64>,
     listen: Option<Arc<CancelToken>>,
     closed: bool,
 }
@@ -168,6 +170,7 @@ impl Engine {
                 sound: None,
                 sound_heard_at: None,
                 timers: HashMap::new(),
+                cancelled_early: Vec::new(),
                 listen: None,
                 closed: false,
             }),
@@ -353,14 +356,13 @@ impl Inner {
             let effects = state.strategy.handle(event);
             let mut queued = Vec::new();
             for effect in effects {
-                // Timer and listening control must not wait behind speech.
+                // Cancelling a timer or a listen must not wait behind speech; starting a timer
+                // must (a waiting window counts from the end of the tutor's line).
                 match effect {
-                    Effect::StartTimer { token, seconds } => self.start_timer(&mut state, token, seconds),
-                    Effect::CancelTimer(token) => {
-                        if let Some(timer) = state.timers.remove(&token) {
-                            timer.cancel();
-                        }
-                    }
+                    Effect::CancelTimer(token) => match state.timers.remove(&token) {
+                        Some(timer) => timer.cancel(),
+                        None => state.cancelled_early.push(token),
+                    },
                     Effect::StopListening => {
                         let token = state.listen.take();
                         drop(state);
@@ -429,7 +431,15 @@ impl Inner {
                     summary.final_level + 1
                 ));
             }
-            Effect::StartTimer { .. } | Effect::CancelTimer(_) | Effect::StopListening => {}
+            Effect::StartTimer { token, seconds } => {
+                let mut state = self.state.lock();
+                if let Some(i) = state.cancelled_early.iter().position(|t| *t == token) {
+                    state.cancelled_early.swap_remove(i);
+                } else if !state.closed {
+                    self.start_timer(&mut state, token, seconds);
+                }
+            }
+            Effect::CancelTimer(_) | Effect::StopListening => {}
         }
     }
 

@@ -253,6 +253,14 @@ impl MicrophoneInput {
         mostly_these_words(text, &words)
     }
 
+    /// `text` without the words of the tutor's recent lines.
+    fn without_tutor_words(&self, text: &str, now: Instant) -> String {
+        let spoken = self.spoken.lock();
+        let words: Vec<String> =
+            spoken.iter().filter(|s| now.duration_since(s.at) <= SPOKEN_MEMORY).flat_map(|s| s.words.iter().cloned()).collect();
+        without_words(text, &words)
+    }
+
     /// Whether an utterance overlaps the tutor's voice from the speakers (or the moment this
     /// listen began, when the tutor spoke right before it).
     fn overlaps_tutor(&self, u: &Utterance, since: Instant) -> bool {
@@ -293,19 +301,27 @@ impl MicrophoneInput {
                     continue;
                 }
                 let overlaps = self.overlaps_tutor(&u, since);
+                last_transcript = Some(u.text.clone());
+                *self.last_heard.lock() = (u.text.clone(), Instant::now());
                 let text = if overlaps {
                     // Overlaps the tutor: drop the numbers the tutor just said, keep the child's.
                     let tutor = self.tutor_numbers(since);
-                    without_words(&u.text, &tutor)
+                    let text = without_words(&u.text, &tutor);
+                    if NumberParser::parse(&text, language).is_none() && self.is_echo(&text, since) {
+                        // The tutor's own line, with whatever the child said right after it in
+                        // the same breath ("...what's your name? Vasya.") left over.
+                        let rest = self.without_tutor_words(&text, since);
+                        if rest.is_empty() {
+                            log::debug!("microphone: dropped the tutor's echo {:?}", u.text);
+                            continue;
+                        }
+                        rest
+                    } else {
+                        text
+                    }
                 } else {
                     u.text.clone()
                 };
-                last_transcript = Some(u.text.clone());
-                *self.last_heard.lock() = (u.text.clone(), Instant::now());
-                if overlaps && NumberParser::parse(&text, language).is_none() && self.is_echo(&text, since) {
-                    log::debug!("microphone: dropped the tutor's echo {:?}", u.text);
-                    continue;
-                }
                 if let Some(value) = accept(&text) {
                     *self.returned_until.lock() = Some(u.ended);
                     return Ok((value, u.text));
@@ -628,6 +644,9 @@ mod tests {
         assert!(!mostly_these_words("Ам", &words));
         assert!(!mostly_these_words("Зови меня Ам", &words));
         assert!(mostly_these_words("", &words));
+        // The child's name said in the same breath as the echo is what is left of it.
+        let owned: Vec<String> = line.clone();
+        assert_eq!(without_words("Приятно познакомиться, Вася! Как хочешь меня называть? Ренат.", &owned), "ренат");
     }
 
     #[test]
