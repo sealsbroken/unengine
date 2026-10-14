@@ -9,4 +9,4 @@ mod overlay;
 mod settings;
 mod worker;
 
-pub use app::{run, UnApp};
+pub use app::{run, run_with, Defaults, UnApp};

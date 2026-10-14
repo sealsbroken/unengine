@@ -18,13 +18,27 @@ use crate::overlay::{self, Mapper};
 use crate::settings::{self, Saved};
 use crate::worker::{SourceSpec, Worker};
 
+/// What a product wants preselected when the window opens, whatever was chosen last time.
+#[derive(Debug, Clone, Default)]
+pub struct Defaults {
+    /// A detector name in the models directory (`caps`); ignored when it is not installed.
+    pub detector: Option<String>,
+    /// A strategy id (`lesson-01`); ignored when it is not registered.
+    pub strategy: Option<String>,
+}
+
 /// Opens the window with the given strategies. Returns when the window closes.
 pub fn run(registry: StrategyRegistry) -> eframe::Result<()> {
+    run_with(registry, Defaults::default())
+}
+
+/// Like [`run`], with the product's own preselections.
+pub fn run_with(registry: StrategyRegistry, defaults: Defaults) -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 800.0]).with_title("Un"),
         ..Default::default()
     };
-    eframe::run_native("Un", options, Box::new(|cc| Ok(Box::new(UnApp::new(cc, registry)))))
+    eframe::run_native("Un", options, Box::new(|cc| Ok(Box::new(UnApp::new(cc, registry, defaults)))))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -79,18 +93,21 @@ pub struct UnApp {
 }
 
 impl UnApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, registry: StrategyRegistry) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>, registry: StrategyRegistry, defaults: Defaults) -> Self {
         let cameras: Vec<String> = un_media::list_cameras().map(|c| c.into_iter().map(|c| c.name).collect()).unwrap_or_default();
         let first = registry.infos().first().map(|i| i.id.clone()).unwrap_or_else(|| "demo".into());
         let paths = ModelPaths::discover();
         let saved = settings::load();
         let detectors = paths.detectors();
-        let detector = match saved.detector.clone() {
-            Some(name) if detectors.contains(&name) => name,
+        // The product's preselection wins at start; otherwise last time's choice; otherwise a guess.
+        let detector = match (defaults.detector, saved.detector.clone()) {
+            (Some(name), _) if detectors.contains(&name) => name,
+            (_, Some(name)) if detectors.contains(&name) => name,
             _ => paths.default_detector(),
         };
-        let strategy = match saved.strategy.clone() {
-            Some(id) if registry.get(&id).is_some() => id,
+        let strategy = match (defaults.strategy, saved.strategy.clone()) {
+            (Some(id), _) if registry.get(&id).is_some() => id,
+            (_, Some(id)) if registry.get(&id).is_some() => id,
             _ => first,
         };
         let mics = list_microphones();
