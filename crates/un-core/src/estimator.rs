@@ -45,6 +45,10 @@ pub struct TableState {
     pub on_midline: bool,
     /// Width of the objects' union relative to the table area.
     pub spread: f32,
+    /// How many separate groups the objects lie in (smoothed): objects closer than
+    /// `EstimatorConfig::group_gap` object sizes belong to one group. 0 without objects.
+    #[serde(default)]
+    pub groups: u32,
 }
 
 impl TableState {
@@ -63,6 +67,8 @@ pub struct EstimatorConfig {
     pub hand_confidence: f32,
     pub midline_band: f32,
     pub overlap_iou: f32,
+    /// Edge-to-edge distance, in object sizes, beyond which two objects are in different groups.
+    pub group_gap: f32,
 }
 
 impl Default for EstimatorConfig {
@@ -75,6 +81,7 @@ impl Default for EstimatorConfig {
             hand_confidence: 0.3,
             midline_band: 0.05,
             overlap_iou: 0.3,
+            group_gap: 1.0,
         }
     }
 }
@@ -126,6 +133,7 @@ pub struct TableStateEstimator {
     left: CountChannel,
     right: CountChannel,
     finger_window: Vec<u32>,
+    group_window: Vec<u32>,
     last_hands_present: bool,
 }
 
@@ -143,6 +151,7 @@ impl TableStateEstimator {
             left: CountChannel::default(),
             right: CountChannel::default(),
             finger_window: Vec::new(),
+            group_window: Vec::new(),
             last_hands_present: false,
         }
     }
@@ -189,6 +198,13 @@ impl TableStateEstimator {
 
         let hands_present = hands.iter().any(|h| overlaps(&region, h.bbox.as_ref()));
 
+        self.group_window.push(group_count(&filtered, cfg.group_gap));
+        if self.group_window.len() > cfg.window_frames {
+            let excess = self.group_window.len() - cfg.window_frames;
+            self.group_window.drain(..excess);
+        }
+        let groups = lower_median(&self.group_window);
+
         let (mut is_stable, mut zones_stable) = (false, false);
         if hands_present {
             if !self.last_hands_present {
@@ -230,8 +246,46 @@ impl TableStateEstimator {
             overlapping,
             on_midline,
             spread,
+            groups,
         }
     }
+}
+
+/// How many groups the objects form: two objects are in one group when the gap between their
+/// boxes is under `gap` times the typical object size (the median of the boxes' larger side).
+pub fn group_count(detections: &[Detection], gap: f32) -> u32 {
+    let n = detections.len();
+    if n == 0 {
+        return 0;
+    }
+    let mut sizes: Vec<f32> = detections.iter().map(|d| d.bbox.width().max(d.bbox.height())).collect();
+    sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let size = sizes[(n - 1) / 2].max(1e-4);
+    let limit = gap * size;
+    // Union-find over pairs closer than the limit.
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn root(parent: &mut [usize], i: usize) -> usize {
+        let mut i = i;
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    for i in 0..n {
+        for j in i + 1..n {
+            let (a, b) = (&detections[i].bbox, &detections[j].bbox);
+            let dx = (a.x1.max(b.x1) - a.x2.min(b.x2)).max(0.0);
+            let dy = (a.y1.max(b.y1) - a.y2.min(b.y2)).max(0.0);
+            if (dx * dx + dy * dy).sqrt() < limit {
+                let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
+                if ri != rj {
+                    parent[ri] = rj;
+                }
+            }
+        }
+    }
+    (0..n).filter(|&i| root(&mut parent, i) == i).count() as u32
 }
 
 pub fn has_overlap(detections: &[Detection], threshold: f32) -> bool {
@@ -317,6 +371,44 @@ pub(crate) mod harness {
         pub fn run_cubes(&mut self, n: usize, count: usize, hands: &[HandObservation]) -> TableState {
             self.run(n, &cubes(count, 0.5), hands)
         }
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::*;
+
+    fn chip(x: f32, y: f32) -> Detection {
+        Detection::new(Box2::new(x, y, x + 0.05, y + 0.05), 0.9)
+    }
+
+    #[test]
+    fn chips_lying_apart_form_groups() {
+        assert_eq!(group_count(&[], 1.0), 0);
+        // Two touching pairs with a clear gap between the pairs.
+        let eyes = [chip(0.10, 0.5), chip(0.16, 0.5)];
+        let ears = [chip(0.40, 0.5), chip(0.46, 0.5)];
+        let all: Vec<Detection> = eyes.iter().chain(ears.iter()).cloned().collect();
+        assert_eq!(group_count(&eyes, 1.0), 1);
+        assert_eq!(group_count(&all, 1.0), 2);
+        let mouth = chip(0.70, 0.5);
+        let five: Vec<Detection> = all.iter().cloned().chain([mouth]).collect();
+        assert_eq!(group_count(&five, 1.0), 3);
+        // A row of evenly spaced chips with small gaps is one group.
+        let row: Vec<Detection> = (0..5).map(|i| chip(0.1 + i as f32 * 0.08, 0.5)).collect();
+        assert_eq!(group_count(&row, 1.0), 1);
+    }
+
+    #[test]
+    fn the_estimator_reports_groups() {
+        let mut estimator = TableStateEstimator::default();
+        let two_groups = [chip(0.10, 0.5), chip(0.16, 0.5), chip(0.60, 0.5)];
+        let mut state = estimator.ingest(&two_groups, &[], 0.0);
+        for i in 1..40 {
+            state = estimator.ingest(&two_groups, &[], i as f64 / 30.0);
+        }
+        assert!(state.is_stable);
+        assert_eq!((state.cube_count, state.groups), (Some(3), 2));
     }
 }
 

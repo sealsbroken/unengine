@@ -280,6 +280,7 @@ impl Engine {
             hands_present: state.hands_present,
             is_stable: state.is_stable,
             finger_count: state.finger_count,
+            groups: state.groups,
         };
         self.observe_table(observation);
     }
@@ -514,10 +515,12 @@ impl Inner {
                     if token.is_cancelled() {
                         return;
                     }
-                    match NumberParser::parse(&text, language) {
+                    let numbers = NumberParser::all(&text, language);
+                    match numbers.last().copied() {
                         Some(value) => {
                             self.log(&format!("heard {value} ({text:?})"));
                             self.finish_listening(Some(&token), false);
+                            self.dispatch(Event::Numbers(numbers));
                             self.dispatch(Event::Heard(value));
                             return;
                         }

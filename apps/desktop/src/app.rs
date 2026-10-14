@@ -413,7 +413,7 @@ impl UnApp {
                 };
                 ui.colored_label(
                     if state.is_stable { overlay::GREEN } else { Color32::LIGHT_GRAY },
-                    format!("count: {text}   seen now: {}", state.raw_count),
+                    format!("count: {text}   seen now: {}   groups: {}", state.raw_count, state.groups),
                 );
                 if let Some(f) = state.finger_count {
                     ui.label(format!("fingers: {f}"));

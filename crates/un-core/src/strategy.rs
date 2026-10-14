@@ -64,11 +64,20 @@ pub struct TableObservation {
     pub hands_present: bool,
     pub is_stable: bool,
     pub finger_count: Option<u32>,
+    /// How many separate groups the objects lie in; 0 without objects or when unknown.
+    #[serde(default)]
+    pub groups: u32,
 }
 
 impl TableObservation {
+    /// A settled, hands-free table with `count` objects in one group.
     pub fn stable(count: u32) -> Self {
-        Self { count: Some(count), hands_present: false, is_stable: true, finger_count: None }
+        Self { count: Some(count), hands_present: false, is_stable: true, finger_count: None, groups: count.min(1) }
+    }
+
+    /// A settled, hands-free table with `count` objects lying in `groups` groups.
+    pub fn grouped(count: u32, groups: u32) -> Self {
+        Self { groups, ..Self::stable(count) }
     }
 }
 
@@ -83,6 +92,9 @@ pub enum Event {
     /// Words were heard that are not a number: a name, "yes", "I don't understand", chatter.
     /// Listening goes on afterwards unless the strategy replaces or stops it.
     Said(String),
+    /// Every number in one utterance, in order ("one, two, three"), sent just before the
+    /// `Heard` that carries the last of them.
+    Numbers(Vec<u32>),
     /// Listening ended without a usable number.
     NothingHeard,
     /// The microphone started picking up sound (`true`) or has been quiet for a few seconds

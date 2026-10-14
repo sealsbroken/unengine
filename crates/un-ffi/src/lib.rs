@@ -429,8 +429,8 @@ impl UnSession {
     }
 
     /// What the platform's own perception sees. `count` is the committed count, `None` while unsettled.
-    pub fn observe(&self, count: Option<u32>, hands_present: bool, is_stable: bool, finger_count: Option<u32>) {
-        self.engine.observe_table(TableObservation { count, hands_present, is_stable, finger_count });
+    pub fn observe(&self, count: Option<u32>, hands_present: bool, is_stable: bool, finger_count: Option<u32>, groups: u32) {
+        self.engine.observe_table(TableObservation { count, hands_present, is_stable, finger_count, groups });
     }
 
     pub fn snapshot(&self) -> UnSnapshot {
@@ -480,6 +480,8 @@ pub struct UnTableState {
     pub is_stable: bool,
     pub hands_present: bool,
     pub finger_count: Option<u32>,
+    /// Separate groups the objects lie in.
+    pub groups: u32,
     pub detections: Vec<UnDetection>,
     pub hands: Vec<UnHand>,
     pub timestamp: f64,
@@ -572,6 +574,7 @@ impl UnPerception {
             is_stable: out.state.is_stable,
             hands_present: out.state.hands_present,
             finger_count: out.state.finger_count,
+            groups: out.state.groups,
             detections: out
                 .state
                 .detections

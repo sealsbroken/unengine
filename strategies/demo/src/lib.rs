@@ -168,7 +168,7 @@ impl Strategy for DemoStrategy {
                 self.timer += 1;
                 vec![self.say(text), Effect::StartTimer { token: self.timer, seconds: self.config.nudge_interval }]
             }
-            Event::TimerFired(_) | Event::Said(_) | Event::Sound(_) => vec![],
+            Event::TimerFired(_) | Event::Said(_) | Event::Numbers(_) | Event::Sound(_) => vec![],
             Event::RepeatRequested => {
                 let mut effects = vec![];
                 if let Some(prompt) = self.last_prompt.clone() {

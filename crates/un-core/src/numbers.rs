@@ -183,19 +183,24 @@ impl NumberParser {
 
     /// The *last* number mentioned in `transcript`.
     pub fn parse(transcript: &str, language: Language) -> Option<u32> {
+        Self::all(transcript, language).last().copied()
+    }
+
+    /// Every number mentioned in `transcript`, in order: "one, two, three" is `[1, 2, 3]`.
+    pub fn all(transcript: &str, language: Language) -> Vec<u32> {
         let tokens = tokenize(transcript);
+        let mut found = Vec::new();
         if tokens.is_empty() {
-            return None;
+            return found;
         }
         let table = NumberWords::table(language);
-        let mut last = None;
         let mut i = 0;
         while i < tokens.len() {
             let token = &tokens[i];
             if token.chars().all(|c| c.is_ascii_digit()) {
                 if let Ok(value) = token.parse::<u32>() {
                     if value <= Self::MAX {
-                        last = Some(value);
+                        found.push(value);
                         i += 1;
                         continue;
                     }
@@ -206,7 +211,7 @@ impl NumberParser {
             for length in (1..=longest).rev() {
                 let key = tokens[i..i + length].join(" ");
                 if let Some(value) = table.lookup.get(&key) {
-                    last = Some(*value);
+                    found.push(*value);
                     i += length;
                     matched = true;
                     break;
@@ -216,7 +221,7 @@ impl NumberParser {
                 i += 1;
             }
         }
-        last
+        found
     }
 }
 
