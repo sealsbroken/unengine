@@ -46,6 +46,12 @@ pub fn path() -> Option<PathBuf> {
     base.map(|b| b.join("un").join("desktop.json"))
 }
 
+/// `lesson.log` next to the settings: one line per thing the engine does, for looking into a
+/// session afterwards.
+pub fn log_path() -> Option<PathBuf> {
+    path().map(|p| p.with_file_name("lesson.log"))
+}
+
 pub fn load() -> Saved {
     let Some(path) = path() else { return Saved::default() };
     match std::fs::read_to_string(&path) {

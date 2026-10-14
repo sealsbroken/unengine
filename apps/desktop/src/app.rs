@@ -217,7 +217,7 @@ impl UnApp {
             voice: s.voice,
             ..Default::default()
         };
-        match build_session(&self.paths, options, None) {
+        match build_session(&self.paths, options, lesson_logger()) {
             Ok(session) => {
                 session.engine.start();
                 live.session = Some(session);
@@ -618,6 +618,29 @@ impl UnApp {
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
+}
+
+/// Appends the engine's transcript to `lesson.log` in the config directory (see `settings`).
+fn lesson_logger() -> Option<un_engine::Logger> {
+    use std::io::Write;
+    let path = settings::log_path()?;
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let file = std::fs::OpenOptions::new().append(true).create(true).open(&path).ok()?;
+    let file = std::sync::Mutex::new(file);
+    let started = Instant::now();
+    let _ = writeln!(file.lock().unwrap(), "--- session {}", chrono_free_timestamp());
+    Some(Arc::new(move |line: &str| {
+        if let Ok(mut f) = file.lock() {
+            let _ = writeln!(f, "{:8.2}  {line}", started.elapsed().as_secs_f64());
+        }
+    }))
+}
+
+/// Seconds since the Unix epoch, good enough to tell sessions apart without a date crate.
+fn chrono_free_timestamp() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 fn tap(live: &mut Live, value: u32) {

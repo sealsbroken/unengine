@@ -73,6 +73,8 @@ struct Utterance {
 
 /// Something the tutor said, for telling its voice apart from the child's.
 struct Spoken {
+    /// Every word of the line, lowercased.
+    words: Vec<String>,
     numbers: Vec<String>,
     at: Instant,
 }
@@ -115,9 +117,9 @@ type Heard = (Mutex<VecDeque<Utterance>>, Condvar);
 ///
 /// The stream opens at [`SpeechInput::prepare`] and stays open, decoding every utterance as it
 /// ends, so a listen starts instantly. The tutor's own voice comes back through the microphone:
-/// an utterance that overlaps the tutor's speech is kept only if it still holds a number once
-/// the number words the tutor just said are removed (the child answering over the tutor), and
-/// is dropped as echo otherwise.
+/// in an utterance that overlaps the tutor's speech, the number words the tutor just said are
+/// removed (the child answering over the tutor keeps its number), and the utterance is dropped
+/// when it holds no number and most of its words are the tutor's own.
 pub struct MicrophoneInput {
     models: SpeechModels,
     device: MicDevice,
@@ -242,6 +244,15 @@ impl MicrophoneInput {
         spoken.iter().flat_map(|s| s.numbers.iter().cloned()).collect()
     }
 
+    /// Whether `text`, heard while the tutor was talking, is the tutor's own line coming back
+    /// through the microphone: most of its words are words the tutor just said.
+    fn is_echo(&self, text: &str, now: Instant) -> bool {
+        let spoken = self.spoken.lock();
+        let words: Vec<&String> =
+            spoken.iter().filter(|s| now.duration_since(s.at) <= SPOKEN_MEMORY).flat_map(|s| s.words.iter()).collect();
+        mostly_these_words(text, &words)
+    }
+
     /// Whether an utterance overlaps the tutor's voice from the speakers (or the moment this
     /// listen began, when the tutor spoke right before it).
     fn overlaps_tutor(&self, u: &Utterance, since: Instant) -> bool {
@@ -291,7 +302,7 @@ impl MicrophoneInput {
                 };
                 last_transcript = Some(u.text.clone());
                 *self.last_heard.lock() = (u.text.clone(), Instant::now());
-                if overlaps && NumberParser::parse(&text, language).is_none() {
+                if overlaps && NumberParser::parse(&text, language).is_none() && self.is_echo(&text, since) {
                     log::debug!("microphone: dropped the tutor's echo {:?}", u.text);
                     continue;
                 }
@@ -455,12 +466,10 @@ impl SpeechInput for MicrophoneInput {
 
     fn tutor_speaking(&self, text: &str, language: Language) {
         *self.tutor.lock() = Some(TutorVoice { started: Instant::now(), ended: None });
-        let numbers: Vec<String> = tokenize(text).into_iter().filter(|w| NumberParser::parse(w, language).is_some()).collect();
-        if numbers.is_empty() {
-            return;
-        }
+        let words = tokenize(text);
+        let numbers: Vec<String> = words.iter().filter(|w| NumberParser::parse(w, language).is_some()).cloned().collect();
         let mut spoken = self.spoken.lock();
-        spoken.push_back(Spoken { numbers, at: Instant::now() });
+        spoken.push_back(Spoken { words, numbers, at: Instant::now() });
         while spoken.len() > 8 {
             spoken.pop_front();
         }
@@ -492,6 +501,16 @@ impl SpeechInput for MicrophoneInput {
             String::new()
         }
     }
+}
+
+/// Whether at least half of the words in `text` are among `words` (an empty text is).
+fn mostly_these_words(text: &str, words: &[&String]) -> bool {
+    let heard = tokenize(text);
+    if heard.is_empty() {
+        return true;
+    }
+    let hits = heard.iter().filter(|w| words.contains(w)).count();
+    hits * 2 >= heard.len()
 }
 
 /// `text` with every token in `words` removed.
@@ -599,6 +618,17 @@ impl SpeechOutput for SpeakerOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tutors_own_line_is_echo_but_the_childs_answer_is_not() {
+        let line = tokenize("Приятно познакомиться, Вася! Как хочешь меня называть?");
+        let words: Vec<&String> = line.iter().collect();
+        assert!(mostly_these_words("Приятно познакомиться, Вася.", &words));
+        assert!(mostly_these_words("как хочешь меня называть", &words));
+        assert!(!mostly_these_words("Ам", &words));
+        assert!(!mostly_these_words("Зови меня Ам", &words));
+        assert!(mostly_these_words("", &words));
+    }
 
     #[test]
     fn tutor_numbers_are_removed_from_an_overlapping_utterance() {
