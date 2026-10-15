@@ -10,9 +10,12 @@ struct LessonScreen: View {
             Text(model.snapshot?.lastSpoken ?? "…").font(.title2).multilineTextAlignment(.center).padding()
             Text(model.statusLine).font(.footnote).foregroundStyle(.secondary)
             if let camera = model.camera {
-                CameraPreview(session: camera.session)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .padding(.horizontal)
+                ZStack {
+                    CameraPreview(session: camera.session)
+                    TableOverlay(table: model.table, frameSize: model.frameSize, highlight: model.snapshot?.highlightCount)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .padding(.horizontal)
             } else {
                 Spacer()
             }
@@ -42,6 +45,9 @@ final class LessonModel: ObservableObject {
     private var session: UnSession?
     private var perception: UnPerception?
     @Published private(set) var camera: CameraSource?
+    /// The latest table state and the size of the frame it came from, for the overlay.
+    @Published private(set) var table: UnTableState?
+    @Published private(set) var frameSize: CGSize = .zero
     private var timer: Timer?
 
     var statusLine: String {
@@ -71,6 +77,10 @@ final class LessonModel: ObservableObject {
                 self.session?.observe(
                     count: state.count, handsPresent: state.handsPresent, isStable: state.isStable, fingerCount: state.fingerCount,
                     groups: state.groups)
+                Task { @MainActor in
+                    self.table = state
+                    self.frameSize = CGSize(width: CGFloat(w), height: CGFloat(h))
+                }
             }
         }
         camera?.start()
@@ -90,6 +100,7 @@ final class LessonModel: ObservableObject {
         timer?.invalidate()
         camera?.stop()
         camera = nil
+        table = nil
         session?.close()
         session = nil
     }
