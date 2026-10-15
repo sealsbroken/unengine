@@ -272,12 +272,16 @@ fn counting_on_past_the_expected_number_is_heard_in_full() {
 }
 
 #[test]
-fn a_slow_count_is_not_cut_by_the_listen_timeout() {
+fn a_slow_count_of_any_length_is_not_cut_by_the_listen_timeout() {
     use un_core::strategy::Event;
     // Half a second between numbers, a listen timeout of 0.7 s: the timeout is per number, so
-    // all four are collected (the whole count takes two seconds).
-    let seen = counted_with(&["one", "two", "three", "four"], 4, 0.7, Duration::from_millis(500));
-    assert!(seen.contains(&Event::Numbers(vec![1, 2, 3, 4])), "{seen:?}");
+    // the whole count is collected however long it is.
+    for count in [2u32, 5, 7] {
+        let words: Vec<String> = (1..=count).map(|n| n.to_string()).collect();
+        let lines: Vec<&str> = words.iter().map(String::as_str).collect();
+        let seen = counted_with(&lines, count, 0.7, Duration::from_millis(500));
+        assert!(seen.contains(&Event::Numbers((1..=count).collect())), "{count}: {seen:?}");
+    }
 }
 
 #[test]
