@@ -30,6 +30,11 @@ struct LessonScreen: View {
                 Button(model.running ? "End lesson" : "Start lesson") { model.running ? model.stop() : model.start() }
                 Button("Repeat") { model.repeatLine() }
                 Button("Skip") { model.skip() }
+                // The tutor's language; a running lesson starts over in the new one.
+                Picker("Language", selection: $model.language) {
+                    Text("EN").tag(UnLanguage.english)
+                    Text("RU").tag(UnLanguage.russian)
+                }.pickerStyle(.segmented).frame(width: 100)
             }.buttonStyle(.bordered).padding(.bottom)
         }
         // The lesson starts by itself once the permissions are answered; the button remains for
@@ -49,7 +54,23 @@ final class LessonModel: ObservableObject {
     /// The latest table state and the size of the frame it came from, for the overlay.
     @Published private(set) var table: UnTableState?
     @Published private(set) var frameSize: CGSize = .zero
+    /// The tutor's language, remembered between runs; the device's language the first time.
+    /// Changing it during a lesson starts the lesson over in the new language.
+    @Published var language: UnLanguage = LessonModel.savedLanguage() {
+        didSet {
+            UserDefaults.standard.set(language == .russian ? "ru" : "en", forKey: "language")
+            if running && language != oldValue { restart() }
+        }
+    }
     private var timer: Timer?
+
+    private static func savedLanguage() -> UnLanguage {
+        switch UserDefaults.standard.string(forKey: "language") {
+        case "ru": return .russian
+        case "en": return .english
+        default: return Locale.current.language.languageCode?.identifier == "ru" ? .russian : .english
+        }
+    }
 
     var statusLine: String {
         guard let s = snapshot else { return "idle" }
@@ -59,7 +80,7 @@ final class LessonModel: ObservableObject {
     func start() {
         let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
         var config = defaultSessionConfig()
-        config.language = Locale.current.language.languageCode?.identifier == "ru" ? .russian : .english
+        config.language = language
         do {
             perception = try UnPerception(config: UnPerceptionConfig(
                 modelsDir: modelsDir, detector: "caps", confidence: 0.25, hands: true, countLabel: nil, mirrored: false, roi: nil))
@@ -93,6 +114,7 @@ final class LessonModel: ObservableObject {
     }
 
     func stop() { session?.stop(); running = false }
+    func restart() { close(); start() }
     func tap(_ n: UInt32) { session?.tap(number: n) }
     func repeatLine() { session?.`repeat`() }
     func skip() { session?.skip() }

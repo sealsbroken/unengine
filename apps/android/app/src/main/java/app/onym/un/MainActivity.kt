@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun LessonScreen(model: LessonModel) {
     val snapshot by model.snapshot.collectAsState()
+    val language by model.language.collectAsState()
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(snapshot?.lastSpoken ?: "…", style = MaterialTheme.typography.headlineSmall)
         Text(snapshot?.let { "${it.status}  level ${it.level + 1}/${it.levelCount}  ${it.correct}✓/${it.tasksCompleted}" } ?: "idle",
@@ -49,6 +50,13 @@ fun LessonScreen(model: LessonModel) {
             }
             TextButton(onClick = { model.repeat() }) { Text("Repeat") }
             TextButton(onClick = { model.skip() }) { Text("Skip") }
+        }
+        // The tutor's language; a running lesson starts over in the new one.
+        Row {
+            FilterChip(selected = language == UnLanguage.ENGLISH, onClick = { model.setLanguage(UnLanguage.ENGLISH) },
+                label = { Text("EN") }, modifier = Modifier.padding(2.dp))
+            FilterChip(selected = language == UnLanguage.RUSSIAN, onClick = { model.setLanguage(UnLanguage.RUSSIAN) },
+                label = { Text("RU") }, modifier = Modifier.padding(2.dp))
         }
     }
 }

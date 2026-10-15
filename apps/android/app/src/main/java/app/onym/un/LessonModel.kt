@@ -20,10 +20,27 @@ class LessonModel(private val context: Context) {
     private var perception: UnPerception? = null
     private var timer: Timer? = null
     private val started = System.nanoTime()
+    private val prefs = context.getSharedPreferences("un", Context.MODE_PRIVATE)
+    /** The tutor's language, remembered between runs; the device's language the first time. */
+    val language = MutableStateFlow(savedLanguage())
+
+    private fun savedLanguage(): UnLanguage = when (prefs.getString("language", null)) {
+        "ru" -> UnLanguage.RUSSIAN
+        "en" -> UnLanguage.ENGLISH
+        else -> if (java.util.Locale.getDefault().language == "ru") UnLanguage.RUSSIAN else UnLanguage.ENGLISH
+    }
+
+    /** Switches the tutor's language; a running lesson starts over in the new one. */
+    fun setLanguage(l: UnLanguage) {
+        if (l == language.value) return
+        language.value = l
+        prefs.edit().putString("language", if (l == UnLanguage.RUSSIAN) "ru" else "en").apply()
+        if (running.value) { close(); start() }
+    }
 
     fun start() {
         val modelsDir = ModelAssets.unpack(context)   // copies assets/models to filesDir once
-        val config = defaultSessionConfig().copy(language = if (java.util.Locale.getDefault().language == "ru") UnLanguage.RUSSIAN else UnLanguage.ENGLISH)
+        val config = defaultSessionConfig().copy(language = language.value)
         perception = UnPerception(UnPerceptionConfig(modelsDir, "detector", 0.25f, true, null, false, null))
         session = UnSession(availableStrategies().firstOrNull()?.id ?: "demo", config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true)
         startCamera()
