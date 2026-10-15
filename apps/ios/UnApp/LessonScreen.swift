@@ -32,8 +32,9 @@ struct LessonScreen: View {
                 Button("Skip") { model.skip() }
             }.buttonStyle(.bordered).padding(.bottom)
         }
-        // `SIMCTL_CHILD_UN_AUTOSTART=1 xcrun simctl launch <udid> app.onym.undigit` starts the lesson at once.
-        .onAppear { if ProcessInfo.processInfo.environment["UN_AUTOSTART"] != nil { model.start() } }
+        // The lesson starts by itself once the permissions are answered; the button remains for
+        // starting over after "End lesson".
+        .onAppear { Permissions.request { if !model.running { model.start() } } }
         .onDisappear { model.close() }
     }
 }

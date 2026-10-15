@@ -34,7 +34,7 @@ Notes:
 * The simulator has no camera and no microphone: the tutor speaks, sees an empty table and hears
   nothing, which exercises the no-reaction dialogue. For the real lesson run on a phone:
   `tools/ios.sh device`, then in Xcode pick your team under Signing & Capabilities and press Run.
-* `SIMCTL_CHILD_UN_AUTOSTART=1 xcrun simctl launch <udid> app.onym.undigit` starts the lesson at once;
+* The lesson starts by itself once the permission prompts are answered;
   `xcrun simctl io <udid> screenshot shot.png` shows it without a Simulator window.
 
 Generated files: `Generated/un_ffi.swift`, `Generated/un_ffiFFI.h`, `Generated/un_ffiFFI.modulemap`.
