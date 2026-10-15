@@ -31,15 +31,17 @@ use un_vision::RgbFrame;
 
 uniffi::setup_scaffolding!();
 
+/// The field is `reason`, not `message`: in Kotlin the error is a `Throwable`, which has a
+/// `message` of its own.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum UnError {
-    #[error("{message}")]
-    Failed { message: String },
+    #[error("{reason}")]
+    Failed { reason: String },
 }
 
 impl From<String> for UnError {
-    fn from(message: String) -> Self {
-        UnError::Failed { message }
+    fn from(reason: String) -> Self {
+        UnError::Failed { reason }
     }
 }
 
@@ -458,7 +460,9 @@ impl UnSession {
         self.engine.stop();
     }
 
-    pub fn close(&self) {
+    /// Tears the session down. Not `close`: a Kotlin object has an `AutoCloseable.close()` of
+    /// its own that frees the handle.
+    pub fn shutdown(&self) {
         self.engine.close();
     }
 

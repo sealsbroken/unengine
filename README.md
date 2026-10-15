@@ -25,7 +25,7 @@ stays open and relinkable (see [Licence](#licence)).
 | `crates/un-cli` | `un`: headless counting and lessons, the speech self-test, camera and strategy listing. |
 | `crates/un-ffi` | UniFFI bindings for Swift and Kotlin: sessions, snapshots, the shared vision, and callback interfaces for platform speech. |
 | `apps/desktop` | The desktop window (egui): camera view with overlay, tutor HUD, number pad. A library plus a binary that ships the demo lesson. |
-| `apps/ios`, `apps/android` | SwiftUI and Compose shells over `un-ffi`: the phone's camera and speech APIs, the shared engine. |
+| `apps/ios`, `apps/android` | SwiftUI and Compose shells over `un-ffi`: the phone's camera and speech APIs, the shared engine. The iOS screen is the reference: the tutor's line and status, the camera picture with the overlay (objects, numbers, the finger's ring, fingers, hand skeletons), the number pad, start/end, repeat, skip and the EN/RU switch; Android and the desktop's live view carry the same controls. |
 | `strategies/demo` | The smallest strategy: "how many are on the table?" |
 | `tools/` | `fetch_models.py` (hand, speech models), `export_detector.py` (export a detector), `teach.py` (fine-tune on `un collect` frames). |
 | `docs/architecture.md` | Design, the strategy boundary, and the per-platform feasibility matrix. |

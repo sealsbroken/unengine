@@ -1,9 +1,13 @@
 package app.onym.un
 
 import android.content.Context
+import android.view.Surface
+import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -12,13 +16,23 @@ import java.io.File
 import java.util.Timer
 import java.util.TimerTask
 
-/** Wires CameraX frames into the shared perception and the lesson into the shared engine. */
+/**
+ * Wires CameraX frames into the shared perception and the lesson into the shared engine, as the
+ * iOS `LessonModel` does: the caps detector with hand tracking, lesson 1 when it is registered,
+ * the camera's picture behind the overlay, the language remembered between runs.
+ */
 class LessonModel(private val context: Context) {
     val snapshot = MutableStateFlow<UnSnapshot?>(null)
     val running = MutableStateFlow(false)
+    /** The latest table state and the size of the frame it came from, for the overlay. */
+    val table = MutableStateFlow<UnTableState?>(null)
+    val frameSize = MutableStateFlow(Pair(0, 0))
+    /** The camera's own picture, filled to the view keeping the frame's aspect (like iOS). */
+    val previewView: PreviewView by lazy { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
     private var session: UnSession? = null
     private var perception: UnPerception? = null
     private var timer: Timer? = null
+    private var cameraStarted = false
     private val started = System.nanoTime()
     private val prefs = context.getSharedPreferences("un", Context.MODE_PRIVATE)
     /** The tutor's language, remembered between runs; the device's language the first time. */
@@ -41,8 +55,10 @@ class LessonModel(private val context: Context) {
     fun start() {
         val modelsDir = ModelAssets.unpack(context)   // copies assets/models to filesDir once
         val config = defaultSessionConfig().copy(language = language.value)
-        perception = UnPerception(UnPerceptionConfig(modelsDir, "detector", 0.25f, true, null, false, null))
-        session = UnSession(availableStrategies().firstOrNull()?.id ?: "demo", config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true)
+        perception = UnPerception(UnPerceptionConfig(modelsDir, "caps", 0.25f, true, null, false, null))
+        val strategies = availableStrategies()
+        val lesson = strategies.firstOrNull { it.id == "lesson-01" } ?: strategies.firstOrNull()
+        session = UnSession(lesson?.id ?: "demo", config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true)
         startCamera()
         session?.start()
         running.value = true
@@ -50,13 +66,21 @@ class LessonModel(private val context: Context) {
     }
 
     private fun startCamera() {
+        if (cameraStarted) return
+        cameraStarted = true
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
             val provider = future.get()
-            val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+            val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
+            // Frames come out upright (portrait, like the preview), so the overlay maps 1:1.
+            val analysis = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .setOutputImageRotationEnabled(true)
+                .setTargetRotation(Surface.ROTATION_0)
+                .build()
             analysis.setAnalyzer(ContextCompat.getMainExecutor(context)) { image -> analyze(image) }
             provider.unbindAll()
-            provider.bindToLifecycle(context as LifecycleOwner, androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA, analysis)
+            provider.bindToLifecycle(context as LifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
         }, ContextCompat.getMainExecutor(context))
     }
 
@@ -67,7 +91,11 @@ class LessonModel(private val context: Context) {
             val uvBytes = ByteArray(uv.buffer.remaining() + 1).also { b -> uv.buffer.get(b, 0, uv.buffer.remaining()) }
             val t = (System.nanoTime() - started) / 1e9
             val state = perception?.processNv12(yBytes, uvBytes, it.width.toUInt(), it.height.toUInt(), y.rowStride.toUInt(), uv.rowStride.toUInt(), t)
-            if (state != null) session?.observe(state.count, state.handsPresent, state.isStable, state.fingerCount, state.groups, state.pointedAt)
+            if (state != null) {
+                session?.observe(state.count, state.handsPresent, state.isStable, state.fingerCount, state.groups, state.pointedAt)
+                table.value = state
+                frameSize.value = Pair(it.width, it.height)
+            }
         }
     }
 
@@ -78,8 +106,9 @@ class LessonModel(private val context: Context) {
 
     fun close() {
         timer?.cancel()
-        session?.close()
+        session?.shutdown()
         session = null
+        table.value = null
     }
 }
 

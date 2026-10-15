@@ -134,7 +134,7 @@ impl UnApp {
                 mic: saved.mic.unwrap_or(true),
                 mic_device,
                 mics,
-                chime: saved.chime.unwrap_or(false),
+                chime: saved.chime.unwrap_or(true),
                 sim_count: 3,
                 extra: saved.extra,
             },
@@ -420,6 +420,15 @@ impl UnApp {
                     sim.add(1);
                 }
             }
+            if let Some(s) = &live.session {
+                // As on the phone: the line again, or on to the next task.
+                if ui.button("Repeat").on_hover_text("Space").clicked() {
+                    s.engine.repeat();
+                }
+                if ui.button("Skip").on_hover_text("N").clicked() {
+                    s.engine.skip();
+                }
+            }
             if ui.button("Reset area (R)").clicked() {
                 live.worker.set_roi(None);
             }
@@ -438,6 +447,18 @@ impl UnApp {
                 }
             }
             ui.label(format!("{fps:.0} fps{}", if hands_enabled { "" } else { "  (hand models missing)" }));
+            // The tutor's language, as on the phone's HUD; a running lesson starts over in the
+            // new one, since a session's language is fixed when it is created.
+            let before = self.setup.language;
+            ui.radio_value(&mut self.setup.language, Language::English, "EN");
+            ui.radio_value(&mut self.setup.language, Language::Russian, "RU");
+            if self.setup.language != before {
+                self.remember();
+                if self.live.as_ref().is_some_and(|l| l.session.is_some()) {
+                    self.stop_lesson();
+                    self.start_lesson();
+                }
+            }
         });
         let Some(live) = &mut self.live else { return };
 

@@ -47,7 +47,7 @@ final class AppleSpeechInput: SpeechInputCallback {
     func prepare(language: UnLanguage) throws {
         let status = SFSpeechRecognizer.authorizationStatus()
         guard status == .authorized || status == .notDetermined else {
-            throw UnError.Failed(message: "speech recognition not authorised")
+            throw UnError.Failed(reason: "speech recognition not authorised")
         }
         if status == .notDetermined { SFSpeechRecognizer.requestAuthorization { _ in } }
         AVAudioApplication.requestRecordPermission { _ in }

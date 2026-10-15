@@ -124,7 +124,7 @@ final class LessonModel: ObservableObject {
         camera?.stop()
         camera = nil
         table = nil
-        session?.close()
+        session?.shutdown()
         session = nil
     }
 }
