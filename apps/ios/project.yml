@@ -22,7 +22,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.onym.undigit
         INFOPLIST_FILE: Info.plist
         SWIFT_OBJC_BRIDGING_HEADER: UnApp/Bridging.h
-        LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/Frameworks
+        # One Rust build per SDK, staged by tools/ios.sh (device and sim builds can coexist).
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(PROJECT_DIR)/Frameworks/iphoneos
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(PROJECT_DIR)/Frameworks/iphonesimulator
         # No -all_load: the prebuilt ONNX Runtime carries some objects twice, which would then
         # collide. Strategies are registered explicitly (unmethod_mobile_init) instead.
         OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]

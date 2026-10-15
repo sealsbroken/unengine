@@ -17,7 +17,7 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim && brew install xcodeg
 cargo build -p un-ffi --release --target aarch64-apple-ios-sim        # aarch64-apple-ios for a phone
 cargo run -p un-ffi --bin uniffi-bindgen -- generate \
     --library ../../target/aarch64-apple-ios-sim/release/libun_ffi.a --language swift --no-format --out-dir Generated
-mkdir -p Frameworks Resources/models && cp ../../target/aarch64-apple-ios-sim/release/libun_ffi.a Frameworks/
+mkdir -p Frameworks/iphonesimulator Resources/models && cp ../../target/aarch64-apple-ios-sim/release/libun_ffi.a Frameworks/iphonesimulator/
 cp ../../models/{caps,detector}.{onnx,json} ../../models/{hand_landmark,palm_detection}.onnx Resources/models/
 xcodegen generate && open UnApp.xcodeproj
 ```
