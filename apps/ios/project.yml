@@ -3,7 +3,7 @@
 # with the demo strategy, build un-ffi and link -lun_ffi instead.
 name: UnApp
 options:
-  bundleIdPrefix: app.onym.un
+  bundleIdPrefix: app.onym.undigit
   deploymentTarget:
     iOS: "17.0"
 targets:
@@ -19,7 +19,7 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.onym.un
+        PRODUCT_BUNDLE_IDENTIFIER: app.onym.undigit
         INFOPLIST_FILE: Info.plist
         SWIFT_OBJC_BRIDGING_HEADER: UnApp/Bridging.h
         LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/Frameworks

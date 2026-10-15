@@ -23,7 +23,7 @@ struct LessonScreen: View {
                 Button("Skip") { model.skip() }
             }.buttonStyle(.bordered).padding(.bottom)
         }
-        // `SIMCTL_CHILD_UN_AUTOSTART=1 xcrun simctl launch <udid> app.onym.un` starts the lesson at once.
+        // `SIMCTL_CHILD_UN_AUTOSTART=1 xcrun simctl launch <udid> app.onym.undigit` starts the lesson at once.
         .onAppear { if ProcessInfo.processInfo.environment["UN_AUTOSTART"] != nil { model.start() } }
         .onDisappear { model.close() }
     }
