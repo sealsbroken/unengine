@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// One screen: camera preview placeholder, the tutor's line, status, and the number pad.
+/// One screen: the tutor's line, status, the camera's picture, and the number pad.
 /// Perception runs through the shared Rust models (`UnPerception`); speech through Apple's APIs.
 struct LessonScreen: View {
     @StateObject private var model = LessonModel()
@@ -9,7 +9,13 @@ struct LessonScreen: View {
         VStack(spacing: 12) {
             Text(model.snapshot?.lastSpoken ?? "…").font(.title2).multilineTextAlignment(.center).padding()
             Text(model.statusLine).font(.footnote).foregroundStyle(.secondary)
-            Spacer()
+            if let camera = model.camera {
+                CameraPreview(session: camera.session)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal)
+            } else {
+                Spacer()
+            }
             if model.snapshot?.showNumberPad == true {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5)) {
                     ForEach(0...10, id: \.self) { n in
@@ -35,7 +41,7 @@ final class LessonModel: ObservableObject {
     @Published var running = false
     private var session: UnSession?
     private var perception: UnPerception?
-    private var camera: CameraSource?
+    @Published private(set) var camera: CameraSource?
     private var timer: Timer?
 
     var statusLine: String {
@@ -83,6 +89,7 @@ final class LessonModel: ObservableObject {
     func close() {
         timer?.invalidate()
         camera?.stop()
+        camera = nil
         session?.close()
         session = nil
     }

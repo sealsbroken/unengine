@@ -1,11 +1,12 @@
 import AVFoundation
 import CoreImage
+import SwiftUI
 
 /// Front or back camera frames as NV12 planes, handed to the shared perception (`UnPerception.processNv12`).
 final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     typealias FrameHandler = (_ y: Data, _ uv: Data, _ width: UInt32, _ height: UInt32, _ yStride: UInt32, _ uvStride: UInt32, _ timestamp: Double) -> Void
 
-    private let session = AVCaptureSession()
+    let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "un.camera")
     private let handler: FrameHandler
     private let started = Date()
@@ -42,4 +43,23 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         let uv = Data(bytes: uvBase, count: uvStride * Int(height) / 2)
         handler(y, uv, width, height, UInt32(yStride), UInt32(uvStride), Date().timeIntervalSince(started))
     }
+}
+
+/// The camera's own picture behind the lesson, so the child and the grown-up see what the tutor sees.
+struct CameraPreview: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    final class PreviewView: UIView {
+        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+    }
+
+    func makeUIView(context: Context) -> PreviewView {
+        let view = PreviewView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        return view
+    }
+
+    func updateUIView(_ uiView: PreviewView, context: Context) {}
 }

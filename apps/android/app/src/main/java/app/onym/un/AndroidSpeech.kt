@@ -54,21 +54,38 @@ class AndroidSpeechInput(private val context: Context) : SpeechInputCallback {
     }
 
     override fun listenForNumber(language: UnLanguage, timeoutSeconds: Double): UnHeard? {
+        var heard: UnHeard? = null
+        listen(language, timeoutSeconds) { text ->
+            NumberWords.parse(text, language)?.let { heard = UnHeard(it, text) } != null
+        }
+        return heard
+    }
+
+    override fun listenForText(language: UnLanguage, timeoutSeconds: Double): String? =
+        listen(language, timeoutSeconds) { false }
+
+    /// Recognises until `done` accepts a partial transcript or the recogniser delivers its final
+    /// result (Android ends the utterance itself when the child pauses); the transcript, or null
+    /// when nothing was said before the timeout or listening was cancelled.
+    private fun listen(language: UnLanguage, timeoutSeconds: Double, done: (String) -> Boolean): String? {
         cancelled = false
         val latch = CountDownLatch(1)
-        var heard: UnHeard? = null
+        var transcript: String? = null
         val locale = if (language == UnLanguage.RUSSIAN) "ru-RU" else "en-US"
         main.post {
             val r = SpeechRecognizer.createSpeechRecognizer(context).also { recognizer = it }
             r.setRecognitionListener(object : RecognitionListener {
                 override fun onResults(results: Bundle?) {
                     val texts = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-                    for (text in texts) NumberWords.parse(text, language)?.let { heard = UnHeard(it, text) }
+                    texts.firstOrNull { it.isNotBlank() }?.let { transcript = it }
                     latch.countDown()
                 }
                 override fun onPartialResults(partial: Bundle?) {
                     val texts = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-                    for (text in texts) NumberWords.parse(text, language)?.let { heard = UnHeard(it, text); latch.countDown() }
+                    for (text in texts) if (text.isNotBlank()) {
+                        transcript = text
+                        if (done(text)) latch.countDown()
+                    }
                 }
                 override fun onError(error: Int) { latch.countDown() }
                 override fun onReadyForSpeech(p: Bundle?) {}
@@ -87,7 +104,7 @@ class AndroidSpeechInput(private val context: Context) : SpeechInputCallback {
         }
         latch.await((timeoutSeconds * 1000).toLong(), TimeUnit.MILLISECONDS)
         main.post { recognizer?.destroy(); recognizer = null }
-        return if (cancelled) null else heard
+        return if (cancelled) null else transcript?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     override fun cancelListening() {

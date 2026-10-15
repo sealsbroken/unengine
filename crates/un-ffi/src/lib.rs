@@ -323,7 +323,12 @@ impl From<un_engine::EngineSnapshot> for UnSnapshot {
 #[uniffi::export(with_foreign)]
 pub trait SpeechInputCallback: Send + Sync {
     fn prepare(&self, language: UnLanguage) -> Result<(), UnError>;
+    /// Listens until a number is heard; `None` on timeout or cancellation.
     fn listen_for_number(&self, language: UnLanguage, timeout_seconds: f64) -> Option<UnHeard>;
+    /// Listens for whatever the child says (a name, "yes", "I don't understand"), returning the
+    /// transcript once the child has finished the utterance; `None` when nothing was said
+    /// before the timeout or listening was cancelled.
+    fn listen_for_text(&self, language: UnLanguage, timeout_seconds: f64) -> Option<String>;
     fn cancel_listening(&self);
 }
 
@@ -364,10 +369,24 @@ impl SpeechInput for CallbackInput {
         language: Language,
         timeout: Duration,
         cancel: &CancelToken,
-        _accept: &dyn Fn(&str) -> bool,
+        accept: &dyn Fn(&str) -> bool,
     ) -> Result<String, SpeechError> {
-        let heard = self.listen_for_number(language, timeout, cancel)?;
-        Ok(if heard.transcript.trim().is_empty() { heard.value.to_string() } else { heard.transcript })
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(SpeechError::Timeout { last_transcript: None });
+            }
+            let heard = self.0.listen_for_text(language.into(), remaining.as_secs_f64());
+            if cancel.is_cancelled() {
+                return Err(SpeechError::Cancelled);
+            }
+            match heard {
+                Some(text) if accept(&text) => return Ok(text),
+                Some(_) => continue,
+                None => return Err(SpeechError::Timeout { last_transcript: None }),
+            }
+        }
     }
 
     fn stop(&self) {
