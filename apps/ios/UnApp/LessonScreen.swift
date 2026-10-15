@@ -77,7 +77,7 @@ final class LessonModel: ObservableObject {
             if let state = try? perception.processNv12(y: y, uv: uv, width: w, height: h, yStride: ys, uvStride: uvs, timestamp: t) {
                 self.session?.observe(
                     count: state.count, handsPresent: state.handsPresent, isStable: state.isStable, fingerCount: state.fingerCount,
-                    groups: state.groups)
+                    groups: state.groups, pointedAt: state.pointedAt)
                 Task { @MainActor in
                     self.table = state
                     self.frameSize = CGSize(width: CGFloat(w), height: CGFloat(h))

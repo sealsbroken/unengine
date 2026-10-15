@@ -4,8 +4,8 @@ use std::path::Path;
 
 use thiserror::Error;
 use un_core::{
-    Detection, DetectionTracker, EstimatorConfig, HandObservation, TableState, TableStateEstimator, TrackedDetection,
-    TrackerConfig,
+    touched_object, Detection, DetectionTracker, EstimatorConfig, HandObservation, TableState, TableStateEstimator,
+    TrackedDetection, TrackerConfig, TOUCH_MARGIN,
 };
 use un_vision::{Detector, DetectorConfig, HandLandmarker, HandLandmarkerConfig, Provider, RgbFrame, VisionError};
 
@@ -119,8 +119,9 @@ impl Perception {
             Some(tracker) => tracker.track(frame)?,
             None => vec![],
         };
-        let state = self.estimator.ingest(&detections, &hands, timestamp);
+        let mut state = self.estimator.ingest(&detections, &hands, timestamp);
         let tracked = self.tracker.update(&state.detections);
+        state.pointed_at = touched_object(&self.tracker.numbered(), &hands, &fingers, TOUCH_MARGIN);
         Ok(PerceptionOutput { state, tracked, hands, fingers })
     }
 
@@ -133,8 +134,9 @@ impl Perception {
         timestamp: f64,
     ) -> PerceptionOutput {
         let (fingers, detections) = split_fingers(detections.to_vec());
-        let state = estimator.ingest(&detections, hands, timestamp);
+        let mut state = estimator.ingest(&detections, hands, timestamp);
         let tracked = tracker.update(&state.detections);
+        state.pointed_at = touched_object(&tracker.numbered(), hands, &fingers, TOUCH_MARGIN);
         PerceptionOutput { state, tracked, hands: hands.to_vec(), fingers }
     }
 }
@@ -158,5 +160,8 @@ mod tests {
         assert_eq!(out.state.detections.len(), 2);
         assert_eq!(out.fingers.len(), 1);
         assert_eq!(out.fingers[0].label.as_deref(), Some("finger"));
+        // Once the objects are numbered (two frames), the finger over the second one is on it.
+        let out = Perception::process_detections(&mut estimator, &mut tracker, &detections, &[], 0.1);
+        assert_eq!(out.state.pointed_at, Some(2));
     }
 }

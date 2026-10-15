@@ -284,6 +284,7 @@ impl Engine {
             is_stable: state.is_stable,
             finger_count: state.finger_count,
             groups: state.groups,
+            pointed_at: state.pointed_at,
         };
         self.observe_table(observation);
     }

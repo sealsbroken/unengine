@@ -21,6 +21,7 @@ pub mod geometry;
 pub mod hands;
 pub mod language;
 pub mod numbers;
+pub mod pointing;
 pub mod strategy;
 pub mod tracker;
 
@@ -30,6 +31,7 @@ pub use geometry::{Box2, Point};
 pub use hands::{Chirality, FingerCounter, HandJoint, HandObservation};
 pub use language::{Language, Noun, Numerals};
 pub use numbers::{CountQuestion, NumberParser, NumberWords};
+pub use pointing::{touched_object, TOUCH_MARGIN};
 pub use strategy::{
     Effect, Event, ListenMode, SessionConfig, SessionSummary, Strategy, StrategyFactory, StrategyInfo, TableObservation,
     TaskRecord,

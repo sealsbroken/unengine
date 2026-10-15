@@ -55,6 +55,14 @@ impl DetectionTracker {
         self.next_serial = 0;
     }
 
+    /// Every numbered object with its last box, including those missed for a few frames
+    /// (a finger on an object may hide it from the detector).
+    pub fn numbered(&self) -> Vec<(u32, Box2)> {
+        let mut live: Vec<(u64, Box2)> = self.tracks.iter().filter_map(|t| t.serial.map(|s| (s, t.bbox))).collect();
+        live.sort_by_key(|(serial, _)| *serial);
+        live.into_iter().enumerate().map(|(i, (_, bbox))| (i as u32 + 1, bbox)).collect()
+    }
+
     pub fn update(&mut self, detections: &[Detection]) -> Vec<TrackedDetection> {
         let cfg = &self.config;
         let tracks = &mut self.tracks;
@@ -184,6 +192,8 @@ mod tests {
         for _ in 0..3 {
             t.update(&[cap(0.2, 0.5)]);
         }
+        // The missed one is still numbered, at its last box.
+        assert_eq!(t.numbered().iter().map(|(n, b)| (*n, b.x1)).collect::<Vec<_>>(), vec![(1, 0.2), (2, 0.7)]);
         assert_eq!(numbers(&t.update(&[cap(0.2, 0.5), cap(0.7, 0.5)])), map(&[(1, 0.2), (2, 0.7)]));
         for _ in 0..5 {
             t.update(&[cap(0.7, 0.5)]);

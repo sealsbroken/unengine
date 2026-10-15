@@ -50,7 +50,7 @@ class LessonModel(private val context: Context) {
             val uvBytes = ByteArray(uv.buffer.remaining() + 1).also { b -> uv.buffer.get(b, 0, uv.buffer.remaining()) }
             val t = (System.nanoTime() - started) / 1e9
             val state = perception?.processNv12(yBytes, uvBytes, it.width.toUInt(), it.height.toUInt(), y.rowStride.toUInt(), uv.rowStride.toUInt(), t)
-            if (state != null) session?.observe(state.count, state.handsPresent, state.isStable, state.fingerCount)
+            if (state != null) session?.observe(state.count, state.handsPresent, state.isStable, state.fingerCount, state.groups, state.pointedAt)
         }
     }
 

@@ -49,6 +49,10 @@ pub struct TableState {
     /// `EstimatorConfig::group_gap` object sizes belong to one group. 0 without objects.
     #[serde(default)]
     pub groups: u32,
+    /// The stable number of the object a finger is on (see [`crate::pointing`]); set by the
+    /// perception pipeline after tracking, `None` when no finger is on an object.
+    #[serde(default)]
+    pub pointed_at: Option<u32>,
 }
 
 impl TableState {
@@ -247,6 +251,7 @@ impl TableStateEstimator {
             on_midline,
             spread,
             groups,
+            pointed_at: None,
         }
     }
 }

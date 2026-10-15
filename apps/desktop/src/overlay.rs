@@ -66,6 +66,10 @@ pub fn draw_detections(
     for t in tracked {
         let rect = map.box_rect(&t.detection.bbox);
         let center = rect.center();
+        if state.pointed_at == Some(t.number) {
+            // The object a finger is on.
+            painter.circle_stroke(center, rect.width().max(rect.height()) * 0.7, Stroke::new(3.0, BLUE));
+        }
         let lit = highlight.is_some_and(|n| t.number <= n);
         let fill = if lit { RED } else { Color32::from_black_alpha(160) };
         painter.circle_filled(center, if lit { 22.0 } else { 16.0 }, fill);

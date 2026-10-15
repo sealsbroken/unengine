@@ -472,9 +472,18 @@ impl UnSession {
         self.engine.tap(number);
     }
 
-    /// What the platform's own perception sees. `count` is the committed count, `None` while unsettled.
-    pub fn observe(&self, count: Option<u32>, hands_present: bool, is_stable: bool, finger_count: Option<u32>, groups: u32) {
-        self.engine.observe_table(TableObservation { count, hands_present, is_stable, finger_count, groups });
+    /// What the platform's own perception sees. `count` is the committed count, `None` while
+    /// unsettled; `pointed_at` the number of the object a finger is on.
+    pub fn observe(
+        &self,
+        count: Option<u32>,
+        hands_present: bool,
+        is_stable: bool,
+        finger_count: Option<u32>,
+        groups: u32,
+        pointed_at: Option<u32>,
+    ) {
+        self.engine.observe_table(TableObservation { count, hands_present, is_stable, finger_count, groups, pointed_at });
     }
 
     pub fn snapshot(&self) -> UnSnapshot {
@@ -529,6 +538,8 @@ pub struct UnTableState {
     pub detections: Vec<UnDetection>,
     /// Fingers seen over the table (the detector's `finger` label): shown, never counted.
     pub fingers: Vec<UnDetection>,
+    /// The number of the object a finger is on, if any.
+    pub pointed_at: Option<u32>,
     pub hands: Vec<UnHand>,
     pub timestamp: f64,
 }
@@ -626,6 +637,7 @@ impl UnPerception {
             .collect();
         Ok(UnTableState {
             fingers,
+            pointed_at: out.state.pointed_at,
             count: out.state.cube_count,
             raw_count: out.state.raw_count,
             is_stable: out.state.is_stable,

@@ -460,6 +460,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
             "labels": per_label, "numbered": tracked.iter().map(|t| t.number).collect::<Vec<_>>(),
             "hands": state.hands.len(), "fingers": state.finger_count,
             "pointing": fingers.iter().map(|d| (d.confidence * 100.0).round() / 100.0).collect::<Vec<_>>(),
+            "pointed_at": state.pointed_at,
         });
         if Some(&summary) != last_summary.as_ref() {
             let mut line = summary.clone();

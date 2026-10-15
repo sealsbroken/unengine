@@ -51,6 +51,12 @@ struct TableOverlay: View {
                     context.draw(Text(label).font(.system(size: 13)).foregroundStyle(color), at: CGPoint(x: r.minX + 4, y: r.minY - 9), anchor: .leading)
                 }
                 if d.number > 0 {
+                    if table.pointedAt == d.number {
+                        // The object a finger is on.
+                        let radius = max(r.width, r.height) * 0.7
+                        let ring = CGRect(x: r.midX - radius, y: r.midY - radius, width: 2 * radius, height: 2 * radius)
+                        context.stroke(Path(ellipseIn: ring), with: .color(Self.blue), lineWidth: 3)
+                    }
                     let lit = highlight.map { d.number <= $0 } ?? false
                     let radius: CGFloat = lit ? 22 : 16
                     let center = CGPoint(x: r.midX, y: r.midY)

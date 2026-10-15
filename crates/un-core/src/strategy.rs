@@ -67,12 +67,22 @@ pub struct TableObservation {
     /// How many separate groups the objects lie in; 0 without objects or when unknown.
     #[serde(default)]
     pub groups: u32,
+    /// The stable number of the object a finger is on, `None` when no finger is on one.
+    #[serde(default)]
+    pub pointed_at: Option<u32>,
 }
 
 impl TableObservation {
     /// A settled, hands-free table with `count` objects in one group.
     pub fn stable(count: u32) -> Self {
-        Self { count: Some(count), hands_present: false, is_stable: true, finger_count: None, groups: count.min(1) }
+        Self {
+            count: Some(count),
+            hands_present: false,
+            is_stable: true,
+            finger_count: None,
+            groups: count.min(1),
+            pointed_at: None,
+        }
     }
 
     /// A settled, hands-free table with `count` objects lying in `groups` groups.
