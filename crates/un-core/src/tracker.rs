@@ -20,13 +20,15 @@ pub struct TrackedDetection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackerConfig {
     pub min_hits: u32,
+    /// Frames a numbered object survives unseen: long enough (about a second and a half at
+    /// camera rate) for a finger resting on it while a number is said.
     pub max_missed: u32,
     pub max_distance: f32,
 }
 
 impl Default for TrackerConfig {
     fn default() -> Self {
-        Self { min_hits: 2, max_missed: 10, max_distance: 1.5 }
+        Self { min_hits: 2, max_missed: 40, max_distance: 1.5 }
     }
 }
 
