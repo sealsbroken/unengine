@@ -113,18 +113,26 @@ final class LessonModel: ObservableObject {
         camera?.start()
         session?.start()
         running = true
+        // The phone lies on the table for minutes with nobody touching it: no auto-lock while
+        // a lesson runs.
+        UIApplication.shared.isIdleTimerDisabled = true
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.snapshot = self?.session?.snapshot() }
         }
     }
 
-    func stop() { session?.stop(); running = false }
+    func stop() {
+        session?.stop()
+        running = false
+        UIApplication.shared.isIdleTimerDisabled = false
+    }
     func restart() { close(); start() }
     func tap(_ n: UInt32) { session?.tap(number: n) }
     func repeatLine() { session?.`repeat`() }
     func skip() { session?.skip() }
 
     func close() {
+        UIApplication.shared.isIdleTimerDisabled = false
         timer?.invalidate()
         camera?.stop()
         camera = nil
