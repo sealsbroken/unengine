@@ -54,7 +54,11 @@ class LessonModel(private val context: Context) {
 
     fun start() {
         val modelsDir = ModelAssets.unpack(context)   // copies assets/models to filesDir once
-        val config = defaultSessionConfig().copy(language = language.value)
+        var config = defaultSessionConfig().copy(language = language.value)
+        if (BuildConfig.DEBUG) {
+            // As on iOS: a debug build skips the introductions and goes straight to the lesson.
+            config = config.copy(childName = if (language.value == UnLanguage.RUSSIAN) "Вася" else "Mia")
+        }
         perception = UnPerception(UnPerceptionConfig(modelsDir, "caps", 0.25f, true, null, false, null))
         val strategies = availableStrategies()
         val lesson = strategies.firstOrNull { it.id == "lesson-01" } ?: strategies.firstOrNull()

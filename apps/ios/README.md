@@ -34,6 +34,8 @@ Notes:
 * The simulator has no camera and no microphone: the tutor speaks, sees an empty table and hears
   nothing, which exercises the no-reaction dialogue. For the real lesson run on a phone:
   `tools/ios.sh device`, then in Xcode pick your team under Signing & Capabilities and press Run.
+* A debug build skips the introductions (the child's and the tutor's names) and goes straight
+  to the lesson, greeting a stand-in child by name; a release build asks.
 * The lesson starts by itself once the permission prompts are answered;
   `xcrun simctl io <udid> screenshot shot.png` shows it without a Simulator window.
 

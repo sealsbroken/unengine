@@ -27,7 +27,8 @@ is what Android Studio bundles, so point `JAVA_HOME` at a JDK 21 (Android Studio
 The screen mirrors the iOS one: the tutor's line and status, the camera picture (CameraX
 `PreviewView`, frames rotated upright so the overlay maps one to one) with the table overlay,
 the number pad, start/end, repeat, skip and the EN/RU switch; the lesson starts by itself once
-the camera permission is answered.
+the camera permission is answered. A debug build skips the introductions (the names) and goes
+straight to the lesson, as on iOS.
 
 The generated Kotlin lands in `app/src/main/java/uniffi/un_ffi/`. ONNX Runtime for Android is
 linked by the `ort` crate (download-binaries); sherpa-onnx is not needed on Android because

@@ -81,6 +81,11 @@ final class LessonModel: ObservableObject {
         let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
         var config = defaultSessionConfig()
         config.language = language
+        #if DEBUG
+        // A debug build skips the introductions (the child's name, the tutor's) and goes straight
+        // to the lesson: a known child is greeted by name and asked only whether they are ready.
+        config.childName = language == .russian ? "Вася" : "Mia"
+        #endif
         do {
             perception = try UnPerception(config: UnPerceptionConfig(
                 modelsDir: modelsDir, detector: "caps", confidence: 0.25, hands: true, countLabel: nil, mirrored: false, roi: nil))
