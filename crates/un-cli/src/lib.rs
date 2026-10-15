@@ -428,6 +428,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
                     &table.detections(),
                     &[],
                     started.elapsed().as_secs_f64(),
+                    None,
                 );
                 (out.state, out.tracked, out.fingers)
             }

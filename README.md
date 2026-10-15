@@ -57,7 +57,10 @@ teach it: record auto-labelled frames with the CLI, then fine-tune and export.
 
 Two labels are special: labels starting with `_` are decoys (recognised so that a keyboard or a
 hand never becomes an object, then dropped), and `finger` is shown over the picture but never
-counted, so a child can point at an object. The caps detector carries it:
+counted, so a child can point at an object: the index fingertip from the hand landmarks when
+they are there, else the object the finger box covers most, and whichever object it was last
+time keeps its claim while the finger is still on it, so a finger lying across two objects does
+not flicker between them. The caps detector carries it:
 
 ```sh
 python3 tools/export_detector.py --name caps --class "cap=bottle cap,red bottle cap,plastic bottle cap,coca cola cap" \

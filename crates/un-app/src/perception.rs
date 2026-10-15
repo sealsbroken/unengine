@@ -70,6 +70,8 @@ pub struct Perception {
     pub tracker: DetectionTracker,
     pub count_label: Option<String>,
     pub labels: Vec<String>,
+    /// The object a finger was on in the previous frame; it keeps its claim while still touched.
+    last_pointed: Option<u32>,
 }
 
 impl Perception {
@@ -102,6 +104,7 @@ impl Perception {
             estimator: TableStateEstimator::new(config.estimator.clone()),
             tracker: DetectionTracker::new(TrackerConfig::default()),
             count_label: config.count_label.clone(),
+            last_pointed: None,
             labels,
         })
     }
@@ -121,22 +124,25 @@ impl Perception {
         };
         let mut state = self.estimator.ingest(&detections, &hands, timestamp);
         let tracked = self.tracker.update(&state.detections);
-        state.pointed_at = touched_object(&self.tracker.numbered(), &hands, &fingers, TOUCH_MARGIN);
+        state.pointed_at = touched_object(&self.tracker.numbered(), &hands, &fingers, TOUCH_MARGIN, self.last_pointed);
+        self.last_pointed = state.pointed_at;
         Ok(PerceptionOutput { state, tracked, hands, fingers })
     }
 
-    /// Perception without a camera: the simulated table's detections through the same state machines.
+    /// Perception without a camera: the simulated table's detections through the same state
+    /// machines; `previous` is the last output's `pointed_at`.
     pub fn process_detections(
         estimator: &mut TableStateEstimator,
         tracker: &mut DetectionTracker,
         detections: &[Detection],
         hands: &[HandObservation],
         timestamp: f64,
+        previous: Option<u32>,
     ) -> PerceptionOutput {
         let (fingers, detections) = split_fingers(detections.to_vec());
         let mut state = estimator.ingest(&detections, hands, timestamp);
         let tracked = tracker.update(&state.detections);
-        state.pointed_at = touched_object(&tracker.numbered(), hands, &fingers, TOUCH_MARGIN);
+        state.pointed_at = touched_object(&tracker.numbered(), hands, &fingers, TOUCH_MARGIN, previous);
         PerceptionOutput { state, tracked, hands: hands.to_vec(), fingers }
     }
 }
@@ -155,13 +161,13 @@ mod tests {
             Detection::labeled(Box2::new(0.5, 0.5, 0.6, 0.6), 0.9, "cap"),
             Detection::labeled(Box2::new(0.55, 0.3, 0.6, 0.55), 0.8, FINGER_LABEL),
         ];
-        let out = Perception::process_detections(&mut estimator, &mut tracker, &detections, &[], 0.0);
+        let out = Perception::process_detections(&mut estimator, &mut tracker, &detections, &[], 0.0, None);
         assert_eq!(out.state.raw_count, 2);
         assert_eq!(out.state.detections.len(), 2);
         assert_eq!(out.fingers.len(), 1);
         assert_eq!(out.fingers[0].label.as_deref(), Some("finger"));
         // Once the objects are numbered (two frames), the finger over the second one is on it.
-        let out = Perception::process_detections(&mut estimator, &mut tracker, &detections, &[], 0.1);
+        let out = Perception::process_detections(&mut estimator, &mut tracker, &detections, &[], 0.1, None);
         assert_eq!(out.state.pointed_at, Some(2));
     }
 }

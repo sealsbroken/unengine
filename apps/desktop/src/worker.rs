@@ -113,6 +113,7 @@ fn run_loop(
                     &table.detections(),
                     &[],
                     started.elapsed().as_secs_f64(),
+                    None,
                 );
                 fps = tick(&mut last_tick, fps);
                 let mut l = latest.lock();
