@@ -134,6 +134,7 @@ struct Recorder {
     phase: PhaseKind,
     mode: un_core::strategy::ListenMode,
     expected_answer: Option<u32>,
+    timeout: f64,
 }
 
 impl Recorder {
@@ -143,6 +144,7 @@ impl Recorder {
             phase: PhaseKind::Idle,
             mode: un_core::strategy::ListenMode::Voice,
             expected_answer: None,
+            timeout: 10.0,
         }
     }
 
@@ -158,7 +160,7 @@ impl un_core::strategy::Strategy for Recorder {
         match event {
             Event::Start => {
                 self.phase = PhaseKind::Asking;
-                vec![Effect::listen(self.mode, 10.0)]
+                vec![Effect::listen(self.mode, self.timeout)]
             }
             _ => vec![],
         }
@@ -204,12 +206,18 @@ fn words_are_reported_and_listening_goes_on_until_a_number() {
 
 /// Runs a counting listen over `lines`, one utterance each, and returns the events.
 fn counted(lines: &[&str], expected: u32) -> Vec<un_core::strategy::Event> {
+    counted_with(lines, expected, 10.0, Duration::from_millis(20))
+}
+
+/// Like [`counted`], with the listen's `timeout` and the child's `delay` before each line.
+fn counted_with(lines: &[&str], expected: u32, timeout: f64, delay: Duration) -> Vec<un_core::strategy::Event> {
     use un_core::strategy::Event;
     let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
-    let speech_in =
-        Arc::new(ScriptedSpeechInput::saying(lines.iter().map(|l| l.to_string()).collect(), Duration::from_millis(20)));
+    let speech_in = Arc::new(ScriptedSpeechInput::saying(lines.iter().map(|l| l.to_string()).collect(), delay));
+    let mut recorder = Recorder::new(&events).counting_to(expected);
+    recorder.timeout = timeout;
     let engine = Engine::new(
-        Box::new(Recorder::new(&events).counting_to(expected)),
+        Box::new(recorder),
         SessionConfig::default(),
         Some(speech_in),
         Arc::new(SilentSpeechOutput::new(false)),
@@ -261,6 +269,15 @@ fn counting_on_past_the_expected_number_is_heard_in_full() {
     let seen = counted(&["one", "two", "three"], 2);
     assert_eq!(seen.last(), Some(&Event::Heard(3)));
     assert!(seen.contains(&Event::Numbers(vec![1, 2, 3])));
+}
+
+#[test]
+fn a_slow_count_is_not_cut_by_the_listen_timeout() {
+    use un_core::strategy::Event;
+    // Half a second between numbers, a listen timeout of 0.7 s: the timeout is per number, so
+    // all four are collected (the whole count takes two seconds).
+    let seen = counted_with(&["one", "two", "three", "four"], 4, 0.7, Duration::from_millis(500));
+    assert!(seen.contains(&Event::Numbers(vec![1, 2, 3, 4])), "{seen:?}");
 }
 
 #[test]

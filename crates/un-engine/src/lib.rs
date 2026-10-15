@@ -515,7 +515,9 @@ impl Inner {
     /// across utterances instead (a child counting pauses between the words, and every
     /// recogniser cuts an utterance at a pause): the listen ends when the child has been quiet
     /// for [`COUNTING_GAP`] after the last number, or for [`COUNTING_DONE_GAP`] once the
-    /// sequence has reached the expected answer. The child is never cut off on the last word.
+    /// sequence has reached the expected answer. The child is never cut off on the last word,
+    /// and `timeout` is the time allowed before the first number and after each one, not for
+    /// the whole count: four objects with a finger on each take longer than an answer.
     fn listen(&self, speech_in: Arc<dyn SpeechInput>, mode: ListenMode, timeout: f64, token: Arc<CancelToken>) {
         if self.options.chime {
             self.speech_out.read().play_chime();
@@ -523,7 +525,7 @@ impl Inner {
         let language = self.config.language;
         let counting = mode == ListenMode::Counting;
         let expected = if counting { self.state.lock().strategy.snapshot().expected_answer } else { None };
-        let deadline = Instant::now() + Duration::from_secs_f64(timeout);
+        let mut deadline = Instant::now() + Duration::from_secs_f64(timeout);
         let mut sequence: Vec<u32> = Vec::new();
         let mut last_number_at: Option<Instant> = None;
         let finish = |sequence: Vec<u32>, text: &str| {
@@ -564,6 +566,7 @@ impl Inner {
                         self.log(&format!("counting: {text}"));
                         sequence.extend(numbers.iter().copied());
                         last_number_at = Some(Instant::now());
+                        deadline = Instant::now() + Duration::from_secs_f64(timeout);
                         self.dispatch(Event::Counted(numbers));
                     }
                 }
