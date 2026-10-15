@@ -29,6 +29,9 @@ pub use speech::{CancelToken, NumberHeard, SpeechError, SpeechInput, SpeechOutpu
 /// How long a child counting aloud may pause after a number before the sequence is taken as
 /// finished ([`ListenMode::Counting`]).
 pub const COUNTING_GAP: Duration = Duration::from_secs(3);
+/// The pause that ends the count once it has reached the expected answer: a beat, so a child
+/// who goes on ("...four, five") is still heard, without the tutor jumping in on the last word.
+pub const COUNTING_DONE_GAP: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -510,8 +513,9 @@ impl Inner {
     /// One listen: every utterance until the timeout is reported, words as `Said`, and the
     /// first number ends it as `Heard`. In [`ListenMode::Counting`] the numbers are collected
     /// across utterances instead (a child counting pauses between the words, and every
-    /// recogniser cuts an utterance at a pause): the listen ends when the sequence reaches the
-    /// expected answer or [`COUNTING_GAP`] passes after the last number.
+    /// recogniser cuts an utterance at a pause): the listen ends when the child has been quiet
+    /// for [`COUNTING_GAP`] after the last number, or for [`COUNTING_DONE_GAP`] once the
+    /// sequence has reached the expected answer. The child is never cut off on the last word.
     fn listen(&self, speech_in: Arc<dyn SpeechInput>, mode: ListenMode, timeout: f64, token: Arc<CancelToken>) {
         if self.options.chime {
             self.speech_out.read().play_chime();
@@ -536,7 +540,9 @@ impl Inner {
             let now = Instant::now();
             let mut remaining = deadline.saturating_duration_since(now);
             if let Some(at) = last_number_at {
-                remaining = remaining.min(COUNTING_GAP.saturating_sub(now.duration_since(at)));
+                let done = expected.is_some_and(|e| sequence.last() == Some(&e));
+                let gap = if done { COUNTING_DONE_GAP } else { COUNTING_GAP };
+                remaining = remaining.min(gap.saturating_sub(now.duration_since(at)));
             }
             let result = if remaining.is_zero() {
                 Err(SpeechError::Timeout { last_transcript: None })
@@ -559,9 +565,6 @@ impl Inner {
                         sequence.extend(numbers.iter().copied());
                         last_number_at = Some(Instant::now());
                         self.dispatch(Event::Counted(numbers));
-                        if expected.is_some_and(|e| sequence.last() == Some(&e)) {
-                            return finish(sequence, &text);
-                        }
                     }
                 }
                 Err(SpeechError::Cancelled) => return,

@@ -239,7 +239,8 @@ fn counting_aloud_is_collected_across_pauses_until_the_expected_number() {
             Event::Heard(3)
         ]
     );
-    assert!(started.elapsed() < un_engine::COUNTING_GAP, "ended at the expected number, not at the gap");
+    let took = started.elapsed();
+    assert!(took >= un_engine::COUNTING_DONE_GAP && took < un_engine::COUNTING_GAP, "a beat after the expected number: {took:?}");
     // Words between the numbers are reported and do not break the sequence.
     let seen = counted(&["one", "um", "two"], 2);
     assert_eq!(
@@ -252,6 +253,14 @@ fn counting_aloud_is_collected_across_pauses_until_the_expected_number() {
             Event::Heard(2)
         ]
     );
+}
+
+#[test]
+fn counting_on_past_the_expected_number_is_heard_in_full() {
+    use un_core::strategy::Event;
+    let seen = counted(&["one", "two", "three"], 2);
+    assert_eq!(seen.last(), Some(&Event::Heard(3)));
+    assert!(seen.contains(&Event::Numbers(vec![1, 2, 3])));
 }
 
 #[test]
