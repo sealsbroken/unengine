@@ -55,6 +55,16 @@ The zero-shot prompts cover cubes, caps, circles, coins, pencils, toy cars, ball
 stones. For new objects, or for a detector that is sure of *your* objects on *your* table,
 teach it: record auto-labelled frames with the CLI, then fine-tune and export.
 
+Two labels are special: labels starting with `_` are decoys (recognised so that a keyboard or a
+hand never becomes an object, then dropped), and `finger` is shown over the picture but never
+counted, so a child can point at an object. The caps detector carries it:
+
+```sh
+python3 tools/export_detector.py --name caps --class "cap=bottle cap,red bottle cap,plastic bottle cap,coca cola cap" \
+    --class "finger=finger,index finger,fingertip,pointing finger" \
+    --class "_keyboard=laptop keyboard,computer keyboard,trackpad" --class "_hand=hand"
+```
+
 ```sh
 python3 tools/export_detector.py --name stones --class "stone=stone,pebble,rock" --class "_hand=hand"
 cargo run --release -p un-cli -- collect --camera 0 --model stones --conf 0.15 --labels stone --out datasets/stones

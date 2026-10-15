@@ -2,7 +2,7 @@
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Stroke, Vec2};
 use un_core::hands::CONNECTIONS;
-use un_core::{Box2, HandObservation, TableState, TrackedDetection};
+use un_core::{Box2, Detection, HandObservation, TableState, TrackedDetection};
 
 pub const GREEN: Color32 = Color32::from_rgb(90, 200, 90);
 pub const AMBER: Color32 = Color32::from_rgb(240, 190, 60);
@@ -75,6 +75,21 @@ pub fn draw_detections(
             t.number.to_string(),
             FontId::proportional(if lit { 26.0 } else { 18.0 }),
             WHITE,
+        );
+    }
+}
+
+/// The fingers the detector saw: a blue box each, no number since they are not counted.
+pub fn draw_fingers(painter: &egui::Painter, map: &Mapper, fingers: &[Detection]) {
+    for d in fingers {
+        let rect = map.box_rect(&d.bbox);
+        painter.rect_stroke(rect, 3.0, Stroke::new(2.0, BLUE), egui::StrokeKind::Outside);
+        painter.text(
+            rect.min + Vec2::new(4.0, -2.0),
+            Align2::LEFT_BOTTOM,
+            format!("{} {:.0}%", d.label_or("finger"), d.confidence * 100.0),
+            FontId::proportional(14.0),
+            BLUE,
         );
     }
 }

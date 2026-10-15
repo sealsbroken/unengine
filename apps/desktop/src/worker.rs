@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use un_app::{ModelPaths, Perception, PerceptionConfig, SimulatedTable};
-use un_core::{Box2, DetectionTracker, HandObservation, TableState, TableStateEstimator, TrackedDetection, TrackerConfig};
+use un_core::{
+    Box2, Detection, DetectionTracker, HandObservation, TableState, TableStateEstimator, TrackedDetection, TrackerConfig,
+};
 use un_media::{CameraSource, FrameSource};
 use un_vision::RgbFrame;
 
@@ -16,6 +18,8 @@ pub struct Latest {
     pub state: Option<TableState>,
     pub tracked: Vec<TrackedDetection>,
     pub hands: Vec<HandObservation>,
+    /// Fingers the detector saw (shown, not counted).
+    pub fingers: Vec<Detection>,
     pub fps: f32,
     pub error: Option<String>,
     pub labels: Vec<String>,
@@ -43,6 +47,7 @@ impl Worker {
             state: None,
             tracked: vec![],
             hands: vec![],
+            fingers: vec![],
             fps: 0.0,
             error: None,
             labels: vec![],
@@ -115,6 +120,7 @@ fn run_loop(
                 l.state = Some(out.state);
                 l.tracked = out.tracked;
                 l.hands = vec![];
+                l.fingers = out.fingers;
                 l.fps = fps;
                 l.frame_serial += 1;
             }
@@ -161,6 +167,7 @@ fn run_loop(
                         l.state = Some(out.state);
                         l.tracked = out.tracked;
                         l.hands = out.hands;
+                        l.fingers = out.fingers;
                         l.fps = fps;
                         l.frame_serial += 1;
                     }

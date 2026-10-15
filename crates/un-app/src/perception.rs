@@ -4,7 +4,8 @@ use std::path::Path;
 
 use thiserror::Error;
 use un_core::{
-    DetectionTracker, EstimatorConfig, HandObservation, TableState, TableStateEstimator, TrackedDetection, TrackerConfig,
+    Detection, DetectionTracker, EstimatorConfig, HandObservation, TableState, TableStateEstimator, TrackedDetection,
+    TrackerConfig,
 };
 use un_vision::{Detector, DetectorConfig, HandLandmarker, HandLandmarkerConfig, Provider, RgbFrame, VisionError};
 
@@ -45,10 +46,21 @@ impl Default for PerceptionConfig {
     }
 }
 
+/// The detector label for the child's finger: shown over the picture, never counted as an
+/// object. `tools/export_detector.py` adds it with `--class "finger=finger,index finger,..."`.
+pub const FINGER_LABEL: &str = "finger";
+
 pub struct PerceptionOutput {
     pub state: TableState,
     pub tracked: Vec<TrackedDetection>,
     pub hands: Vec<HandObservation>,
+    /// Fingers seen in this frame (the `finger` label), kept out of the count.
+    pub fingers: Vec<Detection>,
+}
+
+/// Splits the finger detections off the objects.
+fn split_fingers(detections: Vec<Detection>) -> (Vec<Detection>, Vec<Detection>) {
+    detections.into_iter().partition(|d| d.label.as_deref() == Some(FINGER_LABEL))
 }
 
 pub struct Perception {
@@ -82,7 +94,8 @@ impl Perception {
             }
             None
         };
-        let labels = detector.object_labels();
+        let mut labels = detector.object_labels();
+        labels.retain(|l| l != FINGER_LABEL);
         Ok(Self {
             detector,
             hands,
@@ -98,7 +111,7 @@ impl Perception {
     }
 
     pub fn process(&mut self, frame: &RgbFrame, timestamp: f64) -> Result<PerceptionOutput, PerceptionError> {
-        let mut detections = self.detector.detect(frame)?;
+        let (fingers, mut detections) = split_fingers(self.detector.detect(frame)?);
         if let Some(label) = &self.count_label {
             detections.retain(|d| d.label.as_deref() == Some(label));
         }
@@ -108,19 +121,42 @@ impl Perception {
         };
         let state = self.estimator.ingest(&detections, &hands, timestamp);
         let tracked = self.tracker.update(&state.detections);
-        Ok(PerceptionOutput { state, tracked, hands })
+        Ok(PerceptionOutput { state, tracked, hands, fingers })
     }
 
     /// Perception without a camera: the simulated table's detections through the same state machines.
     pub fn process_detections(
         estimator: &mut TableStateEstimator,
         tracker: &mut DetectionTracker,
-        detections: &[un_core::Detection],
+        detections: &[Detection],
         hands: &[HandObservation],
         timestamp: f64,
     ) -> PerceptionOutput {
-        let state = estimator.ingest(detections, hands, timestamp);
+        let (fingers, detections) = split_fingers(detections.to_vec());
+        let state = estimator.ingest(&detections, hands, timestamp);
         let tracked = tracker.update(&state.detections);
-        PerceptionOutput { state, tracked, hands: hands.to_vec() }
+        PerceptionOutput { state, tracked, hands: hands.to_vec(), fingers }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use un_core::Box2;
+
+    #[test]
+    fn a_finger_is_shown_but_never_counted() {
+        let mut estimator = TableStateEstimator::default();
+        let mut tracker = DetectionTracker::new(TrackerConfig::default());
+        let detections = vec![
+            Detection::labeled(Box2::new(0.1, 0.1, 0.2, 0.2), 0.9, "cap"),
+            Detection::labeled(Box2::new(0.5, 0.5, 0.6, 0.6), 0.9, "cap"),
+            Detection::labeled(Box2::new(0.55, 0.3, 0.6, 0.55), 0.8, FINGER_LABEL),
+        ];
+        let out = Perception::process_detections(&mut estimator, &mut tracker, &detections, &[], 0.0);
+        assert_eq!(out.state.raw_count, 2);
+        assert_eq!(out.state.detections.len(), 2);
+        assert_eq!(out.fingers.len(), 1);
+        assert_eq!(out.fingers[0].label.as_deref(), Some("finger"));
     }
 }

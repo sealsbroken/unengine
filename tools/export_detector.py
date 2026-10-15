@@ -7,7 +7,9 @@ Three kinds of detector:
 
 * Zero-shot YOLOE (default): object types are text prompts baked into the model. Each --class is
   ``label=prompt[,prompt...]``; labels starting with ``_`` are decoys (things the camera sees that
-  must not be counted, e.g. the laptop keyboard) and are dropped by the engine after NMS.
+  must not be counted, e.g. the laptop keyboard) and are dropped by the engine after NMS. The
+  label ``finger`` is special too: the engine shows those boxes but never counts them, so the
+  child can point at an object without the finger becoming one.
 * Any Ultralytics detector (``--model yolo26n.pt`` with no --class): the 80 COCO classes, or your
   own trained weights (``--model best.pt``). RT-DETR weights (``--model rtdetr-l.pt``) export with
   the ``rtdetr`` head.
@@ -18,6 +20,9 @@ detectors (RT-DETR, D-FINE, YOLOX) or your own training pipeline.
 
     python3 tools/export_detector.py
     python3 tools/export_detector.py --class "cube=toy block" --class "_hand=hand"
+    python3 tools/export_detector.py --name caps --class "cap=bottle cap,red bottle cap,plastic bottle cap,coca cola cap" \
+        --class "finger=finger,index finger,fingertip,pointing finger" \
+        --class "_keyboard=laptop keyboard,computer keyboard,trackpad" --class "_hand=hand"
     python3 tools/export_detector.py --model yolo26n.pt --name coco
 """
 

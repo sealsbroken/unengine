@@ -527,6 +527,8 @@ pub struct UnTableState {
     /// Separate groups the objects lie in.
     pub groups: u32,
     pub detections: Vec<UnDetection>,
+    /// Fingers seen over the table (the detector's `finger` label): shown, never counted.
+    pub fingers: Vec<UnDetection>,
     pub hands: Vec<UnHand>,
     pub timestamp: f64,
 }
@@ -612,7 +614,18 @@ impl UnPerception {
         let mut p = self.inner.lock();
         let out = p.process(frame, timestamp).map_err(|e| e.to_string())?;
         let numbered = |d: &un_core::Detection| out.tracked.iter().find(|t| t.detection == *d).map(|t| t.number).unwrap_or(0);
+        let fingers = out
+            .fingers
+            .iter()
+            .map(|d| UnDetection {
+                bbox: UnBox { x1: d.bbox.x1, y1: d.bbox.y1, x2: d.bbox.x2, y2: d.bbox.y2 },
+                confidence: d.confidence,
+                label: d.label.clone(),
+                number: 0,
+            })
+            .collect();
         Ok(UnTableState {
+            fingers,
             count: out.state.cube_count,
             raw_count: out.state.raw_count,
             is_stable: out.state.is_stable,

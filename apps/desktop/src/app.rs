@@ -353,13 +353,14 @@ impl UnApp {
     fn live_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let paths_models = self.paths.root.display().to_string();
         let Some(live) = &mut self.live else { return };
-        let (frame, state, tracked, hands, fps, error, serial, hands_enabled) = {
+        let (frame, state, tracked, hands, fingers, fps, error, serial, hands_enabled) = {
             let l = live.worker.latest.lock();
             (
                 l.frame.clone(),
                 l.state.clone(),
                 l.tracked.clone(),
                 l.hands.clone(),
+                l.fingers.clone(),
                 l.fps,
                 l.error.clone(),
                 l.frame_serial,
@@ -484,6 +485,7 @@ impl UnApp {
         if let Some(state) = &state {
             overlay::draw_detections(&painter, &map, state, &tracked, snapshot.as_ref().and_then(|s| s.highlight_count));
         }
+        overlay::draw_fingers(&painter, &map, &fingers);
         overlay::draw_hands(&painter, &map, &hands);
 
         // Tutor HUD.

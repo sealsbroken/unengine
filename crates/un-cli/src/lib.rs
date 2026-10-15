@@ -419,7 +419,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
     let mut last_frame = None;
     let sim_period = Duration::from_millis(66);
     loop {
-        let (state, tracked) = match &mut frame_source {
+        let (state, tracked, fingers) = match &mut frame_source {
             Source::Sim(table) => {
                 std::thread::sleep(sim_period);
                 let out = Perception::process_detections(
@@ -429,21 +429,21 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
                     &[],
                     started.elapsed().as_secs_f64(),
                 );
-                (out.state, out.tracked)
+                (out.state, out.tracked, out.fingers)
             }
             Source::Camera(cam) => {
                 let Some((frame, t)) = cam.next_frame().map_err(|e| anyhow!("{e}"))? else { break };
                 let frame = if source.mirror { frame.flipped() } else { frame };
                 let out = perception.as_mut().unwrap().process(&frame, t).map_err(|e| anyhow!("{e}"))?;
                 last_frame = Some(frame);
-                (out.state, out.tracked)
+                (out.state, out.tracked, out.fingers)
             }
             Source::File(file) => {
                 let Some((frame, t)) = file.next_frame().map_err(|e| anyhow!("{e}"))? else { break };
                 let frame = if source.mirror { frame.flipped() } else { frame };
                 let out = perception.as_mut().unwrap().process(&frame, t).map_err(|e| anyhow!("{e}"))?;
                 last_frame = Some(frame);
-                (out.state, out.tracked)
+                (out.state, out.tracked, out.fingers)
             }
         };
         processed += 1;
@@ -459,6 +459,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
             "count": state.cube_count, "stable": state.is_stable, "raw": state.raw_count,
             "labels": per_label, "numbered": tracked.iter().map(|t| t.number).collect::<Vec<_>>(),
             "hands": state.hands.len(), "fingers": state.finger_count,
+            "pointing": fingers.iter().map(|d| (d.confidence * 100.0).round() / 100.0).collect::<Vec<_>>(),
         });
         if Some(&summary) != last_summary.as_ref() {
             let mut line = summary.clone();

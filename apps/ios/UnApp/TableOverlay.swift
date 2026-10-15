@@ -3,7 +3,8 @@ import SwiftUI
 /// What the tutor sees, drawn over the camera picture as on the desktop: a box around every
 /// recognised object (amber while a hand is over the table, green once the table is settled,
 /// white while it is still changing), the objects' stable numbers, lit red up to the number
-/// the tutor is counting out, and the hand skeletons with the raised-finger count.
+/// the tutor is counting out, the fingers the detector saw in blue (never counted), and the
+/// hand skeletons with the raised-finger count.
 struct TableOverlay: View {
     let table: UnTableState?
     /// Size of the frames the detector saw, in pixels, to place the normalized boxes over the
@@ -57,6 +58,13 @@ struct TableOverlay: View {
                     context.fill(Path(ellipseIn: disc), with: .color(lit ? Self.red : Color.black.opacity(0.6)))
                     context.draw(Text("\(d.number)").font(.system(size: lit ? 26 : 18, weight: .semibold)).foregroundStyle(.white), at: center)
                 }
+            }
+
+            for d in table.fingers {
+                let r = rect(d.bbox)
+                context.stroke(Path(roundedRect: r, cornerRadius: 3), with: .color(Self.blue), lineWidth: 2)
+                let text = "\(d.label ?? "finger") \(Int((d.confidence * 100).rounded()))%"
+                context.draw(Text(text).font(.system(size: 13)).foregroundStyle(Self.blue), at: CGPoint(x: r.minX + 4, y: r.minY - 9), anchor: .leading)
             }
 
             for hand in table.hands {
