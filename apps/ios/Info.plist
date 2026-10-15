@@ -16,6 +16,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.education</string>
 	<key>NSCameraUsageDescription</key>
 	<string>The camera looks at the table to count the objects on it. Nothing leaves the phone.</string>
 	<key>NSMicrophoneUsageDescription</key>
