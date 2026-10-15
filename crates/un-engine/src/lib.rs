@@ -26,6 +26,10 @@ use un_core::{NumberParser, TableState};
 
 pub use speech::{CancelToken, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 
+/// How long a child counting aloud may pause after a number before the sequence is taken as
+/// finished ([`ListenMode::Counting`]).
+pub const COUNTING_GAP: Duration = Duration::from_secs(3);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StatusKind {
@@ -463,7 +467,7 @@ impl Inner {
                 let this = Arc::clone(&this);
                 thread::Builder::new()
                     .name("un-listen".into())
-                    .spawn(move || this.listen(speech_in, timeout, token))
+                    .spawn(move || this.listen(speech_in, mode, timeout, token))
                     .expect("spawn");
             }
         }
@@ -504,18 +508,36 @@ impl Inner {
     }
 
     /// One listen: every utterance until the timeout is reported, words as `Said`, and the
-    /// first number ends it as `Heard`.
-    fn listen(&self, speech_in: Arc<dyn SpeechInput>, timeout: f64, token: Arc<CancelToken>) {
+    /// first number ends it as `Heard`. In [`ListenMode::Counting`] the numbers are collected
+    /// across utterances instead (a child counting pauses between the words, and every
+    /// recogniser cuts an utterance at a pause): the listen ends when the sequence reaches the
+    /// expected answer or [`COUNTING_GAP`] passes after the last number.
+    fn listen(&self, speech_in: Arc<dyn SpeechInput>, mode: ListenMode, timeout: f64, token: Arc<CancelToken>) {
         if self.options.chime {
             self.speech_out.read().play_chime();
         }
         let language = self.config.language;
+        let counting = mode == ListenMode::Counting;
+        let expected = if counting { self.state.lock().strategy.snapshot().expected_answer } else { None };
         let deadline = Instant::now() + Duration::from_secs_f64(timeout);
+        let mut sequence: Vec<u32> = Vec::new();
+        let mut last_number_at: Option<Instant> = None;
+        let finish = |sequence: Vec<u32>, text: &str| {
+            let value = *sequence.last().expect("a number");
+            self.log(&format!("heard {sequence:?} ({text:?})"));
+            self.finish_listening(Some(&token), false);
+            self.dispatch(Event::Numbers(sequence));
+            self.dispatch(Event::Heard(value));
+        };
         loop {
             if token.is_cancelled() {
                 return;
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let now = Instant::now();
+            let mut remaining = deadline.saturating_duration_since(now);
+            if let Some(at) = last_number_at {
+                remaining = remaining.min(COUNTING_GAP.saturating_sub(now.duration_since(at)));
+            }
             let result = if remaining.is_zero() {
                 Err(SpeechError::Timeout { last_transcript: None })
             } else {
@@ -527,17 +549,18 @@ impl Inner {
                         return;
                     }
                     let numbers = NumberParser::all(&text, language);
-                    match numbers.last().copied() {
-                        Some(value) => {
-                            self.log(&format!("heard {value} ({text:?})"));
-                            self.finish_listening(Some(&token), false);
-                            self.dispatch(Event::Numbers(numbers));
-                            self.dispatch(Event::Heard(value));
-                            return;
-                        }
-                        None => {
-                            self.log(&format!("child: {text}"));
-                            self.dispatch(Event::Said(text));
+                    if numbers.is_empty() {
+                        self.log(&format!("child: {text}"));
+                        self.dispatch(Event::Said(text));
+                    } else if !counting {
+                        return finish(numbers, &text);
+                    } else {
+                        self.log(&format!("counting: {text}"));
+                        sequence.extend(numbers.iter().copied());
+                        last_number_at = Some(Instant::now());
+                        self.dispatch(Event::Counted(numbers));
+                        if expected.is_some_and(|e| sequence.last() == Some(&e)) {
+                            return finish(sequence, &text);
                         }
                     }
                 }
@@ -545,6 +568,10 @@ impl Inner {
                 Err(error) => {
                     if token.is_cancelled() {
                         return;
+                    }
+                    if !sequence.is_empty() && matches!(error, SpeechError::Timeout { .. }) {
+                        // The child stopped counting: the sequence so far is the answer.
+                        return finish(sequence, "");
                     }
                     let kind = if matches!(error, SpeechError::Timeout { .. }) { "heard nothing" } else { "listening failed" };
                     self.log(&format!("{kind} ({error})"));

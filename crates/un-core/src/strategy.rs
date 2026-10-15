@@ -103,8 +103,13 @@ pub enum Event {
     /// Listening goes on afterwards unless the strategy replaces or stops it.
     Said(String),
     /// Every number in one utterance, in order ("one, two, three"), sent just before the
-    /// `Heard` that carries the last of them.
+    /// `Heard` that carries the last of them. In [`ListenMode::Counting`] it is the whole
+    /// count, across the child's pauses.
     Numbers(Vec<u32>),
+    /// The numbers of one utterance of a count being said aloud ([`ListenMode::Counting`]),
+    /// delivered as the child goes, so the tutor can react to each; `Numbers` follows with
+    /// the whole sequence when the count ends.
+    Counted(Vec<u32>),
     /// Listening ended without a usable number.
     NothingHeard,
     /// The microphone started picking up sound (`true`) or has been quiet for a few seconds
@@ -119,9 +124,16 @@ pub enum Event {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ListenMode {
+    /// A spoken answer: the first number ends the listen.
     Voice,
+    /// A spoken answer or fingers held up.
     VoiceOrFingers,
+    /// A tap on the number pad.
     NumberPad,
+    /// The child counts aloud: every number is collected, across pauses, until the sequence
+    /// reaches the snapshot's `expected_answer` or the child has been quiet for a few seconds
+    /// after the last number. Delivered as one `Numbers` event, then `Heard` with the last.
+    Counting,
 }
 
 /// What the engine must do, in order.

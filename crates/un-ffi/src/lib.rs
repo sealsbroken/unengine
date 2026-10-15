@@ -186,6 +186,7 @@ pub enum UnListenMode {
     Voice,
     VoiceOrFingers,
     NumberPad,
+    Counting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -269,6 +270,7 @@ impl From<un_engine::EngineSnapshot> for UnSnapshot {
                 ListenMode::Voice => UnListenMode::Voice,
                 ListenMode::VoiceOrFingers => UnListenMode::VoiceOrFingers,
                 ListenMode::NumberPad => UnListenMode::NumberPad,
+                ListenMode::Counting => UnListenMode::Counting,
             }),
             phase: match s.strategy.phase {
                 PhaseKind::Idle => UnPhase::Idle,

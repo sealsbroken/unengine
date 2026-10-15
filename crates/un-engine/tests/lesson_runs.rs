@@ -128,20 +128,37 @@ fn nothing_heard_escalates_and_fingers_answer() {
     engine.close();
 }
 
-/// Records what the engine tells it; answers nothing.
+/// Records what the engine tells it; answers nothing. Listens once, in `mode`, on start.
 struct Recorder {
     events: Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>,
     phase: PhaseKind,
+    mode: un_core::strategy::ListenMode,
+    expected_answer: Option<u32>,
+}
+
+impl Recorder {
+    fn new(events: &Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>) -> Self {
+        Self {
+            events: Arc::clone(events),
+            phase: PhaseKind::Idle,
+            mode: un_core::strategy::ListenMode::Voice,
+            expected_answer: None,
+        }
+    }
+
+    fn counting_to(self, count: u32) -> Self {
+        Self { mode: un_core::strategy::ListenMode::Counting, expected_answer: Some(count), ..self }
+    }
 }
 
 impl un_core::strategy::Strategy for Recorder {
     fn handle(&mut self, event: un_core::strategy::Event) -> Vec<un_core::strategy::Effect> {
-        use un_core::strategy::{Effect, Event, ListenMode};
+        use un_core::strategy::{Effect, Event};
         self.events.lock().push(event.clone());
         match event {
             Event::Start => {
                 self.phase = PhaseKind::Asking;
-                vec![Effect::listen(ListenMode::Voice, 10.0)]
+                vec![Effect::listen(self.mode, 10.0)]
             }
             _ => vec![],
         }
@@ -155,7 +172,7 @@ impl un_core::strategy::Strategy for Recorder {
             correct: 0,
             task: None,
             target_count: None,
-            expected_answer: None,
+            expected_answer: self.expected_answer,
         }
     }
 }
@@ -169,7 +186,7 @@ fn words_are_reported_and_listening_goes_on_until_a_number() {
         Duration::from_millis(20),
     ));
     let engine = Engine::new(
-        Box::new(Recorder { events: Arc::clone(&events), phase: PhaseKind::Idle }),
+        Box::new(Recorder::new(&events)),
         SessionConfig::default(),
         Some(speech_in),
         Arc::new(SilentSpeechOutput::new(false)),
@@ -183,4 +200,65 @@ fn words_are_reported_and_listening_goes_on_until_a_number() {
     // One listen served all three lines: the words did not end it.
     assert!(!seen.contains(&Event::NothingHeard));
     engine.close();
+}
+
+/// Runs a counting listen over `lines`, one utterance each, and returns the events.
+fn counted(lines: &[&str], expected: u32) -> Vec<un_core::strategy::Event> {
+    use un_core::strategy::Event;
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let speech_in =
+        Arc::new(ScriptedSpeechInput::saying(lines.iter().map(|l| l.to_string()).collect(), Duration::from_millis(20)));
+    let engine = Engine::new(
+        Box::new(Recorder::new(&events).counting_to(expected)),
+        SessionConfig::default(),
+        Some(speech_in),
+        Arc::new(SilentSpeechOutput::new(false)),
+        EngineOptions { log: Some(Arc::new(|_| {})), ..Default::default() },
+    );
+    engine.start();
+    let done = |e: &Event| matches!(e, Event::Heard(_) | Event::NothingHeard);
+    assert!(wait_for(|| events.lock().iter().any(done), Duration::from_secs(8)));
+    engine.close();
+    let seen = events.lock().clone();
+    seen.into_iter().filter(|e| !matches!(e, Event::Start | Event::Stop)).collect()
+}
+
+#[test]
+fn counting_aloud_is_collected_across_pauses_until_the_expected_number() {
+    use un_core::strategy::Event;
+    // "One ... two ... three": three utterances, one listen, ended by the expected three.
+    let started = Instant::now();
+    let seen = counted(&["one", "two", "three"], 3);
+    assert_eq!(
+        seen,
+        vec![
+            Event::Counted(vec![1]),
+            Event::Counted(vec![2]),
+            Event::Counted(vec![3]),
+            Event::Numbers(vec![1, 2, 3]),
+            Event::Heard(3)
+        ]
+    );
+    assert!(started.elapsed() < un_engine::COUNTING_GAP, "ended at the expected number, not at the gap");
+    // Words between the numbers are reported and do not break the sequence.
+    let seen = counted(&["one", "um", "two"], 2);
+    assert_eq!(
+        seen,
+        vec![
+            Event::Counted(vec![1]),
+            Event::Said("um".into()),
+            Event::Counted(vec![2]),
+            Event::Numbers(vec![1, 2]),
+            Event::Heard(2)
+        ]
+    );
+}
+
+#[test]
+fn counting_that_stops_short_is_delivered_after_the_gap() {
+    use un_core::strategy::Event;
+    let started = Instant::now();
+    let seen = counted(&["one", "two"], 4);
+    assert_eq!(seen, vec![Event::Counted(vec![1]), Event::Counted(vec![2]), Event::Numbers(vec![1, 2]), Event::Heard(2)]);
+    assert!(started.elapsed() >= un_engine::COUNTING_GAP);
 }
