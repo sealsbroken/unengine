@@ -1,6 +1,8 @@
 name: ci
 
-on: [push, pull_request]
+# Manual only: run it from the Actions tab ("Run workflow"). Nothing fires on push or pull request.
+on:
+  workflow_dispatch:
 
 jobs:
   test:
