@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use un_core::strategy::{SessionConfig, StrategyInfo, TableObservation};
+use un_core::strategy::{SessionConfig, StrategyInfo, StrategyRegistry, TableObservation};
 use un_core::{Chirality, EstimatorConfig, Language};
 use un_engine::{CancelToken, Engine, EngineOptions, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 use un_vision::RgbFrame;
@@ -88,10 +88,35 @@ impl From<StrategyInfo> for UnStrategyInfo {
     }
 }
 
-/// Every strategy linked into this library.
+type Registration = fn(&mut StrategyRegistry);
+
+static REGISTRATIONS: Mutex<Vec<Registration>> = Mutex::new(Vec::new());
+
+/// Adds a strategy crate's `register` function to every registry this library builds.
+///
+/// Strategies also register themselves at link time, but a static library only keeps the
+/// objects something refers to, so a product library calls this from a function the app
+/// calls at startup (`unmethod_mobile_init`, say). Registering twice is harmless.
+pub fn add_strategies(register: Registration) {
+    let mut registrations = REGISTRATIONS.lock();
+    if !registrations.contains(&register) {
+        registrations.push(register);
+    }
+}
+
+/// Every strategy linked into this library plus those added with [`add_strategies`].
+pub fn registry() -> StrategyRegistry {
+    let mut registry = un_app::registry();
+    for register in REGISTRATIONS.lock().iter() {
+        register(&mut registry);
+    }
+    registry
+}
+
+/// Every strategy this library knows.
 #[uniffi::export]
 pub fn available_strategies() -> Vec<UnStrategyInfo> {
-    un_app::registry().infos().into_iter().map(Into::into).collect()
+    registry().infos().into_iter().map(Into::into).collect()
 }
 
 #[uniffi::export]
@@ -389,7 +414,7 @@ impl UnSession {
         speech_output: Arc<dyn SpeechOutputCallback>,
         chime: bool,
     ) -> Result<Arc<Self>, UnError> {
-        let registry = un_app::registry();
+        let registry = registry();
         let config: SessionConfig = config.into();
         let strategy = registry.create(&strategy_id, &config).ok_or_else(|| format!("unknown strategy {strategy_id:?}"))?;
         let speech_in: Option<Arc<dyn SpeechInput>> = speech_input.map(|cb| Arc::new(CallbackInput(cb)) as Arc<dyn SpeechInput>);

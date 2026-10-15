@@ -84,6 +84,7 @@ impl ModelPaths {
         self.palm_detector().exists() && self.hand_landmark().exists()
     }
 
+    #[cfg(feature = "speech")]
     pub fn speech(&self) -> un_speech::SpeechModels {
         un_speech::SpeechModels::new(self.root.join("speech"))
     }

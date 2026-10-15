@@ -19,6 +19,7 @@ path = "src/bin/uniffi-bindgen.rs"
 un-core.workspace = true
 un-engine.workspace = true
 un-vision.workspace = true
+# Without the desktop voice engine: the platform shells supply speech through the callback interfaces.
 un-app.workspace = true
 uniffi.workspace = true
 parking_lot.workspace = true

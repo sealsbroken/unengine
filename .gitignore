@@ -16,3 +16,5 @@ __pycache__/
 /datasets/
 /runs/
 /weights/
+/apps/ios/Resources/
+/apps/ios/build/

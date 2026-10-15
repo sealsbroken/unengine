@@ -8,7 +8,9 @@ repository.workspace = true
 description = "Assembles an Un session on a desktop: finds models, builds speech in/out, runs perception, and drives the engine. Shared by the CLI, the desktop app and the FFI."
 
 [features]
-default = []
+# The desktop voice engine (sherpa-onnx). Off for the mobile libraries, where speech is the platform's.
+default = ["speech"]
+speech = ["dep:un-speech"]
 coreml = ["un-vision/coreml"]
 cuda = ["un-vision/cuda"]
 directml = ["un-vision/directml"]
@@ -17,7 +19,7 @@ directml = ["un-vision/directml"]
 un-core.workspace = true
 un-engine.workspace = true
 un-vision.workspace = true
-un-speech.workspace = true
+un-speech = { workspace = true, optional = true }
 un-strategy-demo.workspace = true
 serde.workspace = true
 serde_json.workspace = true

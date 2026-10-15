@@ -27,7 +27,7 @@ un-engine.workspace = true
 un-vision.workspace = true
 un-speech.workspace = true
 un-media.workspace = true
-un-app.workspace = true
+un-app = { workspace = true, features = ["speech"] }
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true

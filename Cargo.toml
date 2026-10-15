@@ -27,7 +27,7 @@ un-vision = { path = "crates/un-vision" }
 un-speech = { path = "crates/un-speech" }
 un-media = { path = "crates/un-media" }
 un-engine = { path = "crates/un-engine" }
-un-app = { path = "crates/un-app" }
+un-app = { path = "crates/un-app", default-features = false }
 un-strategy-demo = { path = "strategies/demo" }
 
 anyhow = "1"

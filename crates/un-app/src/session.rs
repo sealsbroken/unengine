@@ -98,6 +98,7 @@ pub fn registry() -> StrategyRegistry {
 pub type SpeechPair = (Option<Arc<dyn SpeechInput>>, Arc<dyn SpeechOutput>);
 
 /// Names of the microphones the system offers, in system order.
+#[cfg(feature = "speech")]
 pub fn list_microphones() -> Vec<String> {
     un_speech::MicrophoneInput::list_devices()
 }
@@ -162,17 +163,11 @@ pub fn speech_setup(
     voice: VoiceChoice,
     answers: Option<Vec<String>>,
 ) -> SpeechPair {
-    let models = paths.speech();
     let speech_out: Arc<dyn SpeechOutput> = match voice {
         VoiceChoice::Off => Arc::new(SilentSpeechOutput::new(false)),
         VoiceChoice::Console => Arc::new(SilentSpeechOutput::paced(true)),
-        VoiceChoice::Piper => Arc::new(un_speech::SpeakerOutput::new(models.clone())),
-        VoiceChoice::Auto => {
-            if models.voice_installed(language) {
-                Arc::new(un_speech::SpeakerOutput::new(models.clone()))
-            } else {
-                Arc::new(SilentSpeechOutput::paced(true))
-            }
+        VoiceChoice::Piper | VoiceChoice::Auto => {
+            engine_voice(paths, language, voice).unwrap_or_else(|| Arc::new(SilentSpeechOutput::paced(true)))
         }
     };
     let speech_in: Option<Arc<dyn SpeechInput>> = if let Some(answers) = answers {
@@ -180,17 +175,52 @@ pub fn speech_setup(
     } else {
         match mic {
             MicChoice::Off => None,
-            MicChoice::Auto if !models.recognizer_installed(language) => None,
-            _ => {
-                let device = match mic_device {
-                    Some(name) => un_speech::audio::MicDevice::Named(name.to_string()),
-                    None => un_speech::audio::MicDevice::Default,
-                };
-                Some(Arc::new(un_speech::MicrophoneInput::new(models, device)))
-            }
+            _ => engine_microphone(paths, language, mic, mic_device),
         }
     };
     (speech_in, speech_out)
+}
+
+/// The engine's own voice (Piper): always when asked for, otherwise only when installed.
+#[cfg(feature = "speech")]
+fn engine_voice(paths: &ModelPaths, language: Language, voice: VoiceChoice) -> Option<Arc<dyn SpeechOutput>> {
+    let models = paths.speech();
+    (matches!(voice, VoiceChoice::Piper) || models.voice_installed(language))
+        .then(|| Arc::new(un_speech::SpeakerOutput::new(models)) as Arc<dyn SpeechOutput>)
+}
+
+#[cfg(not(feature = "speech"))]
+fn engine_voice(_paths: &ModelPaths, _language: Language, _voice: VoiceChoice) -> Option<Arc<dyn SpeechOutput>> {
+    None
+}
+
+/// The engine's own recogniser on a microphone: when asked for, or by default when installed.
+#[cfg(feature = "speech")]
+fn engine_microphone(
+    paths: &ModelPaths,
+    language: Language,
+    mic: MicChoice,
+    mic_device: Option<&str>,
+) -> Option<Arc<dyn SpeechInput>> {
+    let models = paths.speech();
+    if matches!(mic, MicChoice::Auto) && !models.recognizer_installed(language) {
+        return None;
+    }
+    let device = match mic_device {
+        Some(name) => un_speech::audio::MicDevice::Named(name.to_string()),
+        None => un_speech::audio::MicDevice::Default,
+    };
+    Some(Arc::new(un_speech::MicrophoneInput::new(models, device)))
+}
+
+#[cfg(not(feature = "speech"))]
+fn engine_microphone(
+    _paths: &ModelPaths,
+    _language: Language,
+    _mic: MicChoice,
+    _mic_device: Option<&str>,
+) -> Option<Arc<dyn SpeechInput>> {
+    None
 }
 
 /// A built session: the engine plus what it was built from.

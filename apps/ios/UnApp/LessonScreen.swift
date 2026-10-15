@@ -19,10 +19,12 @@ struct LessonScreen: View {
             }
             HStack {
                 Button(model.running ? "End lesson" : "Start lesson") { model.running ? model.stop() : model.start() }
-                Button("Repeat") { model.repeat() }
+                Button("Repeat") { model.repeatLine() }
                 Button("Skip") { model.skip() }
             }.buttonStyle(.bordered).padding(.bottom)
         }
+        // `SIMCTL_CHILD_UN_AUTOSTART=1 xcrun simctl launch <udid> app.onym.un` starts the lesson at once.
+        .onAppear { if ProcessInfo.processInfo.environment["UN_AUTOSTART"] != nil { model.start() } }
         .onDisappear { model.close() }
     }
 }
@@ -47,9 +49,11 @@ final class LessonModel: ObservableObject {
         config.language = Locale.current.language.languageCode?.identifier == "ru" ? .russian : .english
         do {
             perception = try UnPerception(config: UnPerceptionConfig(
-                modelsDir: modelsDir, detector: "detector", confidence: 0.25, hands: true, countLabel: nil, mirrored: false, roi: nil))
+                modelsDir: modelsDir, detector: "caps", confidence: 0.25, hands: true, countLabel: nil, mirrored: false, roi: nil))
+            let strategies = availableStrategies()
+            let lesson = strategies.first { $0.id == "lesson-01" } ?? strategies.first
             session = try UnSession(
-                strategyId: availableStrategies().first?.id ?? "demo", config: config,
+                strategyId: lesson?.id ?? "demo", config: config,
                 speechInput: AppleSpeechInput(), speechOutput: AppleSpeechOutput(), chime: true)
         } catch {
             print("start failed: \(error)")
@@ -58,7 +62,9 @@ final class LessonModel: ObservableObject {
         camera = CameraSource { [weak self] y, uv, w, h, ys, uvs, t in
             guard let self, let perception = self.perception else { return }
             if let state = try? perception.processNv12(y: y, uv: uv, width: w, height: h, yStride: ys, uvStride: uvs, timestamp: t) {
-                self.session?.observe(count: state.count, handsPresent: state.handsPresent, isStable: state.isStable, fingerCount: state.fingerCount)
+                self.session?.observe(
+                    count: state.count, handsPresent: state.handsPresent, isStable: state.isStable, fingerCount: state.fingerCount,
+                    groups: state.groups)
             }
         }
         camera?.start()
@@ -71,7 +77,7 @@ final class LessonModel: ObservableObject {
 
     func stop() { session?.stop(); running = false }
     func tap(_ n: UInt32) { session?.tap(number: n) }
-    func repeat() { session?.repeat() }
+    func repeatLine() { session?.`repeat`() }
     func skip() { session?.skip() }
 
     func close() {

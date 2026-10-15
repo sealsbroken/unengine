@@ -1,4 +1,6 @@
 # XcodeGen project: `xcodegen generate` after building the Rust library (see README.md).
+# The library is unmethod-mobile (the engine plus the Unmethod lessons); for the engine alone
+# with the demo strategy, build un-ffi and link -lun_ffi instead.
 name: UnApp
 options:
   bundleIdPrefix: app.onym.un
@@ -11,15 +13,17 @@ targets:
     sources:
       - UnApp
       - Generated
-    resources:
-      - Resources
+      # The models folder goes into the bundle as a folder reference: Bundle.main/models/*.onnx.
+      - path: Resources/models
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.onym.un
         INFOPLIST_FILE: Info.plist
-        SWIFT_OBJC_BRIDGING_HEADER: Generated/un_ffiFFI.h
+        SWIFT_OBJC_BRIDGING_HEADER: UnApp/Bridging.h
         LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/Frameworks
-        # UniFFI scaffolding and link-time strategy registration live in the static library;
-        # -all_load keeps every object file.
-        OTHER_LDFLAGS: ["-lun_ffi", "-all_load", "-lc++"]
+        # No -all_load: the prebuilt ONNX Runtime carries some objects twice, which would then
+        # collide. Strategies are registered explicitly (unmethod_mobile_init) instead.
+        OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]
         TARGETED_DEVICE_FAMILY: "1"

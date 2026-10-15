@@ -45,6 +45,8 @@ final class AppleSpeechInput: SpeechInputCallback {
         guard status == .authorized || status == .notDetermined else {
             throw UnError.Failed(message: "speech recognition not authorised")
         }
+        if status == .notDetermined { SFSpeechRecognizer.requestAuthorization { _ in } }
+        AVAudioApplication.requestRecordPermission { _ in }
     }
 
     func listenForNumber(language: UnLanguage, timeoutSeconds: Double) -> UnHeard? {
@@ -55,6 +57,9 @@ final class AppleSpeechInput: SpeechInputCallback {
         request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
+        // No microphone (the simulator, say): installing a tap would raise an Objective-C
+        // exception, which cannot pass through the engine's Rust frames.
+        guard format.channelCount > 0, format.sampleRate > 0 else { return nil }
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in request.append(buffer) }
         audioEngine.prepare()

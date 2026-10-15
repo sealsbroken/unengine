@@ -26,7 +26,7 @@ un-core.workspace = true
 un-engine.workspace = true
 un-vision.workspace = true
 un-media.workspace = true
-un-app.workspace = true
+un-app = { workspace = true, features = ["speech"] }
 un-strategy-demo.workspace = true
 eframe.workspace = true
 egui.workspace = true
