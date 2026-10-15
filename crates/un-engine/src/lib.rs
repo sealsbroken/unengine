@@ -26,10 +26,13 @@ use un_core::{NumberParser, TableState};
 
 pub use speech::{CancelToken, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 
-/// How long a child counting aloud may pause after a number before the sequence is taken as
-/// finished ([`ListenMode::Counting`]).
-pub const COUNTING_GAP: Duration = Duration::from_secs(3);
-/// The pause that ends the count once it has reached the expected answer: a beat, so a child
+/// How long a child counting aloud may be quiet before the sequence is taken as finished
+/// ([`ListenMode::Counting`]), counted from the last number heard or from the end of the
+/// tutor's last word, whichever is later: a recogniser hands a word over a second or so
+/// after it ends, and the tutor's "good" in between takes another, so the child's own pause
+/// is shorter than this.
+pub const COUNTING_GAP: Duration = Duration::from_secs(5);
+/// The quiet that ends the count once it has reached the expected answer: a beat, so a child
 /// who goes on ("...four, five") is still heard, without the tutor jumping in on the last word.
 pub const COUNTING_DONE_GAP: Duration = Duration::from_millis(1500);
 
@@ -103,6 +106,8 @@ struct State {
     always_show_number_pad: bool,
     last_observation: Option<TableObservation>,
     finger_count: Option<u32>,
+    /// When the tutor last finished a line: a count's quiet window starts after it.
+    tutor_silent_at: Option<Instant>,
     /// Whether the microphone currently picks up sound, as last told to the strategy.
     sound: Option<bool>,
     sound_heard_at: Option<Instant>,
@@ -174,6 +179,7 @@ impl Engine {
                 always_show_number_pad: always,
                 last_observation: None,
                 finger_count: None,
+                tutor_silent_at: None,
                 sound: None,
                 sound_heard_at: None,
                 timers: HashMap::new(),
@@ -413,6 +419,7 @@ impl Inner {
                     speech_in.tutor_silent();
                 }
                 let mut state = self.state.lock();
+                state.tutor_silent_at = Some(Instant::now());
                 if state.status.kind == StatusKind::Speaking {
                     state.status = Status::new(StatusKind::Watching);
                 }
@@ -542,9 +549,12 @@ impl Inner {
             let now = Instant::now();
             let mut remaining = deadline.saturating_duration_since(now);
             if let Some(at) = last_number_at {
+                // Quiet is counted from the later of the last number and the tutor's last word.
+                let silent = self.state.lock().tutor_silent_at.filter(|t| *t > at);
+                let since = silent.unwrap_or(at);
                 let done = expected.is_some_and(|e| sequence.last() == Some(&e));
                 let gap = if done { COUNTING_DONE_GAP } else { COUNTING_GAP };
-                remaining = remaining.min(gap.saturating_sub(now.duration_since(at)));
+                remaining = remaining.min(gap.saturating_sub(now.duration_since(since)));
             }
             let result = if remaining.is_zero() {
                 Err(SpeechError::Timeout { last_transcript: None })

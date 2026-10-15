@@ -194,7 +194,9 @@ final class Lesson1Tests: XCTestCase {
             lesson.child.say(word)
         }
         lesson.hands(4)
-        Thread.sleep(forTimeInterval: 3.5)
+        // Not the expected number, so the tutor waits the full quiet window before taking the
+        // count as finished.
+        Thread.sleep(forTimeInterval: 5.5)
         lesson.settled(4, groups: 2)
         lesson.wait(for: "Давай посчитаем вместе: один, два, три, четыре. Четыре крышки!")
         lesson.wait(for: "А сколько у тебя ртов?")
