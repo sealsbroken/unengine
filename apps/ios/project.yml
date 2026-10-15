@@ -37,3 +37,31 @@ targets:
         # collide. Strategies are registered explicitly (unmethod_mobile_init) instead.
         OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]
         TARGETED_DEVICE_FAMILY: "1"
+  # Synthetic lesson tests: the engine and the lessons through the Swift bindings, with a
+  # scripted child and a simulated table, no host app (tools/ios.sh test).
+  UnAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+      - Generated
+      - UnApp/NumberWords.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.onym.undigit.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_OBJC_BRIDGING_HEADER: UnApp/Bridging.h
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(PROJECT_DIR)/Frameworks/iphoneos
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(PROJECT_DIR)/Frameworks/iphonesimulator
+        OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]
+schemes:
+  UnApp:
+    build:
+      targets:
+        UnApp: all
+        UnAppTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [UnAppTests]

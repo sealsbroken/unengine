@@ -37,6 +37,15 @@ Notes:
 * The lesson starts by itself once the permission prompts are answered;
   `xcrun simctl io <udid> screenshot shot.png` shows it without a Simulator window.
 
+## Tests
+
+`Tests/` holds synthetic lesson tests: lesson 1 driven end to end through the Swift bindings
+with a scripted child (`ScriptedSpeech`, lines queued by the test), a simulated table
+(`UnSession.observe`) and the tutor's lines written down (`RecordedVoice`). No camera, no
+microphone, no host app; the engine's own timers run, so a count takes the beat and a half the
+tutor waits after the last number. `tools/ios.sh test` in the unmethod checkout runs them on the
+simulator (`xcodebuild test -scheme UnApp -only-testing:UnAppTests`).
+
 Generated files: `Generated/un_ffi.swift`, `Generated/un_ffiFFI.h`, `Generated/un_ffiFFI.modulemap`.
 ONNX Runtime for iOS is linked statically by the `ort` crate (download-binaries). sherpa-onnx is
 not needed on iOS because speech goes through Apple's APIs (`un-app` is built without its `speech`
