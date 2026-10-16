@@ -540,6 +540,10 @@ pub struct SpeakerOutput {
     voices: RwLock<HashMap<Language, Arc<Voice>>>,
     /// Below 1 is slower, which suits young children.
     pub speed: f32,
+    /// Above 1 is higher: a child's voice from an adult one (1.45, as on iOS and Android). Piper
+    /// has no pitch, so the line is synthesised this much slower and played this much faster:
+    /// the pace stays, the pitch rises.
+    pub pitch: f32,
     stop: Mutex<Arc<AtomicBool>>,
     playing: Mutex<()>,
 }
@@ -550,6 +554,7 @@ impl SpeakerOutput {
             models,
             voices: RwLock::new(HashMap::new()),
             speed: 1.0, // the voice's own pace
+            pitch: 1.45,
             stop: Mutex::new(Arc::new(AtomicBool::new(false))),
             playing: Mutex::new(()),
         }
@@ -616,8 +621,10 @@ impl SpeechOutput for SpeakerOutput {
 
     fn speak(&self, text: &str, language: Language) -> Result<(), SpeechError> {
         let voice = self.voice(language)?;
-        let audio = voice.synthesize(text, self.speed)?;
-        self.play(&audio.samples, audio.sample_rate)
+        let pitch = self.pitch.max(0.5);
+        let audio = voice.synthesize(text, self.speed / pitch)?;
+        // Played as if recorded `pitch` times faster: resampled to the speaker, it comes out higher.
+        self.play(&audio.samples, (audio.sample_rate as f32 * pitch).round() as u32)
     }
 
     fn stop(&self) {
