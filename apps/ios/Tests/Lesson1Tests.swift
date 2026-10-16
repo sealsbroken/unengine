@@ -77,14 +77,16 @@ final class Lesson1Tests: XCTestCase {
         }
 
         /// Counts `count` objects the way the lesson wants it: a finger on each, the number said,
-        /// a word in passing from the tutor for each, then the hand lifted off the table.
-        func count(_ count: UInt32, numbers: [String], words: [String], groups: UInt32,
+        /// the tutor quiet throughout, then the hand lifted off the table.
+        func count(_ count: UInt32, numbers: [String], groups: UInt32,
                    file: StaticString = #filePath, line: UInt = #line) {
+            let before = voice.spoken.count
             for (i, word) in numbers.prefix(Int(count)).enumerated() {
                 touch(count, UInt32(i + 1))
                 child.say(word)
-                wait("a word in passing after \(word)", file: file, line: line) { words.contains($0) }
+                Thread.sleep(forTimeInterval: 0.4)
             }
+            XCTAssertEqual(voice.spoken.count, before, "the tutor does not interrupt a count", file: file, line: line)
             hands(count)
             // The tutor waits a beat after the last number before taking the count as finished,
             // then for the hand to leave.
@@ -94,7 +96,6 @@ final class Lesson1Tests: XCTestCase {
     }
 
     private let ru = ["один", "два", "три", "четыре", "пять"]
-    private let good = ["Хорошо.", "Так.", "Да."]
 
     func testTheWholeScriptRunsThroughInRussian() throws {
         let lesson = try Lesson(language: .russian, child: "Вася")
@@ -108,17 +109,17 @@ final class Lesson1Tests: XCTestCase {
         lesson.lay(2, groups: 1)
         lesson.wait(for: "Теперь покажи пальцем на каждую игрушку и посчитай вслух.")
         XCTAssertEqual(lesson.session.snapshot().phase, .asking)
-        lesson.count(2, numbers: ru, words: good, groups: 1)
+        lesson.count(2, numbers: ru, groups: 1)
         lesson.wait(for: "А сколько у тебя ушей? Выложи столько же игрушек отдельно от глаз.")
 
         lesson.lay(4, groups: 2)
         lesson.wait(for: "Теперь посчитай все игрушки вместе. Показывай пальцем на каждую и называй число.")
-        lesson.count(4, numbers: ru, words: good, groups: 2)
+        lesson.count(4, numbers: ru, groups: 2)
         lesson.wait(for: "А сколько у тебя ртов? Добавь столько же игрушек.")
 
         lesson.lay(5, groups: 3)
         lesson.wait(for: "Посчитай все игрушки. Не забывай показывать пальцем на каждую.")
-        lesson.count(5, numbers: ru, words: good, groups: 3)
+        lesson.count(5, numbers: ru, groups: 3)
         lesson.wait(for: "Теперь убери игрушки. Попробуем по-другому.")
 
         lesson.lay(0, groups: 0)
@@ -127,11 +128,11 @@ final class Lesson1Tests: XCTestCase {
         lesson.wait(for: "Теперь прибавь к нему число ртов. Выложи их отдельно.")
         lesson.lay(3, groups: 2)
         lesson.wait(for: "Посчитай, что получилось. Показывай на игрушки по одной.")
-        lesson.count(3, numbers: ru, words: good, groups: 2)
+        lesson.count(3, numbers: ru, groups: 2)
         lesson.wait(for: "Теперь прибавь число ушей.")
         lesson.lay(5, groups: 3)
         lesson.wait(for: "Посчитай все игрушки вместе, показывая на каждую.")
-        lesson.count(5, numbers: ru, words: good, groups: 3)
+        lesson.count(5, numbers: ru, groups: 3)
         lesson.wait(for: "Сегодня мы считали глаза, уши и рот с помощью игрушек. До встречи!")
 
         let deadline = Date().addingTimeInterval(5)
@@ -161,7 +162,7 @@ final class Lesson1Tests: XCTestCase {
         lesson.wait(for: "Хорошо. А теперь ещё раз, показывая пальцем на каждую игрушку.")
         XCTAssertEqual(lesson.session.snapshot().phase, .asking)
         // Properly this time.
-        lesson.count(2, numbers: ru, words: good, groups: 1)
+        lesson.count(2, numbers: ru, groups: 1)
         lesson.wait(for: "А сколько у тебя ушей?")
     }
 
@@ -175,7 +176,7 @@ final class Lesson1Tests: XCTestCase {
         lesson.wait(for: "Сколько у тебя глаз?")
         lesson.lay(2, groups: 1)
         lesson.wait(for: "Теперь покажи пальцем")
-        lesson.count(2, numbers: ru, words: good, groups: 1)
+        lesson.count(2, numbers: ru, groups: 1)
         lesson.wait(for: "А сколько у тебя ушей?")
         lesson.lay(4, groups: 2)
         lesson.wait(for: "Теперь посчитай все игрушки вместе.")
@@ -215,7 +216,7 @@ final class Lesson1Tests: XCTestCase {
         lesson.wait(for: "How many eyes do you have? Lay out that many toys.")
         lesson.lay(2, groups: 1)
         lesson.wait("the counting instruction") { $0.contains("point") }
-        lesson.count(2, numbers: ["one", "two"], words: ["Good.", "Yes.", "Right."], groups: 1)
+        lesson.count(2, numbers: ["one", "two"], groups: 1)
         lesson.wait("the ears") { $0.contains("ears") }
     }
 }
