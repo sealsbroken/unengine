@@ -1,16 +1,23 @@
-//! MediaPipe-style hand landmarks on ONNX Runtime: palm detection, then 21 landmarks per hand.
+//! MediaPipe-style hand landmarks on ONNX Runtime: a region of interest, then 21 landmarks per hand.
 //!
-//! Uses the two models from PINTO0309's ONNX conversion of MediaPipe Hands
-//! (`palm_detection_full_inf_post_192x192.onnx`, post-processing included, and
-//! `hand_landmark_sparse_Nx3x224x224.onnx`). Once a hand is found, the next frame's region
-//! of interest comes from its landmarks, as in MediaPipe, so palm detection only runs when a
-//! hand is lost or periodically to pick up new hands.
+//! Uses PINTO0309's ONNX conversion of MediaPipe Hands (`hand_landmark_sparse_Nx3x224x224.onnx`,
+//! and optionally `palm_detection_full_inf_post_192x192.onnx`). A new hand's region comes from
+//! one of two places:
+//!
+//! * **Seeds** (preferred): hand and finger boxes from the object detector, which runs on every
+//!   frame anyway. A seed is turned so the fingers point up (they point away from the frame edge
+//!   the hand comes in from; the other three turns are tried if that one does not fit), then
+//!   refined once from its own landmarks. Unlike the palm detector this finds a hand whose palm
+//!   is out of the picture, which is how a child's hand reaches over a table filmed from above.
+//! * **Palm detection**, when no seeds are given and the palm model is loaded.
+//!
+//! Once a hand is found, the next frame's region comes from its landmarks, as in MediaPipe.
 
 use std::path::Path;
 
 use ort::session::Session;
 use ort::value::Tensor;
-use un_core::geometry::Point;
+use un_core::geometry::{Box2, Point};
 use un_core::{Chirality, HandObservation};
 
 use crate::frame::RgbFrame;
@@ -25,9 +32,12 @@ pub struct HandLandmarkerConfig {
     pub mirrored: bool,
     /// Run palm detection at least every N frames to find new hands.
     pub redetect_every: u32,
-    /// With no hand in view, look for one only every N frames: on a phone the palm detector costs
-    /// as much as the toy detector, and a hand coming in is picked up a few frames later anyway.
+    /// With no hand in view, look for a new one (palm detector, or the seeds' landmark search,
+    /// four turns of each seed) only every N frames: a hand coming in is picked up a few frames
+    /// later anyway, and a weak false seed cannot cost a landmark search on every frame.
     pub idle_every: u32,
+    /// A seed box is grown to this many times its longer side for the landmark crop.
+    pub seed_scale: f32,
     pub provider: Provider,
     pub threads: usize,
 }
@@ -41,6 +51,7 @@ impl Default for HandLandmarkerConfig {
             mirrored: false,
             redetect_every: 15,
             idle_every: 3,
+            seed_scale: 1.8,
             provider: Provider::Cpu,
             threads: 2,
         }
@@ -68,6 +79,14 @@ impl Roi {
         let d = ((self.cx - other.cx).powi(2) + (self.cy - other.cy).powi(2)).sqrt();
         d < 0.5 * self.size.min(other.size)
     }
+}
+
+/// The turn that brings a hand reaching in from the nearest frame edge upright: fingers point
+/// away from that edge, and a region's rotation turns "up" in the crop into that direction.
+pub(crate) fn entry_rotation(seed: &Box2) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let gaps = [(seed.x1, FRAC_PI_2), (1.0 - seed.x2, -FRAC_PI_2), (seed.y1, PI), (1.0 - seed.y2, 0.0)];
+    gaps.iter().min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)).map(|g| g.1).unwrap_or(0.0)
 }
 
 pub(crate) fn normalize_radians(angle: f32) -> f32 {
@@ -104,7 +123,7 @@ pub(crate) fn landmarks_roi(landmarks_px: &[Point]) -> Roi {
 }
 
 pub struct HandLandmarker {
-    palm: Session,
+    palm: Option<Session>,
     palm_input: String,
     palm_size: u32,
     landmark: Session,
@@ -117,15 +136,21 @@ pub struct HandLandmarker {
 }
 
 impl HandLandmarker {
-    pub fn load(palm_model: &Path, landmark_model: &Path, config: HandLandmarkerConfig) -> Result<Self, VisionError> {
-        let palm = load_session(palm_model, config.provider, config.threads)?;
+    /// `palm_model` is optional: without it new hands come only from the seeds passed to [`track`].
+    ///
+    /// [`track`]: HandLandmarker::track
+    pub fn load(palm_model: Option<&Path>, landmark_model: &Path, config: HandLandmarkerConfig) -> Result<Self, VisionError> {
+        let palm = palm_model.map(|p| load_session(p, config.provider, config.threads)).transpose()?;
         let landmark = load_session(landmark_model, config.provider, config.threads)?;
         let input_of = |s: &Session| -> Result<(String, u32), VisionError> {
             let input = s.inputs().first().ok_or_else(|| VisionError::Layout("model has no inputs".into()))?;
             let size = input.dtype().tensor_shape().and_then(|d| d.get(2).copied()).filter(|d| *d > 0).unwrap_or(0) as u32;
             Ok((input.name().to_string(), size))
         };
-        let (palm_input, palm_size) = input_of(&palm)?;
+        let (palm_input, palm_size) = match &palm {
+            Some(palm) => input_of(palm)?,
+            None => (String::new(), 0),
+        };
         let (landmark_input, landmark_size) = input_of(&landmark)?;
         let palm_size = if palm_size == 0 { 192 } else { palm_size };
         let landmark_size = if landmark_size == 0 { 224 } else { landmark_size };
@@ -148,7 +173,10 @@ impl HandLandmarker {
         self.frames_since_detection = 0;
     }
 
-    pub fn track(&mut self, frame: &RgbFrame) -> Result<Vec<HandObservation>, VisionError> {
+    /// Tracks the hands; `seeds` are normalized hand or finger boxes from the object detector,
+    /// best first (empty to rely on the palm detector).
+    pub fn track(&mut self, frame: &RgbFrame, seeds: &[Box2]) -> Result<Vec<HandObservation>, VisionError> {
+        let seeded = !seeds.is_empty();
         let need_detection = self.rois.len() < self.config.max_hands
             && if self.rois.is_empty() {
                 self.frames_since_detection >= self.config.idle_every.max(1) - 1
@@ -158,7 +186,14 @@ impl HandLandmarker {
         let mut rois = self.rois.clone();
         if need_detection {
             self.frames_since_detection = 0;
-            for roi in self.detect_palms(frame)? {
+            let found = if seeded {
+                self.seed_rois(frame, seeds, &rois)?
+            } else if self.palm.is_some() {
+                self.detect_palms(frame)?
+            } else {
+                vec![]
+            };
+            for roi in found {
                 if !rois.iter().any(|r| r.overlaps(&roi)) && rois.len() < self.config.max_hands {
                     rois.push(roi);
                 }
@@ -203,14 +238,48 @@ impl HandLandmarker {
         Ok(hands)
     }
 
+    /// Regions for new hands from the detector's boxes: each seed not already tracked is turned so
+    /// the fingers point up, the best-fitting turn is kept and refined once from its own landmarks.
+    fn seed_rois(&mut self, frame: &RgbFrame, seeds: &[Box2], tracked: &[Roi]) -> Result<Vec<Roi>, VisionError> {
+        let (w, h) = (frame.width as f32, frame.height as f32);
+        let mut found: Vec<Roi> = Vec::new();
+        for seed in seeds {
+            if tracked.len() + found.len() >= self.config.max_hands {
+                break;
+            }
+            let (cx, cy) = (seed.cx() * w, seed.cy() * h);
+            let size = self.config.seed_scale * (seed.width() * w).max(seed.height() * h);
+            let candidate = Roi { cx, cy, size, rotation: 0.0 };
+            if tracked.iter().chain(&found).any(|r| r.overlaps(&candidate)) {
+                continue;
+            }
+            // The fingers point away from the edge the hand comes in from: try that turn first,
+            // then the other three, in one batch.
+            let first = entry_rotation(seed);
+            let turns: Vec<Roi> = (0..4)
+                .map(|k| Roi { rotation: normalize_radians(first + k as f32 * std::f32::consts::FRAC_PI_2), ..candidate })
+                .collect();
+            let results = self.landmarks(frame, &turns)?;
+            let Some((landmarks, _, _)) =
+                results.into_iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            else {
+                continue;
+            };
+            // Refined from its own landmarks; the tracking pass that follows checks the score.
+            found.push(landmarks_roi(&landmarks));
+        }
+        Ok(found)
+    }
+
     fn detect_palms(&mut self, frame: &RgbFrame) -> Result<Vec<Roi>, VisionError> {
+        let Some(palm) = self.palm.as_mut() else { return Ok(vec![]) };
         let size = self.palm_size;
         let scale = size as f32 / frame.width.max(frame.height) as f32;
         let pad_x = (size as f32 - frame.width as f32 * scale) / 2.0;
         let pad_y = (size as f32 - frame.height as f32 * scale) / 2.0;
         frame.write_planar(&mut self.palm_buffer, size, size, scale, pad_x, pad_y, [0, 0, 0]);
         let tensor = Tensor::from_array((vec![1i64, 3, size as i64, size as i64], self.palm_buffer.clone()))?;
-        let outputs = self.palm.run(ort::inputs![self.palm_input.as_str() => tensor])?;
+        let outputs = palm.run(ort::inputs![self.palm_input.as_str() => tensor])?;
         let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
         let cols = *shape.last().unwrap_or(&8) as usize;
         if cols < 8 {
@@ -291,6 +360,21 @@ mod tests {
         let turned = Roi { rotation: std::f32::consts::FRAC_PI_2, ..roi };
         let (x, y) = turned.to_frame(1.0, 0.5);
         assert!((x - 100.0).abs() < 1e-4 && (y - 60.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_hand_from_the_left_edge_is_turned_to_point_right() {
+        // Crop "up" (u 0.5, v 0) maps to the right of the centre for a hand coming in from the left.
+        let from_left = Box2::new(0.0, 0.3, 0.35, 0.45);
+        let roi = Roi { cx: 100.0, cy: 100.0, size: 20.0, rotation: entry_rotation(&from_left) };
+        let (x, y) = roi.to_frame(0.5, 0.0);
+        assert!((x - 110.0).abs() < 1e-4 && (y - 100.0).abs() < 1e-4, "{x} {y}");
+        // From the bottom edge the fingers already point up: no turn.
+        assert_eq!(entry_rotation(&Box2::new(0.4, 0.7, 0.6, 1.0)), 0.0);
+        // From the top they point down.
+        let from_top = Roi { rotation: entry_rotation(&Box2::new(0.4, 0.0, 0.6, 0.2)), ..roi };
+        let (_, y) = from_top.to_frame(0.5, 0.0);
+        assert!((y - 110.0).abs() < 1e-4, "{y}");
     }
 
     #[test]

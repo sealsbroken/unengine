@@ -292,7 +292,13 @@ impl Detector {
         seen
     }
 
+    /// Detections without the decoys (labels starting with `_`).
     pub fn detect(&mut self, frame: &RgbFrame) -> Result<Vec<Detection>, VisionError> {
+        Ok(self.detect_all(frame)?.into_iter().filter(|d| !d.is_decoy()).collect())
+    }
+
+    /// Every detection, decoys included (a `_hand` decoy is never counted but seeds the hand landmarks).
+    pub fn detect_all(&mut self, frame: &RgbFrame) -> Result<Vec<Detection>, VisionError> {
         let fit = Letterbox::fit(frame.width, frame.height, self.input_w, self.input_h);
         frame.write_planar(&mut self.buffer, self.input_w, self.input_h, fit.scale, fit.pad_x, fit.pad_y, [PAD_VALUE; 3]);
         let tensor = Tensor::from_array((vec![1i64, 3, self.input_h as i64, self.input_w as i64], self.buffer.clone()))?;
@@ -307,7 +313,7 @@ impl Detector {
             }
         }
         let (shape, data) = best.ok_or_else(|| VisionError::Layout("no 3-D float output".into()))?;
-        Ok(self.decoder.decode(&data, &shape, &fit, self.input_w, self.input_h).into_iter().filter(|d| !d.is_decoy()).collect())
+        Ok(self.decoder.decode(&data, &shape, &fit, self.input_w, self.input_h))
     }
 }
 

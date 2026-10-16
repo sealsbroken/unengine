@@ -4,7 +4,7 @@ use std::path::Path;
 
 use thiserror::Error;
 use un_core::{
-    touched_object, Detection, DetectionTracker, EstimatorConfig, HandObservation, TableState, TableStateEstimator,
+    touched_object, Box2, Detection, DetectionTracker, EstimatorConfig, HandObservation, TableState, TableStateEstimator,
     TrackedDetection, TrackerConfig, TOUCH_MARGIN,
 };
 use un_vision::{Detector, DetectorConfig, HandLandmarker, HandLandmarkerConfig, Provider, RgbFrame, VisionError};
@@ -49,6 +49,15 @@ impl Default for PerceptionConfig {
 /// The detector label for the child's finger: shown over the picture, never counted as an
 /// object. `tools/export_detector.py` adds it with `--class "finger=finger,index finger,..."`.
 pub const FINGER_LABEL: &str = "finger";
+/// The detector's hand decoy: never counted, but it seeds the hand landmarks.
+pub const HAND_LABEL: &str = "_hand";
+/// Hand and finger boxes this sure seed the landmarks: the landmark model then decides whether it
+/// is a hand, so a weak box costs one landmark run at most.
+pub const SEED_CONFIDENCE: f32 = 0.1;
+/// Landmark score a seeded hand must reach. A detector box already says a hand is there, and a
+/// hand reaching in from the edge, its palm out of the picture, scores 0.3 where a whole one
+/// scores 0.9.
+pub const SEEDED_LANDMARK_THRESHOLD: f32 = 0.3;
 
 pub struct PerceptionOutput {
     pub state: TableState,
@@ -65,6 +74,10 @@ fn split_fingers(detections: Vec<Detection>) -> (Vec<Detection>, Vec<Detection>)
 
 pub struct Perception {
     pub detector: Detector,
+    /// Confidence an object needs to be counted (the detector itself reports down to the seeds').
+    object_confidence: f32,
+    /// The detector has hand or finger labels: new hands are found from its boxes, no palm detector.
+    seeded: bool,
     pub hands: Option<HandLandmarker>,
     pub estimator: TableStateEstimator,
     pub tracker: DetectionTracker,
@@ -80,13 +93,19 @@ impl Perception {
         if !detector_path.exists() {
             return Err(PerceptionError::NoDetector(detector_path.display().to_string()));
         }
-        let detector = Detector::load(
+        let mut detector = Detector::load(
             &detector_path,
             DetectorConfig { confidence: config.confidence, provider: config.provider, ..Default::default() },
         )?;
-        let hands = if config.hands && paths.hands_installed() {
+        let seeded = config.hands && detector.labels.iter().any(|l| l == HAND_LABEL || l == FINGER_LABEL);
+        if seeded {
+            detector.decoder.confidence = config.confidence.min(SEED_CONFIDENCE);
+        }
+        let landmarks_installed = paths.hand_landmark().exists();
+        let hands = if config.hands && landmarks_installed && (seeded || paths.hands_installed()) {
+            let palm = paths.palm_detector();
             Some(HandLandmarker::load(
-                &paths.palm_detector(),
+                (!seeded).then_some(palm.as_path()),
                 &paths.hand_landmark(),
                 // The hand models stay on the CPU: they are small, and CoreML rejects the palm
                 // detector's 2016-anchor output ("static output shape and inferred shape have
@@ -94,6 +113,7 @@ impl Perception {
                 HandLandmarkerConfig {
                     mirrored: config.mirrored,
                     provider: if config.provider == Provider::Auto { Provider::Cpu } else { config.provider },
+                    landmark_threshold: if seeded { SEEDED_LANDMARK_THRESHOLD } else { 0.5 },
                     ..Default::default()
                 },
             )?)
@@ -107,6 +127,8 @@ impl Perception {
         labels.retain(|l| l != FINGER_LABEL);
         Ok(Self {
             detector,
+            object_confidence: config.confidence,
+            seeded,
             hands,
             estimator: TableStateEstimator::new(config.estimator.clone()),
             tracker: DetectionTracker::new(TrackerConfig::default()),
@@ -121,17 +143,39 @@ impl Perception {
     }
 
     pub fn process(&mut self, frame: &RgbFrame, timestamp: f64) -> Result<PerceptionOutput, PerceptionError> {
-        let (fingers, mut detections) = split_fingers(self.detector.detect(frame)?);
+        let all = self.detector.detect_all(frame)?;
+        let is_seed = |d: &Detection| matches!(d.label.as_deref(), Some(HAND_LABEL) | Some(FINGER_LABEL));
+        let mut seeds: Vec<&Detection> = if self.seeded { all.iter().filter(|d| is_seed(d)).collect() } else { vec![] };
+        seeds.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        let seed_boxes: Vec<Box2> = seeds.iter().map(|d| d.bbox).collect();
+        let sure: Vec<Detection> =
+            all.iter().filter(|d| !d.is_decoy() && d.confidence >= self.object_confidence).cloned().collect();
+        let (fingers, mut detections) = split_fingers(sure);
         if let Some(label) = &self.count_label {
             detections.retain(|d| d.label.as_deref() == Some(label));
         }
         let hands = match &mut self.hands {
-            Some(tracker) => tracker.track(frame)?,
+            Some(tracker) => tracker.track(frame, &seed_boxes)?,
             None => vec![],
         };
-        let mut state = self.estimator.ingest(&detections, &hands, timestamp);
+        // A hand the detector is sure of keeps the table "busy" even when its landmarks did not fit
+        // (the count waits for the hand to leave), but it neither points nor counts fingers.
+        let mut present = hands.clone();
+        for seed in seeds.iter().filter(|d| d.confidence >= self.object_confidence) {
+            if !hands.iter().any(|h| h.bbox.is_some_and(|b| b.intersection(&seed.bbox).is_some())) {
+                present.push(HandObservation {
+                    chirality: un_core::Chirality::Unknown,
+                    joints: Default::default(),
+                    joint_confidences: Default::default(),
+                    raised_finger_count: None,
+                    bbox: Some(seed.bbox),
+                    score: seed.confidence,
+                });
+            }
+        }
+        let mut state = self.estimator.ingest(&detections, &present, timestamp);
         let tracked = self.tracker.update(&state.detections);
-        state.pointed_at = touched_object(&self.tracker.numbered(), &hands, &fingers, TOUCH_MARGIN, self.last_pointed);
+        state.pointed_at = touched_object(&self.tracker.numbered(), &hands, TOUCH_MARGIN, self.last_pointed);
         self.last_pointed = state.pointed_at;
         Ok(PerceptionOutput { state, tracked, hands, fingers })
     }
@@ -149,7 +193,7 @@ impl Perception {
         let (fingers, detections) = split_fingers(detections.to_vec());
         let mut state = estimator.ingest(&detections, hands, timestamp);
         let tracked = tracker.update(&state.detections);
-        state.pointed_at = touched_object(&tracker.numbered(), hands, &fingers, TOUCH_MARGIN, previous);
+        state.pointed_at = touched_object(&tracker.numbered(), hands, TOUCH_MARGIN, previous);
         PerceptionOutput { state, tracked, hands: hands.to_vec(), fingers }
     }
 }
@@ -173,8 +217,9 @@ mod tests {
         assert_eq!(out.state.detections.len(), 2);
         assert_eq!(out.fingers.len(), 1);
         assert_eq!(out.fingers[0].label.as_deref(), Some("finger"));
-        // Once the objects are numbered (two frames), the finger over the second one is on it.
+        // Once the objects are numbered (two frames): a finger box alone never points, only an
+        // index fingertip from the landmarks does.
         let out = Perception::process_detections(&mut estimator, &mut tracker, &detections, &[], 0.1, None);
-        assert_eq!(out.state.pointed_at, Some(2));
+        assert_eq!(out.state.pointed_at, None);
     }
 }

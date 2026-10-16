@@ -414,6 +414,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
 
     let started = Instant::now();
     let mut last_tracked: Vec<TrackedDetection> = Vec::new();
+    let mut last_tips: Vec<(f32, f32)> = Vec::new();
     let mut processed = 0u32;
     let mut last_summary: Option<serde_json::Value> = None;
     let mut last_frame = None;
@@ -449,6 +450,9 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
         };
         processed += 1;
         last_tracked = tracked.clone();
+        let tips: Vec<(f32, f32)> =
+            state.hands.iter().filter_map(|h| h.joints.get(&un_core::HandJoint::IndexTip).copied()).collect();
+        last_tips = tips.clone();
         if let Some(session) = &session {
             session.engine.observe(&state);
         }
@@ -462,6 +466,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
             "hands": state.hands.len(), "fingers": state.finger_count,
             "pointing": fingers.iter().map(|d| (d.confidence * 100.0).round() / 100.0).collect::<Vec<_>>(),
             "pointed_at": state.pointed_at,
+            "tips": tips.iter().map(|(x, y)| [(x * 1000.0).round() / 1000.0, (y * 1000.0).round() / 1000.0]).collect::<Vec<_>>(),
         });
         if Some(&summary) != last_summary.as_ref() {
             let mut line = summary.clone();
@@ -486,6 +491,10 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
         for t in &last_tracked {
             let b = &t.detection.bbox;
             frame.draw_rect(b.x1, b.y1, b.x2, b.y2, [80, 220, 120], 3);
+        }
+        // The index fingertips: a small red square each.
+        for (x, y) in &last_tips {
+            frame.draw_rect(x - 0.012, y - 0.007, x + 0.012, y + 0.007, [235, 40, 40], 4);
         }
         if let Some(roi) = perception.as_ref().and_then(|p| p.estimator.roi()) {
             frame.draw_rect(roi.x1, roi.y1, roi.x2, roi.y2, [255, 190, 60], 2);

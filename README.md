@@ -51,8 +51,8 @@ text prompts are baked into the model. `tools/export_detector.py` with no argume
 default. The model input is a 960×960 square: phones and tablets send portrait frames, desktop
 cameras landscape, and toys a tenth of the frame wide score about 0.8 at 960 against 0.3 at
 640. On iPhone and iPad the detector runs on CoreML (about 80 ms a frame with the hands on an
-iPad mini); the two small hand models stay on the CPU, and with no hand in view the palm
-detector looks for one only every third frame. The kinds of toy and their prompts:
+iPad mini); the hand landmark model stays on the CPU, and with no hand in view a new one is
+looked for only every third frame. The kinds of toy and their prompts:
 
 | Label | Prompts | Said as |
 |---|---|---|
@@ -70,10 +70,21 @@ kinds with `--class label=prompt,prompt` (repeat per kind) and `--name`.
 
 Two labels are special: labels starting with `_` are decoys (recognised so that a keyboard or a
 hand never becomes a toy, then dropped), and `finger` is shown over the picture but never
-counted, so a child can point at a toy: the index fingertip from the hand landmarks when they
-are there, else the toy the finger box covers most, and whichever toy it was last time keeps
-its claim while the finger is still on it, so a finger lying across two toys does not flicker
-between them.
+counted.
+
+Only the **index finger** points. Its tip comes from MediaPipe's hand landmarks (joint 8), which
+tell it from the thumb and the other fingers. A child's hand reaching over a table filmed from
+above often has its palm out of the picture, where MediaPipe's palm detector finds nothing, so a
+new hand is found from the toy detector's own `_hand` and `finger` boxes instead (kept down to
+a confidence of 0.1 for this): each box is turned so the fingers point away from the frame edge
+the hand comes in from (the other three turns are tried too), the landmark model runs on it,
+and the crop is refined once from its own landmarks; from then on the hand is tracked from
+frame to frame as in MediaPipe. The palm detector is only loaded for a detector without hand
+labels. A toy is touched when the index fingertip lies within its box grown by a third of its
+size (the nearest centre when several), and the toy touched last time keeps its claim while the
+tip is still within its grown box, so a tip between two close toys does not flicker. A hand the
+detector is sure of keeps the table busy (the count waits for it to leave) even when its
+landmarks did not fit, but it never points.
 
 For a detector that is sure of *your* toys on *your* table, teach it: record auto-labelled
 frames with the CLI (the zero-shot model labels them), then fine-tune a small model and export:

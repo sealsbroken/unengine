@@ -222,11 +222,13 @@ impl TableStateEstimator {
         }
         self.last_hands_present = hands_present;
 
-        let finger_count = if hands.is_empty() {
+        // Fingers are counted on hands with landmarks; a hand seen only as a box is present but uncounted.
+        let counted: Vec<u32> = hands.iter().filter_map(|h| h.raised_finger_count).collect();
+        let finger_count = if counted.is_empty() {
             self.finger_window.clear();
             None
         } else {
-            self.finger_window.push(hands.iter().map(|h| h.raised_finger_count.unwrap_or(0)).sum());
+            self.finger_window.push(counted.iter().sum());
             let limit = self.config.finger_window_frames;
             if self.finger_window.len() > limit {
                 let excess = self.finger_window.len() - limit;
