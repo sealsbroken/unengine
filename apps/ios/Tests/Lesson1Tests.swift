@@ -159,7 +159,7 @@ final class Lesson1Tests: XCTestCase {
         lesson.child.say("два")
         Thread.sleep(forTimeInterval: 2.0)
         lesson.settled(2, groups: 1)
-        lesson.wait(for: "Хорошо. А теперь ещё раз, показывая пальцем на каждую игрушку.")
+        lesson.wait(for: "Числа правильные, но есть ошибочка: пальцем на игрушки не показано. Давай ещё раз, показывая пальцем на каждую игрушку.")
         XCTAssertEqual(lesson.session.snapshot().phase, .asking)
         // Properly this time.
         lesson.count(2, numbers: ru, groups: 1)
@@ -188,7 +188,7 @@ final class Lesson1Tests: XCTestCase {
         lesson.hands(4)
         Thread.sleep(forTimeInterval: 2.0)
         lesson.settled(4, groups: 2)
-        lesson.wait(for: "Давай ещё раз. Показывай на игрушки по одной и называй число.")
+        lesson.wait(for: "Ой, тут ошибочка, ничего страшного. Давай ещё раз: показывай на игрушки по одной и называй число.")
         // "One, two, three, three": still wrong, so the tutor counts together and moves on.
         for (i, word) in ["один", "два", "три", "три"].enumerated() {
             lesson.touch(4, UInt32(min(i + 1, 3)))
@@ -199,7 +199,7 @@ final class Lesson1Tests: XCTestCase {
         // count as finished.
         Thread.sleep(forTimeInterval: 5.5)
         lesson.settled(4, groups: 2)
-        lesson.wait(for: "Давай посчитаем вместе: один, два, три, четыре. Четыре игрушки!")
+        lesson.wait(for: "Снова ошибочка, ничего страшного. Давай посчитаем вместе: один, два, три, четыре. Четыре игрушки!")
         lesson.wait(for: "А сколько у тебя ртов?")
         let snapshot = lesson.session.snapshot()
         XCTAssertEqual(snapshot.tasksCompleted, 4)
