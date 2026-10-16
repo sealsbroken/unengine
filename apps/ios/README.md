@@ -18,7 +18,7 @@ cargo build -p un-ffi --release --target aarch64-apple-ios-sim        # aarch64-
 cargo run -p un-ffi --bin uniffi-bindgen -- generate \
     --library ../../target/aarch64-apple-ios-sim/release/libun_ffi.a --language swift --no-format --out-dir Generated
 mkdir -p Frameworks/iphonesimulator Resources/models && cp ../../target/aarch64-apple-ios-sim/release/libun_ffi.a Frameworks/iphonesimulator/
-cp ../../models/{caps,detector}.{onnx,json} ../../models/{hand_landmark,palm_detection}.onnx Resources/models/
+cp ../../models/toys.{onnx,json} ../../models/{hand_landmark,palm_detection}.onnx Resources/models/
 xcodegen generate && open UnApp.xcodeproj
 ```
 
@@ -30,7 +30,7 @@ Notes:
 * `--no-format`: swift-format spins for a very long time on the generated file.
 * No `-all_load`: the prebuilt ONNX Runtime carries some objects twice and the link would
   fail; strategies are therefore registered explicitly through `unmethod_mobile_init()`.
-* `Resources/models` is bundled as a folder reference, so the app finds `models/caps.onnx`.
+* `Resources/models` is bundled as a folder reference, so the app finds `models/toys.onnx`.
 * The simulator has no camera and no microphone: the tutor speaks, sees an empty table and hears
   nothing, which exercises the no-reaction dialogue. For the real lesson run on a phone:
   `tools/ios.sh device`, then in Xcode pick your team under Signing & Capabilities and press Run.
@@ -41,11 +41,10 @@ Notes:
 
 ## Tests
 
-`Tests/` holds synthetic lesson tests: lesson 1 driven end to end through the Swift bindings
-with a scripted child (`ScriptedSpeech`, lines queued by the test), a simulated table
-(`UnSession.observe`) and the tutor's lines written down (`RecordedVoice`). No camera, no
-microphone, no host app; the engine's own timers run, so a count takes the beat and a half the
-tutor waits after the last number. `tools/ios.sh test` in the unmethod checkout runs them on the
+`Tests/Doubles.swift` holds the doubles for synthetic lesson tests: a scripted child
+(`ScriptedSpeech`, lines queued by the test) and the tutor's lines written down
+(`RecordedVoice`), with a simulated table through `UnSession.observe`. No camera, no
+microphone, no host app; the engine's own timers run. The toy lessons' tests go next to it. `tools/ios.sh test` in the unmethod checkout runs them on the
 simulator (`xcodebuild test -scheme UnApp -only-testing:UnAppTests`).
 
 Generated files: `Generated/un_ffi.swift`, `Generated/un_ffiFFI.h`, `Generated/un_ffiFFI.modulemap`.

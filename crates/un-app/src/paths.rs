@@ -59,7 +59,7 @@ impl ModelPaths {
     }
 
     /// The detector to start with: the one most recently exported or trained, since that is the
-    /// one being worked on; `detector` when the directory is empty.
+    /// one being worked on; `toys` when the directory is empty.
     pub fn default_detector(&self) -> String {
         self.detectors()
             .into_iter()
@@ -69,7 +69,7 @@ impl ModelPaths {
             })
             .max()
             .map(|(_, name)| name)
-            .unwrap_or_else(|| "detector".to_string())
+            .unwrap_or_else(|| "toys".to_string())
     }
 
     pub fn palm_detector(&self) -> PathBuf {

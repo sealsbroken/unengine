@@ -21,7 +21,7 @@ use crate::worker::{SourceSpec, Worker};
 /// What a product wants preselected when the window opens, whatever was chosen last time.
 #[derive(Debug, Clone, Default)]
 pub struct Defaults {
-    /// A detector name in the models directory (`caps`); ignored when it is not installed.
+    /// A detector name in the models directory (`toys`); ignored when it is not installed.
     pub detector: Option<String>,
     /// A strategy id (`lesson-01`); ignored when it is not registered.
     pub strategy: Option<String>,

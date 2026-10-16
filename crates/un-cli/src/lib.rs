@@ -118,8 +118,8 @@ struct SourceArgs {
 
 #[derive(Args)]
 struct VisionArgs {
-    /// Detector: a name in the models directory (detector, coco, table) or a path to an .onnx.
-    #[arg(long, default_value = "detector")]
+    /// Detector: a name in the models directory (toys, or one taught with tools/teach.py) or a path to an .onnx.
+    #[arg(long, default_value = "toys")]
     model: String,
     #[arg(long, default_value_t = 0.25)]
     conf: f32,
@@ -177,8 +177,8 @@ struct LessonArgs {
 
 #[derive(Args)]
 struct CollectArgs {
-    /// Dataset directory: images/, labels/ and classes.json (default datasets/table).
-    #[arg(long, default_value = "datasets/table")]
+    /// Dataset directory: images/, labels/ and classes.json (default datasets/toys).
+    #[arg(long, default_value = "datasets/toys")]
     out: PathBuf,
     /// Comma-separated model labels to keep (default: every non-decoy label).
     #[arg(long)]

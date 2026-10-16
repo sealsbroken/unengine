@@ -66,7 +66,7 @@ pub struct Noun {
     pub ru_few: String,
     /// Genitive plural, after 5+ and "сколько": "кубиков".
     pub ru_many: String,
-    /// "ни одного кубика" / "ни одной крышки" (gender agreement).
+    /// "ни одного кубика" / "ни одной куклы" (gender agreement).
     pub ru_none: String,
     /// Nominative/accusative plural, "считать кубики".
     pub ru_plural: String,
@@ -85,11 +85,15 @@ impl Noun {
         }
     }
 
+    pub fn toy() -> Self {
+        Noun::new("toy", "toys", "игрушка", "игрушки", "игрушек", "ни одной игрушки", "игрушки")
+    }
+
     pub fn cube() -> Self {
         Noun::new("cube", "cubes", "кубик", "кубика", "кубиков", "ни одного кубика", "кубики")
     }
 
-    /// Russian grammatical gender, read off the "not a single" form: "ни одной крышки" is feminine.
+    /// Russian grammatical gender, read off the "not a single" form: "ни одной куклы" is feminine.
     pub fn ru_feminine(&self) -> bool {
         self.ru_none.starts_with("ни одной")
     }
@@ -97,15 +101,13 @@ impl Noun {
     /// The noun for a detector label; unknown labels get a plain English plural.
     pub fn for_label(label: &str) -> Noun {
         match label {
-            "" | "cube" => Noun::cube(),
-            "circle" => Noun::new("circle", "circles", "кружок", "кружка", "кружков", "ни одного кружка", "кружки"),
-            "cap" => Noun::new("cap", "caps", "крышка", "крышки", "крышек", "ни одной крышки", "крышки"),
-            "coin" => Noun::new("coin", "coins", "монета", "монеты", "монет", "ни одной монеты", "монеты"),
-            "ball" => Noun::new("ball", "balls", "мяч", "мяча", "мячей", "ни одного мяча", "мячи"),
+            "" | "toy" => Noun::toy(),
+            "cube" => Noun::cube(),
             "car" => Noun::new("car", "cars", "машинка", "машинки", "машинок", "ни одной машинки", "машинки"),
-            "pencil" => Noun::new("pencil", "pencils", "карандаш", "карандаша", "карандашей", "ни одного карандаша", "карандаши"),
-            "fruit" => Noun::new("fruit", "fruits", "фрукт", "фрукта", "фруктов", "ни одного фрукта", "фрукты"),
-            "stone" => Noun::new("stone", "stones", "камень", "камня", "камней", "ни одного камня", "камни"),
+            "ball" => Noun::new("ball", "balls", "мячик", "мячика", "мячиков", "ни одного мячика", "мячики"),
+            "bear" => Noun::new("bear", "bears", "мишка", "мишки", "мишек", "ни одного мишки", "мишки"),
+            "doll" => Noun::new("doll", "dolls", "кукла", "куклы", "кукол", "ни одной куклы", "куклы"),
+            "animal" => Noun::new("animal", "animals", "зверюшка", "зверюшки", "зверюшек", "ни одной зверюшки", "зверюшки"),
             "object" => Noun::new("object", "objects", "предмет", "предмета", "предметов", "ни одного предмета", "предметы"),
             other => Noun::new(other, &format!("{other}s"), other, other, other, &format!("ни одного {other}"), other),
         }
@@ -196,7 +198,7 @@ impl Numerals {
     }
 
     /// "four cubes" / "четыре кубика". Zero becomes "no cubes" / "ни одного кубика". Russian
-    /// "one" and "two" agree with the noun's gender: "одна крышка", "две крышки".
+    /// "one" and "two" agree with the noun's gender: "одна кукла", "две куклы".
     pub fn objects(n: u32, language: Language, noun: &Noun) -> String {
         if n == 0 {
             return match language {
@@ -274,21 +276,23 @@ mod tests {
     }
 
     #[test]
-    fn other_nouns() {
-        let cap = Noun::for_label("cap");
-        assert_eq!(Numerals::objects(2, EN, &cap), "two caps");
-        assert_eq!(Numerals::objects(5, RU, &cap), "пять крышек");
-        assert_eq!(Numerals::objects(0, RU, &cap), "ни одной крышки");
-        assert_eq!(Numerals::objects(1, RU, &cap), "одна крышка");
-        assert_eq!(Numerals::objects(2, RU, &cap), "две крышки");
-        assert_eq!(Numerals::objects(12, RU, &cap), "двенадцать крышек");
+    fn toy_nouns() {
+        let doll = Noun::for_label("doll");
+        assert_eq!(Numerals::objects(2, EN, &doll), "two dolls");
+        assert_eq!(Numerals::objects(5, RU, &doll), "пять кукол");
+        assert_eq!(Numerals::objects(0, RU, &doll), "ни одной куклы");
+        assert_eq!(Numerals::objects(1, RU, &doll), "одна кукла");
+        assert_eq!(Numerals::objects(2, RU, &doll), "две куклы");
+        assert_eq!(Numerals::objects(12, RU, &doll), "двенадцать кукол");
         assert_eq!(Numerals::objects(2, RU, &Noun::cube()), "два кубика");
         assert_eq!(Numerals::objects(3, EN, &Noun::for_label("widget")), "three widgets");
-        let stone = Noun::for_label("stone");
-        assert_eq!(Numerals::objects(1, RU, &stone), "один камень");
-        assert_eq!(Numerals::objects(3, RU, &stone), "три камня");
-        assert_eq!(Numerals::objects(7, RU, &stone), "семь камней");
-        assert_eq!(Numerals::objects(7, EN, &stone), "seven stones");
+        let bear = Noun::for_label("bear");
+        assert_eq!(Numerals::objects(1, RU, &bear), "один мишка");
+        assert_eq!(Numerals::objects(3, RU, &bear), "три мишки");
+        assert_eq!(Numerals::objects(7, RU, &bear), "семь мишек");
+        assert_eq!(Numerals::objects(7, EN, &bear), "seven bears");
+        assert_eq!(Numerals::objects(4, RU, &Noun::for_label("")), "четыре игрушки");
+        assert_eq!(Numerals::objects(1, RU, &Noun::toy()), "одна игрушка");
         assert_eq!(capitalize("четыре кубика"), "Четыре кубика");
     }
 }

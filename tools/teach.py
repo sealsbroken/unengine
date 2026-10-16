@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fine-tune a detector on frames recorded with `un collect`, then export it for the app.
 
-    un collect --camera 0 --model stones --labels stone --out datasets/stones --seconds 90
-    uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset datasets/stones --name table
+    un collect --camera 0 --model toys --out datasets/toys --seconds 90
+    uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset datasets/toys --name my-toys
 
 ``un collect`` labels each saved frame with a teacher (a zero-shot detector exported with
 tools/export_detector.py) and writes YOLO txt labels next to the images. Move the objects
@@ -41,8 +41,8 @@ AUGMENTATION: dict[str, float] = {
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dataset", type=Path, default=ROOT / "datasets" / "table", help="Dataset from `un collect`.")
-    parser.add_argument("--name", default="table", help="Run name and models/<name>.onnx (default table).")
+    parser.add_argument("--dataset", type=Path, default=ROOT / "datasets" / "toys", help="Dataset from `un collect`.")
+    parser.add_argument("--name", default="my-toys", help="Run name and models/<name>.onnx (default my-toys).")
     parser.add_argument("--model", default="yolo26n.pt", help="Pretrained weights to start from (default yolo26n.pt).")
     parser.add_argument("--epochs", type=int, default=30, help="Epochs (default 30).")
     parser.add_argument("--batch", type=int, default=16, help="Batch size (default 16).")

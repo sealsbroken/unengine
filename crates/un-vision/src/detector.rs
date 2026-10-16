@@ -348,9 +348,9 @@ mod tests {
         let fit = Letterbox::fit(640, 640, 640, 640);
         let rows = [[0.0, 0.0, 64.0, 64.0, 0.9, 1.0], [600.0, 600.0, 640.0, 640.0, 0.1, 0.0]];
         let flat: Vec<f32> = rows.concat();
-        let dets = decoder(&["cube", "cap"]).decode(&flat, &[1, 2, 6], &fit, 640, 640);
+        let dets = decoder(&["cube", "car"]).decode(&flat, &[1, 2, 6], &fit, 640, 640);
         assert_eq!(dets.len(), 1);
-        assert_eq!(dets[0].label.as_deref(), Some("cap"));
+        assert_eq!(dets[0].label.as_deref(), Some("car"));
         assert!((dets[0].bbox.x2 - 0.1).abs() < 1e-6);
     }
 
@@ -366,7 +366,7 @@ mod tests {
         out[3 * anchors] = 64.0; // h
         out[4 * anchors] = 0.8; // class 0 score
         out[5 * anchors + 1] = 0.3; // anchor 1 class 1, but w/h zero
-        let dets = decoder(&["cube", "cap"]).decode(&out, &[1, 6, anchors as i64], &fit, 640, 640);
+        let dets = decoder(&["cube", "car"]).decode(&out, &[1, 6, anchors as i64], &fit, 640, 640);
         assert_eq!(dets.len(), 2);
         assert_eq!(dets[0].label.as_deref(), Some("cube"));
         assert!((dets[0].bbox.cx() - 0.5).abs() < 1e-6);
@@ -377,11 +377,11 @@ mod tests {
         let fit = Letterbox::fit(640, 640, 640, 640);
         let rows = [[0.5, 0.5, 0.2, 0.2, 0.1, 0.9], [0.1, 0.1, 0.1, 0.1, 0.05, 0.05]];
         let flat: Vec<f32> = rows.concat();
-        let mut d = decoder(&["cube", "cap"]);
+        let mut d = decoder(&["cube", "car"]);
         d.head = Head::Rtdetr;
         let dets = d.decode(&flat, &[1, 2, 6], &fit, 640, 640);
         assert_eq!(dets.len(), 1);
-        assert_eq!(dets[0].label.as_deref(), Some("cap"));
+        assert_eq!(dets[0].label.as_deref(), Some("car"));
         assert!((dets[0].bbox.x1 - 0.4).abs() < 1e-6);
     }
 }

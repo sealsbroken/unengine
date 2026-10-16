@@ -21,7 +21,7 @@ pub enum PerceptionError {
 
 #[derive(Debug, Clone)]
 pub struct PerceptionConfig {
-    /// Detector name (`detector`, `coco`, `table`) or a path to an `.onnx`.
+    /// Detector name (`toys`, or one taught with tools/teach.py) or a path to an `.onnx`.
     pub detector: String,
     pub confidence: f32,
     pub provider: Provider,
@@ -35,7 +35,7 @@ pub struct PerceptionConfig {
 impl Default for PerceptionConfig {
     fn default() -> Self {
         Self {
-            detector: "detector".into(),
+            detector: "toys".into(),
             confidence: 0.25,
             provider: Provider::Cpu,
             hands: true,
@@ -157,8 +157,8 @@ mod tests {
         let mut estimator = TableStateEstimator::default();
         let mut tracker = DetectionTracker::new(TrackerConfig::default());
         let detections = vec![
-            Detection::labeled(Box2::new(0.1, 0.1, 0.2, 0.2), 0.9, "cap"),
-            Detection::labeled(Box2::new(0.5, 0.5, 0.6, 0.6), 0.9, "cap"),
+            Detection::labeled(Box2::new(0.1, 0.1, 0.2, 0.2), 0.9, "car"),
+            Detection::labeled(Box2::new(0.5, 0.5, 0.6, 0.6), 0.9, "car"),
             Detection::labeled(Box2::new(0.55, 0.3, 0.6, 0.55), 0.8, FINGER_LABEL),
         ];
         let out = Perception::process_detections(&mut estimator, &mut tracker, &detections, &[], 0.0, None);

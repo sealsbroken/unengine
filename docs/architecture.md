@@ -74,7 +74,7 @@ itself; this matters for third parties reusing the engine.)
 
 | Platform | Status | Notes |
 |---|---|---|
-| macOS | runs | Verified: camera 25 fps with COCO detector + hands (M-series, CPU), speech self-test EN/RU. |
+| macOS | runs | Verified: camera 25 fps with the detector + hands (M-series, CPU), speech self-test EN/RU. |
 | Windows | builds in CI | nokhwa Media Foundation, cpal WASAPI, sherpa-onnx prebuilt; DirectML via the `directml` feature. |
 | Linux | builds in CI | V4L2, ALSA; needs the dev packages listed in the README. |
 | iOS | shell scaffolded | `apps/ios`: AVFoundation camera → `UnPerception` (NV12), Apple speech adapters, SwiftUI screen. Needs `cargo build --target aarch64-apple-ios`, bindings generation and an Xcode run to validate. |

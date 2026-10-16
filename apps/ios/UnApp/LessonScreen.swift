@@ -88,7 +88,7 @@ final class LessonModel: ObservableObject {
         #endif
         do {
             perception = try UnPerception(config: UnPerceptionConfig(
-                modelsDir: modelsDir, detector: "caps", confidence: 0.25, hands: true, countLabel: nil, mirrored: false, roi: nil))
+                modelsDir: modelsDir, detector: "toys", confidence: 0.25, hands: true, countLabel: nil, mirrored: false, roi: nil))
             let strategies = availableStrategies()
             let lesson = strategies.first { $0.id == "lesson-01" } ?? strategies.first
             session = try UnSession(

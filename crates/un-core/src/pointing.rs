@@ -88,44 +88,44 @@ mod tests {
         }
     }
 
-    fn caps() -> Vec<(u32, Box2)> {
+    fn toys() -> Vec<(u32, Box2)> {
         vec![(1, Box2::new(0.1, 0.4, 0.2, 0.5)), (2, Box2::new(0.4, 0.4, 0.5, 0.5)), (3, Box2::new(0.7, 0.4, 0.8, 0.5))]
     }
 
     #[test]
     fn a_fingertip_on_or_just_beside_an_object_touches_it() {
-        assert_eq!(touched_object(&caps(), &[hand_with_tip(0.45, 0.45)], &[], TOUCH_MARGIN, None), Some(2));
-        assert_eq!(touched_object(&caps(), &[hand_with_tip(0.52, 0.45)], &[], TOUCH_MARGIN, None), Some(2));
-        assert_eq!(touched_object(&caps(), &[hand_with_tip(0.6, 0.45)], &[], TOUCH_MARGIN, None), None);
-        assert_eq!(touched_object(&caps(), &[hand_with_tip(0.45, 0.1)], &[], TOUCH_MARGIN, None), None);
+        assert_eq!(touched_object(&toys(), &[hand_with_tip(0.45, 0.45)], &[], TOUCH_MARGIN, None), Some(2));
+        assert_eq!(touched_object(&toys(), &[hand_with_tip(0.52, 0.45)], &[], TOUCH_MARGIN, None), Some(2));
+        assert_eq!(touched_object(&toys(), &[hand_with_tip(0.6, 0.45)], &[], TOUCH_MARGIN, None), None);
+        assert_eq!(touched_object(&toys(), &[hand_with_tip(0.45, 0.1)], &[], TOUCH_MARGIN, None), None);
     }
 
     #[test]
     fn a_finger_box_touches_the_object_it_covers_most() {
         let finger = Detection::labeled(Box2::new(0.45, 0.2, 0.78, 0.48), 0.5, "finger");
-        assert_eq!(touched_object(&caps(), &[], &[finger], TOUCH_MARGIN, None), Some(3));
+        assert_eq!(touched_object(&toys(), &[], &[finger], TOUCH_MARGIN, None), Some(3));
         let beside = Detection::labeled(Box2::new(0.25, 0.1, 0.35, 0.3), 0.5, "finger");
-        assert_eq!(touched_object(&caps(), &[], &[beside], TOUCH_MARGIN, None), None);
+        assert_eq!(touched_object(&toys(), &[], &[beside], TOUCH_MARGIN, None), None);
     }
 
     #[test]
     fn the_fingertip_wins_over_the_finger_box() {
         let finger = Detection::labeled(Box2::new(0.65, 0.2, 0.85, 0.48), 0.5, "finger");
-        assert_eq!(touched_object(&caps(), &[hand_with_tip(0.15, 0.45)], &[finger], TOUCH_MARGIN, None), Some(1));
+        assert_eq!(touched_object(&toys(), &[hand_with_tip(0.15, 0.45)], &[finger], TOUCH_MARGIN, None), Some(1));
     }
 
     #[test]
     fn a_finger_box_across_two_objects_stays_on_the_one_it_was_on() {
-        // Across caps 2 and 3, more of cap 3 (x 0.72..0.8) than of cap 2 (0.45..0.5).
+        // Across toys 2 and 3, more of toy 3 (x 0.72..0.8) than of toy 2 (0.45..0.5).
         let across = Detection::labeled(Box2::new(0.45, 0.42, 0.8, 0.48), 0.5, "finger");
-        assert_eq!(touched_object(&caps(), &[], std::slice::from_ref(&across), TOUCH_MARGIN, None), Some(3));
-        // Last time it was cap 2, which still has more than half of cap 3's share: still cap 2.
-        assert_eq!(touched_object(&caps(), &[], std::slice::from_ref(&across), TOUCH_MARGIN, Some(2)), Some(2));
-        // Last time it was cap 1, which the finger is not on at all: the best one.
-        assert_eq!(touched_object(&caps(), &[], &[across], TOUCH_MARGIN, Some(1)), Some(3));
-        // Barely on cap 2 any more (x 0.49..0.5): the finger has moved on to cap 3.
+        assert_eq!(touched_object(&toys(), &[], std::slice::from_ref(&across), TOUCH_MARGIN, None), Some(3));
+        // Last time it was toy 2, which still has more than half of toy 3's share: still toy 2.
+        assert_eq!(touched_object(&toys(), &[], std::slice::from_ref(&across), TOUCH_MARGIN, Some(2)), Some(2));
+        // Last time it was toy 1, which the finger is not on at all: the best one.
+        assert_eq!(touched_object(&toys(), &[], &[across], TOUCH_MARGIN, Some(1)), Some(3));
+        // Barely on toy 2 any more (x 0.49..0.5): the finger has moved on to toy 3.
         let moved = Detection::labeled(Box2::new(0.49, 0.42, 0.8, 0.48), 0.5, "finger");
-        assert_eq!(touched_object(&caps(), &[], &[moved], TOUCH_MARGIN, Some(2)), Some(3));
+        assert_eq!(touched_object(&toys(), &[], &[moved], TOUCH_MARGIN, Some(2)), Some(3));
     }
 
     #[test]

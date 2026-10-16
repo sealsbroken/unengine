@@ -184,7 +184,7 @@ fn words_are_reported_and_listening_goes_on_until_a_number() {
     use un_core::strategy::Event;
     let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let speech_in = Arc::new(ScriptedSpeechInput::saying(
-        vec!["Mia".into(), "I don't know".into(), "three caps".into()],
+        vec!["Mia".into(), "I don't know".into(), "three cars".into()],
         Duration::from_millis(20),
     ));
     let engine = Engine::new(

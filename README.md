@@ -1,7 +1,7 @@
 # Un
 
 The open engine behind Unnumberium: a camera looks at the table, recognises and counts the
-objects on it and the child's fingers, and a tutor talks about what it sees, listens to the
+toys on it and the child's fingers, and a tutor talks about what it sees, listens to the
 spoken answer and adapts. One Rust core on **macOS, Windows, Linux, iOS and Android**;
 everything runs on the device and nothing leaves it.
 
@@ -40,49 +40,55 @@ cargo build --release --workspace
 cargo run --release -p un-cli -- check-speech --language ru   # the voice says "три", the recogniser hears it
 ```
 
-The Zipformers are small and quick but mishear short answers ("ten caps" became "and cabs").
+The Zipformers are small and quick but mishear short answers ("ten cars" can become "and cards").
 `python3 tools/fetch_models.py --whisper small` adds a multilingual Whisper (about 250 MB) that
 the engine then prefers for every language; it decodes an answer in about half a second on an
 Apple laptop. `un listen` prints what the microphone hears, for checking a setup.
 
-The object detector is not downloaded: it is trained or exported for the objects you count.
-`tools/export_detector.py` produces `models/detector.onnx` plus its `.json` sidecar from an
-Ultralytics model (zero-shot YOLOE prompts or your own weights) or any detector whose output
-matches one of the supported heads. Note the licence of the weights you ship (Ultralytics'
-are AGPL-3.0; RT-DETR, D-FINE and YOLOX are Apache-2.0).
+The toy detector is not downloaded: it is exported from Ultralytics' zero-shot YOLOE, whose
+text prompts are baked into the model. `tools/export_detector.py` with no arguments writes
+`models/toys.onnx` plus its `.json` sidecar; it is the detector every app and the CLI load by
+default. The kinds of toy and their prompts:
 
-The zero-shot prompts cover cubes, caps, circles, coins, pencils, toy cars, balls, fruit and
-stones. For new objects, or for a detector that is sure of *your* objects on *your* table,
-teach it: record auto-labelled frames with the CLI, then fine-tune and export.
+| Label | Prompts | Said as |
+|---|---|---|
+| `cube` | toy block, wooden toy block, toy cube, lego brick, building block | cube / кубик |
+| `car` | toy car, toy truck, toy bus, toy train | car / машинка |
+| `ball` | toy ball, small ball, rubber ball | ball / мячик |
+| `bear` | teddy bear, plush bear | bear / мишка |
+| `doll` | doll, toy doll | doll / кукла |
+| `animal` | toy animal, toy dinosaur, animal figurine, stuffed animal, plush toy | animal / зверюшка |
+| `toy` | toy, small toy, plastic toy (a toy none of the kinds above names) | toy / игрушка |
+
+Detection is class-agnostic after the head (one box per toy, whichever kind scores best), so
+"how many toys?" counts every kind together and "how many cars?" counts one. Add or narrow
+kinds with `--class label=prompt,prompt` (repeat per kind) and `--name`.
 
 Two labels are special: labels starting with `_` are decoys (recognised so that a keyboard or a
-hand never becomes an object, then dropped), and `finger` is shown over the picture but never
-counted, so a child can point at an object: the index fingertip from the hand landmarks when
-they are there, else the object the finger box covers most, and whichever object it was last
-time keeps its claim while the finger is still on it, so a finger lying across two objects does
-not flicker between them. The caps detector carries it:
+hand never becomes a toy, then dropped), and `finger` is shown over the picture but never
+counted, so a child can point at a toy: the index fingertip from the hand landmarks when they
+are there, else the toy the finger box covers most, and whichever toy it was last time keeps
+its claim while the finger is still on it, so a finger lying across two toys does not flicker
+between them.
+
+For a detector that is sure of *your* toys on *your* table, teach it: record auto-labelled
+frames with the CLI (the zero-shot model labels them), then fine-tune a small model and export:
 
 ```sh
-python3 tools/export_detector.py --name caps --class "cap=bottle cap,red bottle cap,plastic bottle cap,coca cola cap" \
-    --class "finger=finger,index finger,fingertip,pointing finger" \
-    --class "_keyboard=laptop keyboard,computer keyboard,trackpad" --class "_hand=hand"
+python3 tools/export_detector.py
+cargo run --release -p un-cli -- collect --camera 0 --model toys --conf 0.15 --out datasets/toys
+uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset datasets/toys --name my-toys
 ```
 
-```sh
-python3 tools/export_detector.py --name stones --class "stone=stone,pebble,rock" --class "_hand=hand"
-cargo run --release -p un-cli -- collect --camera 0 --model stones --conf 0.15 --labels stone --out datasets/stones
-uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset datasets/stones --name table
-```
-
-Move the objects between grabs, add and remove some, cover a few with a hand. The result,
-`models/table.onnx`, is what the desktop app picks by default when it exists.
+Move the toys between grabs, add and remove some, cover a few with a hand. The desktop app
+picks the most recently exported or trained detector, so `models/my-toys.onnx` takes over.
 
 ## Run
 
 ```sh
 cargo run --release -p un-desktop                 # the window: camera or a simulated table, demo lesson
 cargo run --release -p un-cli -- cameras
-cargo run --release -p un-cli -- run --camera 0 --model coco     # one JSON line per state change
+cargo run --release -p un-cli -- run --camera 0                  # toys; one JSON line per state change
 cargo run --release -p un-cli -- lesson --sim 3 --answers 3,2 --voice console   # a scripted lesson, no camera (words work too: Mia,yes,3)
 cargo run --release -p un-cli -- lesson --camera 0 --language ru                # the real thing, headless
 ```
@@ -141,3 +147,11 @@ cargo run -p un-cli -- check-speech
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it refers to in `LICENSE.GPL`). Third-party
 components: ONNX Runtime, `ort`, egui, nokhwa, cpal (MIT/Apache-2.0); sherpa-onnx, the
 Zipformer models and MediaPipe's hand models (Apache-2.0); Whisper, Silero VAD and Piper voices (MIT).
+
+The toy detector is not part of this repository and is under a different licence: YOLOE and
+everything exported or trained with Ultralytics (`models/toys.onnx`, models from `tools/teach.py`)
+is AGPL-3.0. The engine's own code stays LGPL, but a program shipped *with* that model is a
+combined work under the AGPL: its complete source, lessons included, must be offered to its
+users (also over a network). A product that keeps its lessons closed needs either an Ultralytics
+Enterprise licence or a detector under a permissive licence (OmDet-Turbo, OWLv2, RF-DETR,
+D-FINE: Apache-2.0) exported to one of the supported heads.

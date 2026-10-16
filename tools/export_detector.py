@@ -10,20 +10,17 @@ Three kinds of detector:
   must not be counted, e.g. the laptop keyboard) and are dropped by the engine after NMS. The
   label ``finger`` is special too: the engine shows those boxes but never counts them, so the
   child can point at an object without the finger becoming one.
-* Any Ultralytics detector (``--model yolo26n.pt`` with no --class): the 80 COCO classes, or your
-  own trained weights (``--model best.pt``). RT-DETR weights (``--model rtdetr-l.pt``) export with
+* Any Ultralytics detector with no --class: your own trained weights (``--model best.pt``, see
+  tools/teach.py). RT-DETR weights (``--model rtdetr-l.pt``) export with
   the ``rtdetr`` head.
 * Anything else: write the sidecar by hand: {"labels": [...], "imgsz": [H, W], "head": "yolo|e2e|rtdetr"}.
 
 Licences: Ultralytics code and weights are AGPL-3.0. For a closed product prefer Apache-2.0
 detectors (RT-DETR, D-FINE, YOLOX) or your own training pipeline.
 
-    python3 tools/export_detector.py
-    python3 tools/export_detector.py --class "cube=toy block" --class "_hand=hand"
-    python3 tools/export_detector.py --name caps --class "cap=bottle cap,red bottle cap,plastic bottle cap,coca cola cap" \
-        --class "finger=finger,index finger,fingertip,pointing finger" \
-        --class "_keyboard=laptop keyboard,computer keyboard,trackpad" --class "_hand=hand"
-    python3 tools/export_detector.py --model yolo26n.pt --name coco
+    python3 tools/export_detector.py                      # models/toys.onnx: every toy kind below
+    python3 tools/export_detector.py --name cars --class "car=toy car,toy truck" \
+        --class "finger=finger,index finger,fingertip,pointing finger" --class "_hand=hand"
 """
 
 from __future__ import annotations
@@ -39,15 +36,16 @@ MODELS = ROOT / "models"
 WEIGHTS = ROOT / "weights"
 
 DEFAULT_CLASSES = [
-    "cube=toy block,small toy cube,wooden cube,lego brick",
-    "cap=bottle cap",
-    "circle=red circle,red disc,round red token,red counter,poker chip",
-    "coin=coin",
-    "pencil=pencil,crayon",
-    "car=toy car",
-    "ball=small ball",
-    "fruit=apple,orange,banana",
-    "stone=stone,pebble,rock,small grey stone",
+    "cube=toy block,wooden toy block,toy cube,lego brick,building block",
+    "car=toy car,toy truck,toy bus,toy train",
+    "ball=toy ball,small ball,rubber ball",
+    "bear=teddy bear,plush bear",
+    "doll=doll,toy doll",
+    "animal=toy animal,toy dinosaur,animal figurine,stuffed animal,plush toy",
+    # Catch-all: a toy none of the kinds above names.
+    "toy=toy,small toy,plastic toy",
+    # Shown over the picture, never counted: the child points with it.
+    "finger=finger,index finger,fingertip,pointing finger",
     # Decoys: soak up boxes on things that are always in view.
     "_keyboard=laptop keyboard,computer keyboard,trackpad",
     "_hand=hand",
@@ -74,7 +72,7 @@ def main() -> None:
     parser.add_argument("--model", default="yoloe-11s-seg.pt", help="Weights (downloaded into weights/).")
     parser.add_argument("--imgsz", type=int, nargs=2, default=[384, 640], metavar=("H", "W"),
                         help="Model input, height width (default 384 640 for 16:9 cameras).")
-    parser.add_argument("--name", default="detector", help="Output name in models/ (default detector).")
+    parser.add_argument("--name", default="toys", help="Output name in models/ (default toys).")
     args = parser.parse_args()
 
     WEIGHTS.mkdir(exist_ok=True)

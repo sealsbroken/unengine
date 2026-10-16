@@ -651,14 +651,14 @@ mod tests {
 
     #[test]
     fn tutor_numbers_are_removed_from_an_overlapping_utterance() {
-        let tutor: Vec<String> = tokenize("I see five caps. Take one away.")
+        let tutor: Vec<String> = tokenize("I see five cars. Take one away.")
             .into_iter()
             .filter(|w| NumberParser::parse(w, Language::English).is_some())
             .collect();
         assert_eq!(tutor, vec!["five", "one"]);
-        let heard = without_words("i see five caps take one away ten", &tutor);
+        let heard = without_words("i see five cars take one away ten", &tutor);
         assert_eq!(NumberParser::parse(&heard, Language::English), Some(10));
-        let tutor_only = without_words("i see five caps take one away", &tutor);
+        let tutor_only = without_words("i see five cars take one away", &tutor);
         assert_eq!(NumberParser::parse(&tutor_only, Language::English), None);
     }
 }

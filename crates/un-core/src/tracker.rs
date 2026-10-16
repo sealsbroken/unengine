@@ -153,7 +153,7 @@ mod tests {
 
     use super::*;
 
-    fn cap(x: f32, y: f32) -> Detection {
+    fn toy(x: f32, y: f32) -> Detection {
         Detection::new(Box2::new(x, y, x + 0.05, y + 0.05), 0.9)
     }
 
@@ -168,66 +168,66 @@ mod tests {
     #[test]
     fn new_object_needs_two_frames() {
         let mut t = DetectionTracker::default();
-        assert!(t.update(&[cap(0.5, 0.5)]).is_empty());
-        assert_eq!(t.update(&[cap(0.5, 0.5)]).iter().map(|d| d.number).collect::<Vec<_>>(), vec![1]);
+        assert!(t.update(&[toy(0.5, 0.5)]).is_empty());
+        assert_eq!(t.update(&[toy(0.5, 0.5)]).iter().map(|d| d.number).collect::<Vec<_>>(), vec![1]);
     }
 
     #[test]
     fn number_follows_object_across_the_other() {
         let mut t = DetectionTracker::default();
-        t.update(&[cap(0.5, 0.5)]);
-        t.update(&[cap(0.5, 0.5)]);
-        t.update(&[cap(0.5, 0.5), cap(0.8, 0.5)]);
-        assert_eq!(numbers(&t.update(&[cap(0.5, 0.5), cap(0.8, 0.5)])), map(&[(1, 0.5), (2, 0.8)]));
+        t.update(&[toy(0.5, 0.5)]);
+        t.update(&[toy(0.5, 0.5)]);
+        t.update(&[toy(0.5, 0.5), toy(0.8, 0.5)]);
+        assert_eq!(numbers(&t.update(&[toy(0.5, 0.5), toy(0.8, 0.5)])), map(&[(1, 0.5), (2, 0.8)]));
         let mut x = 0.8f32;
         while x > 0.2 {
             x -= 0.04;
-            t.update(&[cap(x, 0.5), cap(0.5, 0.5)]);
+            t.update(&[toy(x, 0.5), toy(0.5, 0.5)]);
         }
-        assert_eq!(numbers(&t.update(&[cap(x, 0.5), cap(0.5, 0.5)])), map(&[(1, 0.5), (2, x)]));
+        assert_eq!(numbers(&t.update(&[toy(x, 0.5), toy(0.5, 0.5)])), map(&[(1, 0.5), (2, x)]));
     }
 
     #[test]
     fn brief_miss_keeps_numbers_long_miss_frees_them() {
         let mut t = DetectionTracker::new(TrackerConfig { min_hits: 1, max_missed: 3, ..Default::default() });
-        t.update(&[cap(0.2, 0.5), cap(0.7, 0.5)]);
+        t.update(&[toy(0.2, 0.5), toy(0.7, 0.5)]);
         for _ in 0..3 {
-            t.update(&[cap(0.2, 0.5)]);
+            t.update(&[toy(0.2, 0.5)]);
         }
         // The missed one is still numbered, at its last box.
         assert_eq!(t.numbered().iter().map(|(n, b)| (*n, b.x1)).collect::<Vec<_>>(), vec![(1, 0.2), (2, 0.7)]);
-        assert_eq!(numbers(&t.update(&[cap(0.2, 0.5), cap(0.7, 0.5)])), map(&[(1, 0.2), (2, 0.7)]));
+        assert_eq!(numbers(&t.update(&[toy(0.2, 0.5), toy(0.7, 0.5)])), map(&[(1, 0.2), (2, 0.7)]));
         for _ in 0..5 {
-            t.update(&[cap(0.7, 0.5)]);
+            t.update(&[toy(0.7, 0.5)]);
         }
-        assert_eq!(numbers(&t.update(&[cap(0.7, 0.5), cap(0.4, 0.5)])), map(&[(1, 0.7), (2, 0.4)]));
+        assert_eq!(numbers(&t.update(&[toy(0.7, 0.5), toy(0.4, 0.5)])), map(&[(1, 0.7), (2, 0.4)]));
     }
 
     #[test]
     fn single_frame_flicker_never_numbered() {
         let mut t = DetectionTracker::default();
-        t.update(&[cap(0.5, 0.5)]);
-        t.update(&[cap(0.5, 0.5)]);
-        t.update(&[cap(0.5, 0.5), cap(0.9, 0.1)]);
+        t.update(&[toy(0.5, 0.5)]);
+        t.update(&[toy(0.5, 0.5)]);
+        t.update(&[toy(0.5, 0.5), toy(0.9, 0.1)]);
         let nums = |r: Vec<TrackedDetection>| r.iter().map(|d| d.number).collect::<Vec<_>>();
-        assert_eq!(nums(t.update(&[cap(0.5, 0.5)])), vec![1]);
-        assert_eq!(nums(t.update(&[cap(0.5, 0.5), cap(0.3, 0.5)])), vec![1]);
-        assert_eq!(nums(t.update(&[cap(0.5, 0.5), cap(0.3, 0.5)])), vec![1, 2]);
+        assert_eq!(nums(t.update(&[toy(0.5, 0.5)])), vec![1]);
+        assert_eq!(nums(t.update(&[toy(0.5, 0.5), toy(0.3, 0.5)])), vec![1]);
+        assert_eq!(nums(t.update(&[toy(0.5, 0.5), toy(0.3, 0.5)])), vec![1, 2]);
     }
 
     #[test]
     fn vanished_false_positive_leaves_no_gap() {
         let mut t = DetectionTracker::new(TrackerConfig { min_hits: 2, max_missed: 3, ..Default::default() });
         for _ in 0..2 {
-            t.update(&[cap(0.5, 0.5)]);
+            t.update(&[toy(0.5, 0.5)]);
         }
         for _ in 0..2 {
-            t.update(&[cap(0.5, 0.5), cap(0.9, 0.9)]);
+            t.update(&[toy(0.5, 0.5), toy(0.9, 0.9)]);
         }
         for _ in 0..2 {
-            t.update(&[cap(0.5, 0.5), cap(0.2, 0.5)]);
+            t.update(&[toy(0.5, 0.5), toy(0.2, 0.5)]);
         }
-        assert_eq!(numbers(&t.update(&[cap(0.5, 0.5), cap(0.2, 0.5)])), map(&[(1, 0.5), (3, 0.2)]));
-        assert_eq!(numbers(&t.update(&[cap(0.5, 0.5), cap(0.2, 0.5)])), map(&[(1, 0.5), (2, 0.2)]));
+        assert_eq!(numbers(&t.update(&[toy(0.5, 0.5), toy(0.2, 0.5)])), map(&[(1, 0.5), (3, 0.2)]));
+        assert_eq!(numbers(&t.update(&[toy(0.5, 0.5), toy(0.2, 0.5)])), map(&[(1, 0.5), (2, 0.2)]));
     }
 }

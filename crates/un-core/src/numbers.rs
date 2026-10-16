@@ -225,7 +225,7 @@ impl NumberParser {
     }
 }
 
-/// A spoken "how many …?" question about one object type (`label`), or about everything (`None`).
+/// A spoken "how many …?" question about one kind of toy (`label`), or about all of them (`None`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CountQuestion {
     pub label: Option<String>,
@@ -237,33 +237,13 @@ impl CountQuestion {
 
     /// Words that name each detector label, singular and plural, including common mis-hearings.
     pub fn default_vocabulary() -> BTreeMap<String, Vec<String>> {
-        let entries: [(&str, &[&str]); 8] = [
-            ("cap", &["cap", "caps", "bottle cap", "bottle caps", "lid", "lids", "cup", "cups", "cop", "cops"]),
-            ("coin", &["coin", "coins", "penny", "pennies", "money"]),
-            ("cube", &["cube", "cubes", "block", "blocks", "cue", "cues", "queue", "queues"]),
-            (
-                "circle",
-                &[
-                    "circle",
-                    "circles",
-                    "disc",
-                    "discs",
-                    "disk",
-                    "disks",
-                    "token",
-                    "tokens",
-                    "counter",
-                    "counters",
-                    "chip",
-                    "chips",
-                    "red circle",
-                    "red circles",
-                ],
-            ),
+        let entries: [(&str, &[&str]); 6] = [
+            ("cube", &["cube", "cubes", "block", "blocks", "brick", "bricks", "cue", "cues", "queue", "queues"]),
+            ("car", &["car", "cars", "truck", "trucks", "bus", "buses"]),
             ("ball", &["ball", "balls"]),
-            ("car", &["car", "cars"]),
-            ("pencil", &["pencil", "pencils", "crayon", "crayons"]),
-            ("fruit", &["fruit", "fruits", "apple", "apples", "orange", "oranges", "banana", "bananas"]),
+            ("bear", &["bear", "bears", "teddy", "teddies", "teddy bear", "teddy bears"]),
+            ("doll", &["doll", "dolls"]),
+            ("animal", &["animal", "animals", "dinosaur", "dinosaurs", "dino", "dinos"]),
         ];
         entries.iter().map(|(k, v)| (k.to_string(), v.iter().map(|s| s.to_string()).collect())).collect()
     }
@@ -276,7 +256,7 @@ impl CountQuestion {
         Self { label: Some(label.to_string()) }
     }
 
-    /// Finds "how many <object>" or "count <object>" in `transcript`. English only for now.
+    /// Finds "how many <toys>" or "count <toys>" in `transcript`. English only for now.
     pub fn parse(transcript: &str, language: Language, vocabulary: Option<&BTreeMap<String, Vec<String>>>) -> Option<Self> {
         if language != Language::English {
             return None;
@@ -317,7 +297,8 @@ impl CountQuestion {
         out
     }
 
-    /// The spoken answer given the count of each label on the table (hands are not objects).
+    /// The spoken answer given the count of each label on the table (hands are not toys). The catch-all
+    /// `toy` label is "other toys" next to named kinds.
     pub fn answer(&self, counts: &BTreeMap<String, u32>) -> String {
         if let Some(label) = &self.label {
             return sentence(counts.get(label).copied().unwrap_or(0), label);
@@ -326,12 +307,23 @@ impl CountQuestion {
         present.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
         let total: u32 = present.iter().map(|(v, _)| v).sum();
         match present.len() {
-            0 => "There are no objects.".to_string(),
+            0 => "There are no toys.".to_string(),
             1 => sentence(present[0].0, present[0].1),
             _ => {
-                let parts: Vec<String> = present.iter().map(|(v, k)| phrase(*v, k)).collect();
+                let parts: Vec<String> = present
+                    .iter()
+                    .map(
+                        |(v, k)| {
+                            if k.as_str() == "toy" {
+                                phrase(*v, k).replacen(" toy", " other toy", 1)
+                            } else {
+                                phrase(*v, k)
+                            }
+                        },
+                    )
+                    .collect();
                 let (last, rest) = parts.split_last().unwrap();
-                format!("There are {total} objects: {} and {last}.", rest.join(", "))
+                format!("There are {total} toys: {} and {last}.", rest.join(", "))
             }
         }
     }
@@ -512,44 +504,44 @@ mod tests {
     #[test]
     fn recognises_questions() {
         for (t, e) in [
-            ("How many caps?", "cap"),
-            ("how many caps are there", "cap"),
-            ("How many cups are on the table?", "cap"),
-            ("How many bottle caps do I have", "cap"),
-            ("How many coins?", "coin"),
-            ("Count the coins", "coin"),
+            ("How many cars?", "car"),
+            ("how many trucks are there", "car"),
+            ("How many teddy bears are on the table?", "bear"),
+            ("How many teddies do I have", "bear"),
+            ("How many dolls?", "doll"),
+            ("Count the dinosaurs", "animal"),
             ("how many cubes", "cube"),
             ("How many blocks are there?", "cube"),
             ("Hey, how many cubes are there now?", "cube"),
-            ("HOW MANY RED CIRCLES", "circle"),
-            ("how many discs", "circle"),
+            ("HOW MANY BALLS", "ball"),
         ] {
             assert_eq!(label(t).as_deref(), Some(e), "{t}");
         }
         for t in ["How many objects?", "how many things are on the table", "Count all the toys", "How many altogether?"] {
             assert_eq!(CountQuestion::parse(t, EN, None), Some(CountQuestion::everything()), "{t}");
         }
-        for t in ["caps", "How many?", "I like coins", "how much is it", ""] {
+        for t in ["cars", "How many?", "I like dolls", "how much is it", ""] {
             assert_eq!(label(t), None, "{t}");
         }
-        assert_eq!(label("caps and coins, how many coins").as_deref(), Some("coin"));
-        assert_eq!(CountQuestion::parse("сколько крышечек", RU, None), None);
+        assert_eq!(label("cars and dolls, how many dolls").as_deref(), Some("doll"));
+        assert_eq!(CountQuestion::parse("сколько машинок", RU, None), None);
     }
 
     #[test]
     fn answers() {
-        let caps = CountQuestion::about("cap");
+        let cars = CountQuestion::about("car");
         let counts = |pairs: &[(&str, u32)]| pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect::<BTreeMap<_, _>>();
-        assert_eq!(caps.answer(&counts(&[])), "There are no caps.");
-        assert_eq!(caps.answer(&counts(&[("cap", 1), ("coin", 4)])), "There is one cap.");
-        assert_eq!(caps.answer(&counts(&[("cap", 3)])), "There are 3 caps.");
+        assert_eq!(cars.answer(&counts(&[])), "There are no cars.");
+        assert_eq!(cars.answer(&counts(&[("car", 1), ("doll", 4)])), "There is one car.");
+        assert_eq!(cars.answer(&counts(&[("car", 3)])), "There are 3 cars.");
         let all = CountQuestion::everything();
-        assert_eq!(all.answer(&counts(&[])), "There are no objects.");
-        assert_eq!(all.answer(&counts(&[("cap", 2), ("coin", 0)])), "There are 2 caps.");
-        assert_eq!(all.answer(&counts(&[("cap", 3), ("coin", 1)])), "There are 4 objects: 3 caps and one coin.");
+        assert_eq!(all.answer(&counts(&[])), "There are no toys.");
+        assert_eq!(all.answer(&counts(&[("car", 2), ("doll", 0)])), "There are 2 cars.");
+        assert_eq!(all.answer(&counts(&[("car", 3), ("doll", 1)])), "There are 4 toys: 3 cars and one doll.");
         assert_eq!(
-            all.answer(&counts(&[("cube", 2), ("cap", 2), ("coin", 1)])),
-            "There are 5 objects: 2 caps, 2 cubes and one coin."
+            all.answer(&counts(&[("cube", 2), ("car", 2), ("toy", 1)])),
+            "There are 5 toys: 2 cars, 2 cubes and one other toy."
         );
+        assert_eq!(all.answer(&counts(&[("toy", 3)])), "There are 3 toys.");
     }
 }

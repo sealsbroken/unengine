@@ -553,7 +553,7 @@ pub struct UnTableState {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct UnPerceptionConfig {
     pub models_dir: String,
-    /// Detector name in `models_dir` (`detector`, `coco`) or a path to an `.onnx`.
+    /// Detector name in `models_dir` (`toys`) or a path to an `.onnx`.
     pub detector: String,
     pub confidence: f32,
     pub hands: bool,
