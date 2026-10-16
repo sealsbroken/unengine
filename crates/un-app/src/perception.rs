@@ -4,8 +4,8 @@ use std::path::Path;
 
 use thiserror::Error;
 use un_core::{
-    touched_object, Box2, Detection, DetectionTracker, EstimatorConfig, HandObservation, TableState, TableStateEstimator,
-    TrackedDetection, TrackerConfig, TOUCH_MARGIN,
+    touched_object, Box2, Detection, DetectionTracker, EstimatorConfig, HandObservation, LayoutFreeze, TableState,
+    TableStateEstimator, TrackedDetection, TrackerConfig, TOUCH_MARGIN,
 };
 use un_vision::{Detector, DetectorConfig, HandLandmarker, HandLandmarkerConfig, Provider, RgbFrame, VisionError};
 
@@ -58,6 +58,9 @@ pub const SEED_CONFIDENCE: f32 = 0.1;
 /// hand reaching in from the edge, its palm out of the picture, scores 0.3 where a whole one
 /// scores 0.9.
 pub const SEEDED_LANDMARK_THRESHOLD: f32 = 0.3;
+/// A hand or finger box this sure holds the toys' layout (see `un_core::freeze`): a finger
+/// reaching in from the edge is often seen at 0.15 to 0.3 before its landmarks fit.
+pub const FREEZE_CONFIDENCE: f32 = 0.15;
 
 pub struct PerceptionOutput {
     pub state: TableState,
@@ -85,6 +88,8 @@ pub struct Perception {
     pub labels: Vec<String>,
     /// The object a finger was on in the previous frame; it keeps its claim while still touched.
     last_pointed: Option<u32>,
+    /// The toys' layout, held while a hand is over the table.
+    freeze: LayoutFreeze,
 }
 
 impl Perception {
@@ -134,6 +139,7 @@ impl Perception {
             tracker: DetectionTracker::new(TrackerConfig::default()),
             count_label: config.count_label.clone(),
             last_pointed: None,
+            freeze: LayoutFreeze::default(),
             labels,
         })
     }
@@ -174,8 +180,14 @@ impl Perception {
             }
         }
         let mut state = self.estimator.ingest(&detections, &present, timestamp);
-        let tracked = self.tracker.update(&state.detections);
-        state.pointed_at = touched_object(&self.tracker.numbered(), &hands, TOUCH_MARGIN, self.last_pointed);
+        // Any part of a hand over the table holds the layout: a split or hidden toy changes nothing.
+        let hand_over_table = state.hands_present || !hands.is_empty() || seeds.iter().any(|d| d.confidence >= FREEZE_CONFIDENCE);
+        let (tracked, numbered) = self.freeze.step(hand_over_table, &mut self.tracker, &state.detections);
+        if self.freeze.holding() {
+            // What is shown and pointed at is the held layout, not this frame's boxes.
+            state.detections = tracked.iter().map(|t| t.detection.clone()).collect();
+        }
+        state.pointed_at = touched_object(&numbered, &hands, TOUCH_MARGIN, self.last_pointed);
         self.last_pointed = state.pointed_at;
         Ok(PerceptionOutput { state, tracked, hands, fingers })
     }

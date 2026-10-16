@@ -17,6 +17,7 @@
 
 pub mod detection;
 pub mod estimator;
+pub mod freeze;
 pub mod geometry;
 pub mod hands;
 pub mod language;
@@ -27,6 +28,7 @@ pub mod tracker;
 
 pub use detection::Detection;
 pub use estimator::{EstimatorConfig, TableState, TableStateEstimator};
+pub use freeze::LayoutFreeze;
 pub use geometry::{Box2, Point};
 pub use hands::{Chirality, FingerCounter, HandJoint, HandObservation};
 pub use language::{Language, Noun, Numerals};

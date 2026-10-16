@@ -88,6 +88,12 @@ tip is still within its grown box, so a tip between two close toys does not flic
 detector is sure of keeps the table busy (the count waits for it to leave) even when its
 landmarks did not fit, but it never points.
 
+While any part of a hand is over the table (landmarks, or a hand or finger box from the detector
+at 0.15 or more) the toys' layout is held (`un_core::freeze`): the numbered toys and their boxes
+from the last frame without a hand. A finger that splits a toy into two boxes, or a hand that hides
+one, changes nothing, and the fingertip is matched against the held boxes. When the hand leaves,
+tracking goes on, and the table settles again before anything is counted.
+
 For a detector that is sure of *your* toys on *your* table, teach it: record auto-labelled
 frames with the CLI (the zero-shot model labels them), then fine-tune a small model and export:
 
