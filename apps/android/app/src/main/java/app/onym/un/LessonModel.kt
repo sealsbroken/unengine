@@ -62,7 +62,7 @@ class LessonModel(private val context: Context) {
         perception = UnPerception(UnPerceptionConfig(modelsDir, "toys", 0.25f, true, null, false, null))
         val strategies = availableStrategies()
         val lesson = strategies.firstOrNull { it.id == "lesson-01" } ?: strategies.firstOrNull()
-        session = UnSession(lesson?.id ?: "demo", config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true)
+        session = UnSession(lesson?.id ?: "demo", config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true, true, null)
         startCamera()
         session?.start()
         running.value = true

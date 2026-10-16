@@ -14,12 +14,17 @@ speech = ["dep:un-speech"]
 coreml = ["un-vision/coreml"]
 cuda = ["un-vision/cuda"]
 directml = ["un-vision/directml"]
+# The on-device language model for the tutor's free answers (llama.cpp; needs cmake to build).
+llm = ["dep:un-llm"]
+# llama.cpp on Apple GPUs.
+metal = ["llm", "un-llm/metal"]
 
 [dependencies]
 un-core.workspace = true
 un-engine.workspace = true
 un-vision.workspace = true
 un-speech = { workspace = true, optional = true }
+un-llm = { workspace = true, optional = true }
 un-strategy-demo.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -35,7 +35,8 @@ targets:
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(PROJECT_DIR)/Frameworks/iphonesimulator
         # No -all_load: the prebuilt ONNX Runtime carries some objects twice, which would then
         # collide. Strategies are registered explicitly (unmethod_mobile_init) instead.
-        OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]
+        # llama.cpp (the tutor's language model) runs on Metal and uses Accelerate.
+        OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++", "-framework", "Metal", "-framework", "MetalKit", "-framework", "Accelerate", "-framework", "Foundation"]
         TARGETED_DEVICE_FAMILY: "1,2"  # iPhone and iPad, portrait, full screen
   # Synthetic lesson tests: the engine and the lessons through the Swift bindings, with a
   # scripted child and a simulated table, no host app (tools/ios.sh test).
@@ -53,7 +54,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: UnApp/Bridging.h
         "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(PROJECT_DIR)/Frameworks/iphoneos
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(PROJECT_DIR)/Frameworks/iphonesimulator
-        OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]
+        OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++", "-framework", "Metal", "-framework", "MetalKit", "-framework", "Accelerate", "-framework", "Foundation"]
 schemes:
   UnApp:
     build:

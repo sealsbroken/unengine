@@ -7,6 +7,7 @@
 //! sherpa-onnx implementations, and the test doubles in [`doubles`] drive a lesson
 //! without audio.
 
+pub mod chat;
 pub mod doubles;
 pub mod speech;
 
@@ -24,6 +25,7 @@ use un_core::strategy::{
 };
 use un_core::{NumberParser, TableState};
 
+pub use chat::ChatModel;
 pub use speech::{CancelToken, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 
 /// How long a child counting aloud may be quiet before the sequence is taken as finished
@@ -91,6 +93,70 @@ pub struct EngineOptions {
     pub always_show_number_pad: bool,
     /// Receives a one-line transcript of everything the engine does.
     pub log: Option<Logger>,
+    /// Keep the microphone open for the whole session, not only while the strategy listens:
+    /// whatever the child says outside an answer window reaches the strategy as `Said`. It is
+    /// closed only while the tutor speaks, so the tutor never hears itself.
+    pub always_listen: bool,
+    /// The on-device language model for [`Effect::Chat`]; without one every request is
+    /// answered with `Replied(None)`.
+    pub chat: Option<Arc<dyn ChatModel>>,
+}
+
+/// The always-on microphone's state (see [`EngineOptions::always_listen`]).
+#[derive(Default)]
+struct Mic {
+    /// The tutor is speaking: the microphone is closed.
+    speaking: bool,
+    /// The listen in flight, cancelled when the tutor starts to speak.
+    token: Option<Arc<CancelToken>>,
+    /// The tutor's line spoken with the microphone open (during a count), and when it ended:
+    /// its words are taken out of what the microphone hears for a moment.
+    echo: Option<(String, Option<Instant>)>,
+}
+
+/// How long after the tutor's line its words may still turn up in a transcript: a recogniser
+/// hands an utterance over a second or so after it ends.
+const ECHO_TAIL: Duration = Duration::from_secs(3);
+
+/// The line as the voice should read it: without quotation marks, backslashes and markup, which
+/// a synthesiser reads out as symbols ("скажи «два»" came out as "скажи бэкслеш два бэкслеш").
+/// The HUD keeps the written line.
+fn for_voice(text: &str) -> String {
+    let kept: String =
+        text.chars().filter(|c| !matches!(c, '«' | '»' | '"' | '“' | '”' | '„' | '\\' | '*' | '_' | '`' | '#')).collect();
+    kept.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// "1234" as "1 2 3 4": a recogniser writes a fast "one two three four" as one number. Only runs
+/// of consecutive digits going up are spread, so "10" and "25" stay what they are.
+fn spread_digits(text: &str) -> String {
+    text.split_whitespace()
+        .map(|word| {
+            let digits: Vec<u32> = word.chars().filter_map(|c| c.to_digit(10)).collect();
+            let run = digits.len() >= 2
+                && digits.len() == word.trim_matches(|c: char| !c.is_alphanumeric()).chars().count()
+                && digits.windows(2).all(|w| w[1] == w[0] + 1);
+            if run {
+                digits.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(" ")
+            } else {
+                word.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A count said aloud ("one, two, three", or "123"): the numbers 1...n in order, n at least two.
+fn spoken_count(text: &str, language: un_core::Language) -> Option<Vec<u32>> {
+    let numbers = NumberParser::all(&spread_digits(text), language);
+    (numbers.len() >= 2 && numbers.iter().copied().eq(1..=numbers.len() as u32)).then_some(numbers)
+}
+
+/// `heard` without the words of `tutor` (case and punctuation aside), in order.
+fn without_echo(heard: &str, tutor: &str) -> String {
+    let word = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+    let tutor: Vec<String> = tutor.split_whitespace().map(word).filter(|w| !w.is_empty()).collect();
+    heard.split_whitespace().filter(|w| !tutor.contains(&word(w))).collect::<Vec<_>>().join(" ")
 }
 
 struct State {
@@ -141,6 +207,13 @@ struct Inner {
     state: Mutex<State>,
     effects: Sender<Option<Effect>>,
     listen_generation: AtomicU64,
+    mic: Mutex<Mic>,
+    mic_cv: Condvar,
+    /// Utterances from the always-on microphone for the strategy's listen in progress.
+    utterances: (Sender<String>, Receiver<String>),
+    /// The chat request in flight, cancelled by a newer one.
+    chat_token: Mutex<Option<Arc<CancelToken>>>,
+    chat_generation: AtomicU64,
 }
 
 /// Runs one lesson session.
@@ -189,6 +262,11 @@ impl Engine {
             }),
             effects: tx,
             listen_generation: AtomicU64::new(0),
+            mic: Mutex::new(Mic::default()),
+            mic_cv: Condvar::new(),
+            utterances: unbounded(),
+            chat_token: Mutex::new(None),
+            chat_generation: AtomicU64::new(0),
         });
         Self { inner, worker: Mutex::new(None), effects_rx: Mutex::new(Some(rx)) }
     }
@@ -234,6 +312,12 @@ impl Engine {
                 Some(thread::Builder::new().name("un-effects".into()).spawn(move || inner.run_effects(rx)).expect("spawn"));
         }
         self.inner.state.lock().status = Status::new(StatusKind::Watching);
+        let speech_available = self.inner.state.lock().speech_available;
+        if let (true, true, Some(speech_in)) = (self.inner.options.always_listen, speech_available, self.inner.speech_in.clone())
+        {
+            let inner = Arc::clone(&self.inner);
+            thread::Builder::new().name("un-mic".into()).spawn(move || inner.run_mic(speech_in)).expect("spawn");
+        }
         self.inner.dispatch(Event::Start);
         self.inner.sense_sound();
     }
@@ -257,6 +341,16 @@ impl Engine {
             state.timers.clear();
         }
         self.inner.cancel_listening();
+        if let Some(token) = self.inner.mic.lock().token.take() {
+            token.cancel();
+        }
+        self.inner.mic_cv.notify_all();
+        if let Some(token) = self.inner.chat_token.lock().take() {
+            token.cancel();
+        }
+        if let Some(speech_in) = &self.inner.speech_in {
+            speech_in.stop();
+        }
         self.inner.speech_out.read().stop();
         let _ = self.inner.effects.send(None);
         if let Some(worker) = self.worker.lock().take() {
@@ -408,15 +502,47 @@ impl Inner {
                     state.status = Status::new(StatusKind::Speaking);
                 }
                 self.log(&format!("tutor: {text}"));
+                // During a count the microphone stays open: the tutor's "good" overlaps the child's
+                // next number. Its words are taken out of the transcript instead.
+                let counting = {
+                    let state = self.state.lock();
+                    state.listen.is_some() && state.status.listen_mode == Some(ListenMode::Counting)
+                };
+                if self.options.always_listen && counting {
+                    self.mic.lock().echo = Some((text.clone(), None));
+                } else if self.options.always_listen {
+                    // Otherwise the microphone closes while the tutor speaks, so the tutor never
+                    // hears itself (and never answers its own words).
+                    let token = {
+                        let mut mic = self.mic.lock();
+                        mic.speaking = true;
+                        mic.token.take()
+                    };
+                    if let Some(token) = token {
+                        token.cancel();
+                        if let Some(speech_in) = &self.speech_in {
+                            speech_in.stop();
+                        }
+                    }
+                }
                 if let Some(speech_in) = &self.speech_in {
                     speech_in.tutor_speaking(&text, self.config.language);
                 }
                 let out = Arc::clone(&self.speech_out.read());
-                if let Err(error) = out.speak(&text, self.config.language) {
+                if let Err(error) = out.speak(&for_voice(&text), self.config.language) {
                     self.log(&format!("voice failed: {error}"));
                 }
                 if let Some(speech_in) = &self.speech_in {
                     speech_in.tutor_silent();
+                }
+                if self.options.always_listen {
+                    let mut mic = self.mic.lock();
+                    mic.speaking = false;
+                    if let Some((_, ended)) = mic.echo.as_mut() {
+                        *ended = Some(Instant::now());
+                    }
+                    drop(mic);
+                    self.mic_cv.notify_all();
                 }
                 let mut state = self.state.lock();
                 state.tutor_silent_at = Some(Instant::now());
@@ -454,7 +580,168 @@ impl Inner {
                     self.start_timer(&mut state, token, seconds);
                 }
             }
+            Effect::Chat(prompt) => self.chat(prompt),
             Effect::CancelTimer(_) | Effect::StopListening => {}
+        }
+    }
+
+    // ------------------------------------------------------------------ chat
+
+    /// Runs a chat request on its own thread; the answer comes back as `Replied`.
+    fn chat(&self, prompt: un_core::strategy::ChatPrompt) {
+        let Some(model) = self.options.chat.clone() else {
+            self.log("chat: no language model; the script goes on");
+            self.dispatch(Event::Replied(None));
+            return;
+        };
+        self.log(&format!("chat: asking ({} turns)", prompt.turns.len()));
+        let token = Arc::new(CancelToken::new(self.chat_generation.fetch_add(1, Ordering::SeqCst) + 1));
+        if let Some(older) = self.chat_token.lock().replace(Arc::clone(&token)) {
+            older.cancel();
+        }
+        let this = self.arc();
+        thread::Builder::new()
+            .name("un-chat".into())
+            .spawn(move || {
+                let started = Instant::now();
+                let result = model.reply(&prompt, &token);
+                if token.is_cancelled() {
+                    this.log("chat: replaced by a newer request");
+                    return;
+                }
+                let seconds = started.elapsed().as_secs_f64();
+                match result {
+                    Ok(text) if !text.trim().is_empty() => {
+                        this.log(&format!("chat ({seconds:.1} s): {}", text.trim()));
+                        this.dispatch(Event::Replied(Some(text.trim().to_string())));
+                    }
+                    Ok(_) => {
+                        this.log(&format!("chat ({seconds:.1} s): empty answer"));
+                        this.dispatch(Event::Replied(None));
+                    }
+                    Err(error) => {
+                        this.log(&format!("chat failed: {error}"));
+                        this.dispatch(Event::Replied(None));
+                    }
+                }
+            })
+            .expect("spawn");
+    }
+
+    // ------------------------------------------------------------------ the always-on microphone
+
+    fn closed(&self) -> bool {
+        self.state.lock().closed
+    }
+
+    /// Listens for the whole session, one utterance after another, except while the tutor
+    /// speaks; each utterance goes to the strategy's listen in progress, or as `Said`.
+    fn run_mic(self: Arc<Self>, speech_in: Arc<dyn SpeechInput>) {
+        let language = self.config.language;
+        let mut failures = 0u32;
+        loop {
+            if self.closed() {
+                return;
+            }
+            let token = {
+                let mut mic = self.mic.lock();
+                if mic.speaking {
+                    self.mic_cv.wait_for(&mut mic, Duration::from_millis(200));
+                    continue;
+                }
+                let token = Arc::new(CancelToken::new(0));
+                mic.token = Some(Arc::clone(&token));
+                token
+            };
+            let result = speech_in.listen_for_text(language, Duration::from_secs(30), &token, &|_| true);
+            {
+                let mut mic = self.mic.lock();
+                if mic.token.as_ref().is_some_and(|t| Arc::ptr_eq(t, &token)) {
+                    mic.token = None;
+                }
+            }
+            if self.closed() {
+                return;
+            }
+            match result {
+                Ok(text) => {
+                    failures = 0;
+                    if !token.is_cancelled() {
+                        self.route_utterance(text);
+                    }
+                }
+                Err(SpeechError::Timeout { .. }) | Err(SpeechError::Cancelled) => failures = 0,
+                Err(error) => {
+                    failures += 1;
+                    if failures == 1 {
+                        self.log(&format!("microphone failed ({error}); retrying"));
+                    }
+                    thread::sleep(Duration::from_millis(500 * failures.min(10) as u64));
+                }
+            }
+        }
+    }
+
+    /// An utterance from the always-on microphone: the strategy's listen takes it when one is
+    /// open (numbers, a count), otherwise it is speech the strategy hears as `Said`.
+    fn route_utterance(&self, text: String) {
+        let mut text = text.trim().to_string();
+        {
+            let mut mic = self.mic.lock();
+            if mic.speaking {
+                drop(mic);
+                self.log(&format!("ignored while the tutor speaks: {text}"));
+                return;
+            }
+            match &mic.echo {
+                Some((_, Some(ended))) if ended.elapsed() > ECHO_TAIL => mic.echo = None,
+                Some((line, _)) => {
+                    let kept = without_echo(&text, line);
+                    if kept != text {
+                        self.log(&format!("tutor's own words taken out: {text:?} -> {kept:?}"));
+                        text = kept;
+                    }
+                }
+                None => {}
+            }
+        }
+        if text.is_empty() {
+            return;
+        }
+        let listening = {
+            let state = self.state.lock();
+            state.listen.is_some() && state.status.listen_mode.is_some_and(|m| m != ListenMode::NumberPad)
+        };
+        if listening {
+            let _ = self.utterances.0.send(text);
+        } else if let Some(count) = spoken_count(&text, self.config.language) {
+            // A count with no answer window open (it ran out a moment before): still a count.
+            self.log(&format!("child counted: {text}"));
+            let last = *count.last().expect("two numbers at least");
+            self.dispatch(Event::Numbers(count));
+            self.dispatch(Event::Heard(last));
+        } else {
+            self.log(&format!("child: {text}"));
+            self.dispatch(Event::Said(text));
+        }
+    }
+
+    /// The next utterance for the listen `token` belongs to, from the always-on microphone.
+    fn next_utterance(&self, timeout: Duration, token: &CancelToken) -> Result<String, SpeechError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if token.is_cancelled() {
+                return Err(SpeechError::Cancelled);
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(SpeechError::Timeout { last_transcript: None });
+            }
+            match self.utterances.1.recv_timeout(left.min(Duration::from_millis(100))) {
+                Ok(text) => return Ok(text),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return Err(SpeechError::Cancelled),
+            }
         }
     }
 
@@ -462,6 +749,7 @@ impl Inner {
 
     fn begin_listening(self: &Inner, mode: ListenMode, timeout: f64) {
         self.cancel_listening();
+        while self.utterances.1.try_recv().is_ok() {}
         let token = Arc::new(CancelToken::new(self.listen_generation.fetch_add(1, Ordering::SeqCst) + 1));
         let speech_available = {
             let mut state = self.state.lock();
@@ -558,6 +846,8 @@ impl Inner {
             }
             let result = if remaining.is_zero() {
                 Err(SpeechError::Timeout { last_transcript: None })
+            } else if self.options.always_listen {
+                self.next_utterance(remaining, &token)
             } else {
                 speech_in.listen_for_text(language, remaining, &token, &|_| true)
             };
@@ -566,7 +856,16 @@ impl Inner {
                     if token.is_cancelled() {
                         return;
                     }
-                    let numbers = NumberParser::all(&text, language);
+                    let mut numbers = if counting {
+                        NumberParser::all(&spread_digits(&text), language)
+                    } else {
+                        NumberParser::all(&text, language)
+                    };
+                    if counting {
+                        // A count starts at one: "нет" / "none" (zero) in a count is a word, not a number
+                        // ("нет, ты какашка" said over the toys is not a count of nothing).
+                        numbers.retain(|n| *n > 0);
+                    }
                     if numbers.is_empty() {
                         self.log(&format!("child: {text}"));
                         self.dispatch(Event::Said(text));
@@ -637,7 +936,8 @@ impl Inner {
             }
             state.show_number_pad = state.always_show_number_pad && state.status.kind != StatusKind::Finished;
         }
-        if let Some(speech_in) = &self.speech_in {
+        // The always-on microphone stays open: a listen ending is not a reason to stop hearing.
+        if let (Some(speech_in), false) = (&self.speech_in, self.options.always_listen) {
             speech_in.stop();
         }
     }
@@ -685,5 +985,37 @@ impl Inner {
 
     fn arc(&self) -> Arc<Inner> {
         self.self_arc.upgrade().expect("engine alive")
+    }
+}
+
+#[cfg(test)]
+mod echo_tests {
+    use super::without_echo;
+
+    #[test]
+    fn a_fast_count_written_as_one_number_is_spread() {
+        use un_core::Language::Russian;
+        assert_eq!(super::spread_digits("1234"), "1 2 3 4");
+        assert_eq!(super::spread_digits("10 25 12"), "10 25 1 2");
+        assert_eq!(super::spoken_count("1234", Russian), Some(vec![1, 2, 3, 4]));
+        assert_eq!(super::spoken_count("один два три", Russian), Some(vec![1, 2, 3]));
+        assert_eq!(super::spoken_count("мне пять лет", Russian), None);
+        assert_eq!(super::spoken_count("два три", Russian), None);
+    }
+
+    #[test]
+    fn quotes_and_backslashes_are_not_read_out() {
+        assert_eq!(
+            super::for_voice("Поставь палец на одну игрушку, скажи «один». Скажи \\\"два\\\"."),
+            "Поставь палец на одну игрушку, скажи один. Скажи два."
+        );
+        assert_eq!(super::for_voice("Say \"one\"."), "Say one.");
+    }
+
+    #[test]
+    fn the_tutors_words_are_taken_out_of_the_childs() {
+        assert_eq!(without_echo("Хорошо два", "Хорошо."), "два");
+        assert_eq!(without_echo("хорошо", "Хорошо."), "");
+        assert_eq!(without_echo("три четыре", "Так."), "три четыре");
     }
 }

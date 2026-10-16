@@ -18,3 +18,4 @@ __pycache__/
 /weights/
 /apps/ios/Resources/
 /apps/ios/build/
+/models/llm/

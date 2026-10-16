@@ -72,6 +72,17 @@ impl ModelPaths {
             .unwrap_or_else(|| "toys".to_string())
     }
 
+    /// The language model for the tutor's free answers: the first `.gguf` in `llm/`.
+    pub fn chat_model(&self) -> Option<PathBuf> {
+        let mut models: Vec<PathBuf> = std::fs::read_dir(self.root.join("llm"))
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf")))
+            .collect();
+        models.sort();
+        models.into_iter().next()
+    }
+
     pub fn palm_detector(&self) -> PathBuf {
         self.root.join("palm_detection.onnx")
     }

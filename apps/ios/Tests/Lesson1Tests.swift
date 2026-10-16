@@ -20,7 +20,7 @@ final class Lesson1Tests: XCTestCase {
             config.childName = name
             config.noun = "toy"
             config.seed = 1
-            session = try UnSession(strategyId: "lesson-01", config: config, speechInput: child, speechOutput: voice, chime: false)
+            session = try UnSession(strategyId: "lesson-01", config: config, speechInput: child, speechOutput: voice, chime: false, alwaysListen: false, chatModel: nil)
         }
 
         func shutdown() { session.shutdown() }

@@ -4,6 +4,7 @@ members = [
     "crates/un-core",
     "crates/un-vision",
     "crates/un-speech",
+    "crates/un-llm",
     "crates/un-media",
     "crates/un-engine",
     "crates/un-app",
@@ -25,6 +26,7 @@ authors = ["Rinat Enikeev"]
 un-core = { path = "crates/un-core" }
 un-vision = { path = "crates/un-vision" }
 un-speech = { path = "crates/un-speech" }
+un-llm = { path = "crates/un-llm" }
 un-media = { path = "crates/un-media" }
 un-engine = { path = "crates/un-engine" }
 un-app = { path = "crates/un-app", default-features = false }

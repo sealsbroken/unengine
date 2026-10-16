@@ -395,6 +395,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
                 voice: VoiceChoice::parse(&args.voice).ok_or_else(|| anyhow!("--voice must be auto, piper, console or off"))?,
                 answers,
                 chime: args.chime,
+                ..Default::default()
             };
             let log: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(|text| println!("{}", serde_json::json!({ "lesson": text })));
             Some(build_session(paths, options, Some(log)).map_err(|e| anyhow!("{e}"))?)

@@ -71,6 +71,10 @@ pub struct SessionOptions {
     /// Scripted lines the child says (demos and tests); replaces the microphone.
     pub answers: Option<Vec<String>>,
     pub chime: bool,
+    /// Keep the microphone open for the whole lesson (see `EngineOptions::always_listen`).
+    pub always_listen: bool,
+    /// Answer free speech with the language model in `models/llm` when one is installed.
+    pub chat: bool,
 }
 
 impl Default for SessionOptions {
@@ -83,6 +87,8 @@ impl Default for SessionOptions {
             voice: VoiceChoice::Auto,
             answers: None,
             chime: false,
+            always_listen: true,
+            chat: true,
         }
     }
 }
@@ -223,6 +229,27 @@ fn engine_microphone(
     None
 }
 
+/// The language model in `models/llm`, loaded once per process.
+#[cfg(feature = "llm")]
+pub fn chat_model(paths: &ModelPaths, log: Option<&un_engine::Logger>) -> Option<std::sync::Arc<dyn un_engine::ChatModel>> {
+    let path = paths.chat_model()?;
+    if let Some(log) = log {
+        log(&format!("chat model: {}", path.display()));
+    }
+    Some(load_chat_model(&path))
+}
+
+/// The language model at `path`, loading in the background (see `un_llm::Background`).
+#[cfg(feature = "llm")]
+pub fn load_chat_model(path: &std::path::Path) -> Arc<dyn un_engine::ChatModel> {
+    un_llm::Background::load(path)
+}
+
+#[cfg(not(feature = "llm"))]
+pub fn chat_model(_paths: &ModelPaths, _log: Option<&un_engine::Logger>) -> Option<std::sync::Arc<dyn un_engine::ChatModel>> {
+    None
+}
+
 /// A built session: the engine plus what it was built from.
 pub struct Session {
     pub engine: Engine,
@@ -251,12 +278,15 @@ pub fn build_session(
         options.answers.clone(),
     );
     let speech_available = speech_in.is_some();
+    let chat = if options.chat { chat_model(paths, log.as_ref()) } else { None };
+    // Scripted answers are consumed one per listen; an always-open microphone would read them all at once.
+    let always_listen = options.always_listen && options.answers.is_none();
     let engine = Engine::new(
         strategy,
         options.config.clone(),
         speech_in,
         speech_out,
-        EngineOptions { chime: options.chime, always_show_number_pad: false, log },
+        EngineOptions { chime: options.chime, log, always_listen, chat, ..Default::default() },
     );
     Ok(Session { engine, options, speech_available })
 }

@@ -119,6 +119,9 @@ pub enum Event {
     TimerFired(u64),
     RepeatRequested,
     SkipRequested,
+    /// The language model's answer to the last [`Effect::Chat`]; `None` when there is no model,
+    /// it failed, or a newer request replaced it. The strategy decides whether to say it.
+    Replied(Option<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -154,6 +157,27 @@ pub enum Effect {
     },
     CancelTimer(u64),
     SessionEnded(SessionSummary),
+    /// Ask the on-device language model for the tutor's answer to free speech; the engine runs
+    /// it on its own thread and sends [`Event::Replied`]. A newer request replaces an older one.
+    Chat(ChatPrompt),
+}
+
+/// A conversation for the language model: the strategy's master prompt and the turns so far.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChatPrompt {
+    /// Who the tutor is, what the lesson is doing now and how to answer.
+    pub system: String,
+    /// Oldest first; the last one is the child's.
+    pub turns: Vec<ChatTurn>,
+    /// Upper bound on the answer's length, in model tokens.
+    pub max_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatTurn {
+    /// `true` for the child's words, `false` for the tutor's.
+    pub child: bool,
+    pub text: String,
 }
 
 impl Effect {

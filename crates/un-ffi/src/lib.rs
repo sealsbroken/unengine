@@ -420,6 +420,17 @@ impl SpeechOutput for CallbackOutput {
 
 // ------------------------------------------------------------------ session
 
+#[cfg(feature = "llm")]
+fn chat_at(path: String) -> Option<Arc<dyn un_engine::ChatModel>> {
+    let path = std::path::PathBuf::from(path);
+    path.exists().then(|| un_app::session::load_chat_model(&path))
+}
+
+#[cfg(not(feature = "llm"))]
+fn chat_at(_path: String) -> Option<Arc<dyn un_engine::ChatModel>> {
+    None
+}
+
 /// One lesson: a strategy driven by the engine.
 #[derive(uniffi::Object)]
 pub struct UnSession {
@@ -428,7 +439,12 @@ pub struct UnSession {
 
 #[uniffi::export]
 impl UnSession {
-    /// `speech_input` may be `None`: the lesson then uses the number pad only.
+    /// `speech_input` may be `None`: the lesson then uses the number pad only. `always_listen`
+    /// keeps the microphone open for the whole lesson (closed only while the tutor speaks), so
+    /// the child can talk at any time. `chat_model` is the path of a GGUF language model for the
+    /// tutor's answers to free speech; it loads in the background, and without it (or in a
+    /// library built without the `llm` feature) the lesson keeps to its script.
+    #[allow(clippy::too_many_arguments)]
     #[uniffi::constructor]
     pub fn new(
         strategy_id: String,
@@ -436,6 +452,8 @@ impl UnSession {
         speech_input: Option<Arc<dyn SpeechInputCallback>>,
         speech_output: Arc<dyn SpeechOutputCallback>,
         chime: bool,
+        always_listen: bool,
+        chat_model: Option<String>,
     ) -> Result<Arc<Self>, UnError> {
         let registry = registry();
         let config: SessionConfig = config.into();
@@ -447,7 +465,15 @@ impl UnSession {
             config,
             speech_in,
             speech_out,
-            EngineOptions { chime, always_show_number_pad: false, log: None },
+            EngineOptions {
+                chime,
+                always_listen,
+                chat: chat_model.and_then(chat_at),
+                // The engine's one-line log (what the tutor said, what it heard, how long the
+                // model took) on stderr: the Xcode console, `devicectl ... --console`, logcat.
+                log: Some(Arc::new(|line: &str| eprintln!("un: {line}"))),
+                ..Default::default()
+            },
         );
         Ok(Arc::new(Self { engine }))
     }

@@ -81,6 +81,13 @@ final class LessonModel: ObservableObject {
         return "\(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
     }
 
+    /// The first `.gguf` in models/llm, if the app was built with one.
+    static func chatModel(in modelsDir: String) -> String? {
+        let dir = URL(fileURLWithPath: modelsDir).appendingPathComponent("llm")
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return files.filter { $0.hasSuffix(".gguf") }.sorted().first.map { dir.appendingPathComponent($0).path }
+    }
+
     func start() {
         let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
         var config = defaultSessionConfig()
@@ -95,9 +102,12 @@ final class LessonModel: ObservableObject {
                 modelsDir: modelsDir, detector: "toys", confidence: 0.25, hands: true, countLabel: nil, mirrored: false, roi: nil))
             let strategies = availableStrategies()
             let lesson = strategies.first { $0.id == "lesson-01" } ?? strategies.first
+            // The microphone stays open for the whole lesson, so the child can talk to the tutor
+            // at any time; what the script has no answer for goes to the bundled language model.
             session = try UnSession(
                 strategyId: lesson?.id ?? "demo", config: config,
-                speechInput: AppleSpeechInput(), speechOutput: AppleSpeechOutput(), chime: true)
+                speechInput: AppleSpeechInput(), speechOutput: AppleSpeechOutput(), chime: true,
+                alwaysListen: true, chatModel: Self.chatModel(in: modelsDir))
         } catch {
             print("start failed: \(error)")
             return

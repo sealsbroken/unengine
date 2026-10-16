@@ -42,7 +42,7 @@ fn lesson_runs_end_to_end_with_scripted_answers() {
         config,
         Some(speech_in.clone()),
         speech_out.clone(),
-        EngineOptions { chime: false, always_show_number_pad: false, log: Some(Arc::new(|_| {})) },
+        EngineOptions { chime: false, always_show_number_pad: false, log: Some(Arc::new(|_| {})), ..Default::default() },
     );
     let mut estimator = TableStateEstimator::new(EstimatorConfig::default());
     let mut clock = 0.0;
@@ -77,7 +77,7 @@ fn missing_microphone_falls_back_to_number_pad() {
         config,
         Some(Arc::new(ScriptedSpeechInput::broken("no microphone"))),
         Arc::new(SilentSpeechOutput::new(false)),
-        EngineOptions { chime: false, always_show_number_pad: false, log: Some(Arc::new(|_| {})) },
+        EngineOptions { chime: false, always_show_number_pad: false, log: Some(Arc::new(|_| {})), ..Default::default() },
     );
     engine.start();
     let snap = engine.snapshot();
@@ -98,7 +98,7 @@ fn nothing_heard_escalates_and_fingers_answer() {
         config,
         Some(speech_in),
         Arc::new(SilentSpeechOutput::new(false)),
-        EngineOptions { chime: false, always_show_number_pad: false, log: Some(Arc::new(|_| {})) },
+        EngineOptions { chime: false, always_show_number_pad: false, log: Some(Arc::new(|_| {})), ..Default::default() },
     );
     let mut estimator = TableStateEstimator::new(EstimatorConfig::default());
     let mut clock = 0.0;
@@ -291,4 +291,119 @@ fn counting_that_stops_short_is_delivered_after_the_gap() {
     let seen = counted(&["one", "two"], 4);
     assert_eq!(seen, vec![Event::Counted(vec![1]), Event::Counted(vec![2]), Event::Numbers(vec![1, 2]), Event::Heard(2)]);
     assert!(started.elapsed() >= un_engine::COUNTING_GAP);
+}
+
+/// Greets, then: words become a chat request, the model's answer is said; `ask` also opens a
+/// voice listen after the greeting.
+struct Chatty {
+    events: Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>,
+    ask: bool,
+}
+
+impl un_core::strategy::Strategy for Chatty {
+    fn handle(&mut self, event: un_core::strategy::Event) -> Vec<un_core::strategy::Effect> {
+        use un_core::strategy::{ChatPrompt, ChatTurn, Effect, Event, ListenMode};
+        self.events.lock().push(event.clone());
+        match event {
+            Event::Start if self.ask => vec![Effect::Say("How many?".into()), Effect::listen(ListenMode::Voice, 5.0)],
+            Event::Start => vec![Effect::Say("Hello there.".into())],
+            Event::Said(text) => vec![Effect::Chat(ChatPrompt {
+                system: "You are Amber.".into(),
+                turns: vec![ChatTurn { child: true, text }],
+                max_tokens: 40,
+            })],
+            Event::Replied(Some(text)) => vec![Effect::Say(text)],
+            _ => vec![],
+        }
+    }
+
+    fn snapshot(&self) -> un_core::strategy::StrategySnapshot {
+        un_core::strategy::StrategySnapshot {
+            phase: PhaseKind::Asking,
+            level: 0,
+            level_count: 1,
+            tasks_completed: 0,
+            correct: 0,
+            task: None,
+            target_count: None,
+            expected_answer: None,
+        }
+    }
+}
+
+fn chatty_engine(
+    lines: Vec<&str>,
+    ask: bool,
+    chat: Option<Arc<un_engine::doubles::ScriptedChat>>,
+) -> (Engine, Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>, Arc<SilentSpeechOutput>) {
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let speech_in =
+        Arc::new(ScriptedSpeechInput::saying(lines.into_iter().map(String::from).collect(), Duration::from_millis(300)));
+    let speech_out = Arc::new(SilentSpeechOutput::new(false));
+    let engine = Engine::new(
+        Box::new(Chatty { events: Arc::clone(&events), ask }),
+        SessionConfig::default(),
+        Some(speech_in),
+        speech_out.clone(),
+        EngineOptions {
+            log: Some(Arc::new(|_| {})),
+            always_listen: true,
+            chat: chat.map(|c| c as Arc<dyn un_engine::ChatModel>),
+            ..Default::default()
+        },
+    );
+    (engine, events, speech_out)
+}
+
+#[test]
+fn an_open_microphone_hears_the_child_outside_any_listen_and_the_model_answers() {
+    use un_core::strategy::Event;
+    let chat = Arc::new(un_engine::doubles::ScriptedChat::new("I like blue.", Duration::from_millis(50)));
+    let (engine, events, speech_out) = chatty_engine(vec!["what is your favourite colour"], false, Some(Arc::clone(&chat)));
+    engine.start();
+    // No listen was ever asked for: the always-on microphone heard it anyway.
+    assert!(wait_for(|| speech_out.spoken_joined().contains("I like blue."), Duration::from_secs(5)));
+    assert!(events.lock().contains(&Event::Said("what is your favourite colour".into())));
+    assert_eq!(chat.prompts.lock()[0].turns[0].text, "what is your favourite colour");
+    engine.close();
+}
+
+#[test]
+fn an_answer_window_still_takes_the_number_with_the_microphone_always_open() {
+    use un_core::strategy::Event;
+    let (engine, events, _) = chatty_engine(vec!["three"], true, None);
+    engine.start();
+    assert!(wait_for(|| events.lock().contains(&Event::Heard(3)), Duration::from_secs(5)));
+    assert!(!events.lock().iter().any(|e| matches!(e, Event::Said(_))));
+    engine.close();
+}
+
+#[test]
+fn without_a_model_a_chat_request_gets_no_answer() {
+    use un_core::strategy::Event;
+    let (engine, events, speech_out) = chatty_engine(vec!["tell me a story"], false, None);
+    engine.start();
+    assert!(wait_for(|| events.lock().contains(&Event::Replied(None)), Duration::from_secs(5)));
+    assert_eq!(speech_out.spoken_texts(), vec!["Hello there."]);
+    engine.close();
+}
+
+#[test]
+fn a_no_in_the_middle_of_a_count_is_a_word_not_zero() {
+    use un_core::strategy::Event;
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let speech_in = Arc::new(ScriptedSpeechInput::saying(vec!["нет".into(), "один два".into()], Duration::from_millis(20)));
+    let config = SessionConfig { language: un_core::Language::Russian, ..Default::default() };
+    let engine = Engine::new(
+        Box::new(Recorder::new(&events).counting_to(2)),
+        config,
+        Some(speech_in),
+        Arc::new(SilentSpeechOutput::new(false)),
+        EngineOptions { log: Some(Arc::new(|_| {})), ..Default::default() },
+    );
+    engine.start();
+    assert!(wait_for(|| events.lock().contains(&Event::Numbers(vec![1, 2])), Duration::from_secs(10)));
+    assert!(events.lock().contains(&Event::Said("нет".into())));
+    assert!(!events.lock().iter().any(|e| matches!(e, Event::Counted(n) if n.contains(&0))));
+    engine.close();
 }

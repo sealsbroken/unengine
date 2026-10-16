@@ -19,6 +19,7 @@ stays open and relinkable (see [Licence](#licence)).
 | `crates/un-core` | Pure, platform-independent: geometry, detections, hand joints and finger counting, the debounced table state and object numbering, languages and numerals, the forgiving number parser, and the **strategy interface**. Fully unit-tested. |
 | `crates/un-engine` | The lesson runtime: runs a strategy against perception, speech and taps; owns timers, listening, the finger watcher and the HUD snapshot. Speech is behind traits. A listen in `ListenMode::Counting` collects the numbers of a count said aloud across the child's pauses (every recogniser cuts an utterance at a pause), reporting each utterance as `Event::Counted` and the whole sequence as `Event::Numbers` once the child has been quiet for five seconds after the last number or the tutor's last word, or for a beat and a half after the sequence reached the expected answer. |
 | `crates/un-vision` | ONNX Runtime (`ort`): object detector (Ultralytics raw heads, end-to-end rows, RT-DETR rows) and MediaPipe-style hand landmarks (palm detection + 21 landmarks, converted to ONNX). |
+| `crates/un-llm` | llama.cpp: the on-device language model behind `Effect::Chat`, the tutor's answers to whatever the child says outside the lesson's script. The strategy writes the master prompt; the engine runs the model on its own thread and answers with `Event::Replied`. The model loads in the background, stays loaded for the process, and keeps its context between answers so the master prompt is read once. |
 | `crates/un-speech` | sherpa-onnx: an always-on microphone (Silero VAD, Whisper or the small Zipformer recognisers) so an answer is heard the moment the tutor stops talking, Piper voices for the tutor, an optional "listen now" chime, and a round-trip self-test. |
 | `crates/un-media` | Desktop camera capture (AVFoundation, Media Foundation, V4L2) and image files. |
 | `crates/un-app` | Assembles a session: finds models, builds speech in/out, runs perception, simulated table. |
@@ -36,6 +37,7 @@ Rust 1.92+ (`rustup`), Python 3 for the model tools. On Linux: `libasound2-dev l
 
 ```sh
 python3 tools/fetch_models.py --speech     # hand models (15 MB) + EN/RU recognisers, VAD and voices (~400 MB)
+python3 tools/fetch_models.py --llm        # the tutor's language model, Qwen3 4B Instruct (2.5 GB)
 cargo build --release --workspace
 cargo run --release -p un-cli -- check-speech --language ru   # the voice says "три", the recogniser hears it
 ```
@@ -97,6 +99,29 @@ uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset dataset
 
 Move the toys between grabs, add and remove some, cover a few with a hand. The desktop app
 picks the most recently exported or trained detector, so `models/my-toys.onnx` takes over.
+
+## Talking to the tutor
+
+With `EngineOptions::always_listen` (on in every app) the microphone is open for the whole
+lesson, not only while the strategy waits for an answer: what the child says while an answer
+window is open goes to it (numbers, a count), anything else reaches the strategy as
+`Event::Said`. The microphone closes while the tutor speaks, so the tutor never hears or
+answers itself, except during a count, where the tutor's "good" overlaps the child's next
+number: then it stays open and the tutor's own words are taken out of the transcript.
+
+A strategy answers free speech with `Effect::Chat(ChatPrompt)`: its master prompt (who the
+tutor is, what the lesson is doing, what the camera sees, how to answer) and the conversation so
+far. The engine runs the language model (`crates/un-llm`, any instruction-tuned GGUF in
+`models/llm`) on its own thread, so speech, listening and timers never wait for it, and hands
+the answer back as `Event::Replied(Some(text))`; `None` when there is no model, it failed, or a
+newer request replaced it. The strategy decides whether to say it. Building with the model needs
+`cmake` (`brew install cmake`) and the `llm` feature (`metal` on Apple GPUs) of `un-app`,
+`un-ffi`, the CLI or the desktop app.
+
+Qwen3 4B Instruct 2507 at 4 bits answers a five-year-old in Russian or English in 0.6 to 1.6 s on
+an Apple laptop. The 1.5B models tried (Qwen2.5, Vikhr) answered in half the time but made
+things up ("the sky is blue because of molirs") or lectured; Qwen2.5 3B is not licensed for
+commercial use.
 
 ## Run
 
@@ -161,7 +186,8 @@ cargo run -p un-cli -- check-speech
 
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it refers to in `LICENSE.GPL`). Third-party
 components: ONNX Runtime, `ort`, egui, nokhwa, cpal (MIT/Apache-2.0); sherpa-onnx, the
-Zipformer models and MediaPipe's hand models (Apache-2.0); Whisper, Silero VAD and Piper voices (MIT).
+Zipformer models and MediaPipe's hand models (Apache-2.0); Whisper, Silero VAD and Piper voices (MIT);
+llama.cpp and its Rust bindings (MIT); Qwen3 4B Instruct 2507 (Apache-2.0).
 
 The toy detector is not part of this repository and is under a different licence: YOLOE and
 everything exported or trained with Ultralytics (`models/toys.onnx`, models from `tools/teach.py`)

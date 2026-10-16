@@ -28,3 +28,6 @@ thiserror.workspace = true
 [features]
 # Apple's Neural Engine / GPU through ONNX Runtime's CoreML provider (`Provider::Auto` picks it).
 coreml = ["un-app/coreml"]
+# The on-device language model (llama.cpp) for the tutor's free answers; `metal` on Apple GPUs.
+llm = ["un-app/llm"]
+metal = ["llm", "un-app/metal"]
