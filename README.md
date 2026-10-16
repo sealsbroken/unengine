@@ -48,7 +48,11 @@ Apple laptop. `un listen` prints what the microphone hears, for checking a setup
 The toy detector is not downloaded: it is exported from Ultralytics' zero-shot YOLOE, whose
 text prompts are baked into the model. `tools/export_detector.py` with no arguments writes
 `models/toys.onnx` plus its `.json` sidecar; it is the detector every app and the CLI load by
-default. The kinds of toy and their prompts:
+default. The model input is a 960×960 square: phones and tablets send portrait frames, desktop
+cameras landscape, and toys a tenth of the frame wide score about 0.8 at 960 against 0.3 at
+640. On iPhone and iPad the detector runs on CoreML (about 80 ms a frame with the hands on an
+iPad mini); the two small hand models stay on the CPU, and with no hand in view the palm
+detector looks for one only every third frame. The kinds of toy and their prompts:
 
 | Label | Prompts | Said as |
 |---|---|---|

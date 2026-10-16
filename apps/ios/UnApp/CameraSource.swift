@@ -10,6 +10,14 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private let queue = DispatchQueue(label: "un.camera")
     private let handler: FrameHandler
     private let started = Date()
+    #if DEBUG
+    /// Debug builds keep the last few camera frames in Documents/frames (frame-0.jpg ... frame-4.jpg,
+    /// one every two seconds) to see what the detector sees: `xcrun devicectl device copy from
+    /// --domain-type appDataContainer --domain-identifier app.onym.undigit --source Documents/frames`.
+    private var lastDump = Date.distantPast
+    private var dumpIndex = 0
+    private let ciContext = CIContext()
+    #endif
 
     init(position: AVCaptureDevice.Position = .back, handler: @escaping FrameHandler) {
         self.handler = handler
@@ -26,11 +34,30 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         output.connection(with: .video)?.videoRotationAngle = 90
     }
 
+    #if DEBUG
+    static let framesDirectory: URL? = {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let dir = docs.appendingPathComponent("frames")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+    #endif
+
     func start() { queue.async { self.session.startRunning() } }
     func stop() { queue.async { self.session.stopRunning() } }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        #if DEBUG
+        if Date().timeIntervalSince(lastDump) > 2, let dir = Self.framesDirectory {
+            lastDump = Date()
+            let image = CIImage(cvPixelBuffer: pixelBuffer)
+            if let data = ciContext.jpegRepresentation(of: image, colorSpace: CGColorSpaceCreateDeviceRGB()) {
+                try? data.write(to: dir.appendingPathComponent("frame-\(dumpIndex).jpg"))
+                dumpIndex = (dumpIndex + 1) % 5
+            }
+        }
+        #endif
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
         let width = UInt32(CVPixelBufferGetWidth(pixelBuffer))

@@ -25,6 +25,9 @@ pub struct HandLandmarkerConfig {
     pub mirrored: bool,
     /// Run palm detection at least every N frames to find new hands.
     pub redetect_every: u32,
+    /// With no hand in view, look for one only every N frames: on a phone the palm detector costs
+    /// as much as the toy detector, and a hand coming in is picked up a few frames later anyway.
+    pub idle_every: u32,
     pub provider: Provider,
     pub threads: usize,
 }
@@ -37,6 +40,7 @@ impl Default for HandLandmarkerConfig {
             landmark_threshold: 0.5,
             mirrored: false,
             redetect_every: 15,
+            idle_every: 3,
             provider: Provider::Cpu,
             threads: 2,
         }
@@ -146,7 +150,11 @@ impl HandLandmarker {
 
     pub fn track(&mut self, frame: &RgbFrame) -> Result<Vec<HandObservation>, VisionError> {
         let need_detection = self.rois.len() < self.config.max_hands
-            && (self.rois.is_empty() || self.frames_since_detection >= self.config.redetect_every);
+            && if self.rois.is_empty() {
+                self.frames_since_detection >= self.config.idle_every.max(1) - 1
+            } else {
+                self.frames_since_detection >= self.config.redetect_every
+            };
         let mut rois = self.rois.clone();
         if need_detection {
             self.frames_since_detection = 0;
@@ -161,6 +169,10 @@ impl HandLandmarker {
         if rois.is_empty() {
             self.rois.clear();
             return Ok(vec![]);
+        }
+        if self.rois.is_empty() {
+            // A hand just came in: track it from the next frame on, re-detect on the usual cadence.
+            self.frames_since_detection = 0;
         }
         let results = self.landmarks(frame, &rois)?;
         let mut hands = Vec::new();

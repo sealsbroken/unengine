@@ -41,7 +41,7 @@ DEFAULT_CLASSES = [
     "ball=toy ball,small ball,rubber ball",
     "bear=teddy bear,plush bear",
     "doll=doll,toy doll",
-    "animal=toy animal,toy dinosaur,animal figurine,stuffed animal,plush toy",
+    "animal=toy animal,plastic animal,toy dinosaur,animal figurine,stuffed animal,plush toy",
     # Catch-all: a toy none of the kinds above names.
     "toy=toy,small toy,plastic toy",
     # Shown over the picture, never counted: the child points with it.
@@ -70,8 +70,11 @@ def main() -> None:
     parser.add_argument("--class", dest="classes", action="append", metavar="LABEL=PROMPTS",
                         help="Object type and its text prompts (YOLOE only); repeat per type.")
     parser.add_argument("--model", default="yoloe-11s-seg.pt", help="Weights (downloaded into weights/).")
-    parser.add_argument("--imgsz", type=int, nargs=2, default=[384, 640], metavar=("H", "W"),
-                        help="Model input, height width (default 384 640 for 16:9 cameras).")
+    # Square, and large: phones and tablets send portrait frames, desktop cameras landscape, and
+    # small toys seen from above score far higher at 960 than at 640 (0.8 against 0.3 for a
+    # figurine filling 1/10 of a portrait frame).
+    parser.add_argument("--imgsz", type=int, nargs=2, default=[960, 960], metavar=("H", "W"),
+                        help="Model input, height width (default 960 960: any orientation).")
     parser.add_argument("--name", default="toys", help="Output name in models/ (default toys).")
     args = parser.parse_args()
 

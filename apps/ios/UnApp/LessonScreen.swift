@@ -50,6 +50,10 @@ final class LessonModel: ObservableObject {
     @Published var running = false
     private var session: UnSession?
     private var perception: UnPerception?
+    #if DEBUG
+    nonisolated(unsafe) static var debugFrames = 0
+    nonisolated(unsafe) static var debugWritten = 0.0
+    #endif
     @Published private(set) var camera: CameraSource?
     /// The latest table state and the size of the frame it came from, for the overlay.
     @Published private(set) var table: UnTableState?
@@ -100,7 +104,15 @@ final class LessonModel: ObservableObject {
         }
         camera = CameraSource { [weak self] y, uv, w, h, ys, uvs, t in
             guard let self, let perception = self.perception else { return }
-            if let state = try? perception.processNv12(y: y, uv: uv, width: w, height: h, yStride: ys, uvStride: uvs, timestamp: t) {
+            let began = Date()
+            let result = Result { try perception.processNv12(y: y, uv: uv, width: w, height: h, yStride: ys, uvStride: uvs, timestamp: t) }
+            #if DEBUG
+            if Self.debugFrames < 5 || Self.debugFrames % 50 == 0 {
+                print("frame \(Self.debugFrames): \(String(format: "%.0f", Date().timeIntervalSince(began) * 1000)) ms \(result.map { "raw=\($0.rawCount)" })")
+            }
+            if case .failure = result { Self.debugFrames += 1 }
+            #endif
+            if let state = try? result.get() {
                 self.session?.observe(
                     count: state.count, handsPresent: state.handsPresent, isStable: state.isStable, fingerCount: state.fingerCount,
                     groups: state.groups, pointedAt: state.pointedAt)
@@ -108,6 +120,18 @@ final class LessonModel: ObservableObject {
                     self.table = state
                     self.frameSize = CGSize(width: CGFloat(w), height: CGFloat(h))
                 }
+                #if DEBUG
+                // Next to the frames: what the detector made of the latest one.
+                Self.debugFrames += 1
+                if let dir = CameraSource.framesDirectory, t - Self.debugWritten > 2 {
+                    Self.debugWritten = t
+                    let lines = state.detections.map { d in
+                        String(format: "%@ %.2f  %.3f %.3f %.3f %.3f", d.label ?? "-", d.confidence, d.bbox.x1, d.bbox.y1, d.bbox.x2, d.bbox.y2)
+                    }
+                    let text = "t=\(t) fps=\(String(format: "%.1f", Double(Self.debugFrames) / t)) frame=\(w)x\(h) count=\(String(describing: state.count)) raw=\(state.rawCount) hands=\(state.hands.count)\n" + lines.joined(separator: "\n")
+                    try? text.write(to: dir.appendingPathComponent("detections.txt"), atomically: true, encoding: .utf8)
+                }
+                #endif
             }
         }
         camera?.start()

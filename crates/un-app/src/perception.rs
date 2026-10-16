@@ -88,7 +88,14 @@ impl Perception {
             Some(HandLandmarker::load(
                 &paths.palm_detector(),
                 &paths.hand_landmark(),
-                HandLandmarkerConfig { mirrored: config.mirrored, provider: config.provider, ..Default::default() },
+                // The hand models stay on the CPU: they are small, and CoreML rejects the palm
+                // detector's 2016-anchor output ("static output shape and inferred shape have
+                // different ranks"), which fails every frame.
+                HandLandmarkerConfig {
+                    mirrored: config.mirrored,
+                    provider: if config.provider == Provider::Auto { Provider::Cpu } else { config.provider },
+                    ..Default::default()
+                },
             )?)
         } else {
             if config.hands {

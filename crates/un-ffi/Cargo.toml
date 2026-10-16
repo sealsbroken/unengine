@@ -24,3 +24,7 @@ un-app.workspace = true
 uniffi.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true
+
+[features]
+# Apple's Neural Engine / GPU through ONNX Runtime's CoreML provider (`Provider::Auto` picks it).
+coreml = ["un-app/coreml"]
