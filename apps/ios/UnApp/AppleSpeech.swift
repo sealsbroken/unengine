@@ -16,8 +16,8 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, AVSpeechSynthesiz
     func speak(text: String, language: UnLanguage) throws {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: language == .russian ? "ru-RU" : "en-US")
-        // 1.3 times the calm pace the tutor had (0.9 of the default).
-        utterance.rate = min(AVSpeechUtteranceDefaultSpeechRate * 0.9 * 1.3, AVSpeechUtteranceMaximumSpeechRate)
+        // The voice's own pace (speed 1).
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         // A child's voice: the system has no child voice for Russian, so the pitch goes up.
         utterance.pitchMultiplier = 1.45
         finished = DispatchSemaphore(value: 0)
