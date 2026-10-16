@@ -144,15 +144,19 @@ fn for_voice(text: &str) -> String {
     kept.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// "1234" as "1 2 3 4": a recogniser writes a fast "one two three four" as one number. Only runs
-/// of consecutive digits going up are spread, so "10" and "25" stay what they are.
+/// "1234" as "1 2 3 4": a recogniser writes a fast "one two three four" as one number, and a
+/// wrong count too ("1235"). Spread: runs of consecutive digits going up ("12", "234"), and any
+/// longer run of digits going up from 1 that is too big to be an answer ("1235"); "10", "15",
+/// "25" stay what they are.
 fn spread_digits(text: &str) -> String {
     text.split_whitespace()
         .map(|word| {
             let digits: Vec<u32> = word.chars().filter_map(|c| c.to_digit(10)).collect();
-            let run = digits.len() >= 2
-                && digits.len() == word.trim_matches(|c: char| !c.is_alphanumeric()).chars().count()
-                && digits.windows(2).all(|w| w[1] == w[0] + 1);
+            let all_digits =
+                digits.len() >= 2 && digits.len() == word.trim_matches(|c: char| !c.is_alphanumeric()).chars().count();
+            let consecutive = digits.windows(2).all(|w| w[1] == w[0] + 1);
+            let rising_from_one = digits.first() == Some(&1) && digits.windows(2).all(|w| w[1] > w[0]) && digits.len() >= 3;
+            let run = all_digits && (consecutive || rising_from_one);
             if run {
                 digits.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(" ")
             } else {
@@ -163,10 +167,12 @@ fn spread_digits(text: &str) -> String {
         .join(" ")
 }
 
-/// A count said aloud ("one, two, three", or "123"): the numbers 1...n in order, n at least two.
+/// A count said aloud, right or wrong ("one, two, three", "1235", "один два три пять"): at least
+/// two numbers, starting at one. The strategy judges it; a wrong count is to be corrected, not
+/// taken for chatter.
 fn spoken_count(text: &str, language: un_core::Language) -> Option<Vec<u32>> {
     let numbers = NumberParser::all(&spread_digits(text), language);
-    (numbers.len() >= 2 && numbers.iter().copied().eq(1..=numbers.len() as u32)).then_some(numbers)
+    (numbers.len() >= 2 && numbers.first() == Some(&1)).then_some(numbers)
 }
 
 /// `heard` without the words of `tutor` (case and punctuation aside), in order.
@@ -1035,10 +1041,15 @@ mod echo_tests {
         use un_core::Language::Russian;
         assert_eq!(super::spread_digits("1234"), "1 2 3 4");
         assert_eq!(super::spread_digits("10 25 12"), "10 25 1 2");
+        assert_eq!(super::spread_digits("1235"), "1 2 3 5");
+        assert_eq!(super::spread_digits("15"), "15");
+        assert_eq!(super::spoken_count("один два три пять", Russian), Some(vec![1, 2, 3, 5]));
+        assert_eq!(super::spoken_count("1235", Russian), Some(vec![1, 2, 3, 5]));
         assert_eq!(super::spoken_count("1234", Russian), Some(vec![1, 2, 3, 4]));
         assert_eq!(super::spoken_count("один два три", Russian), Some(vec![1, 2, 3]));
         assert_eq!(super::spoken_count("мне пять лет", Russian), None);
         assert_eq!(super::spoken_count("два три", Russian), None);
+        assert_eq!(super::spoken_count("мне пять или шесть лет", Russian), None);
     }
 
     #[test]
