@@ -88,5 +88,11 @@ struct CameraPreview: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: PreviewView, context: Context) {}
+    /// A restarted lesson brings a new capture session; SwiftUI keeps this view, so it must follow
+    /// (left on the old, stopped session it showed a frozen picture).
+    func updateUIView(_ uiView: PreviewView, context: Context) {
+        if uiView.previewLayer.session !== session {
+            uiView.previewLayer.session = session
+        }
+    }
 }
