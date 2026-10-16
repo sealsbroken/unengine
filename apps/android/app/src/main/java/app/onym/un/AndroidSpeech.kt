@@ -33,7 +33,7 @@ class AndroidSpeechOutput(context: Context) : SpeechOutputCallback {
 
     override fun speak(text: String, language: UnLanguage) {
         tts.language = if (language == UnLanguage.RUSSIAN) Locale("ru", "RU") else Locale.US
-        tts.setSpeechRate(0.9f)
+        tts.setSpeechRate(0.9f * 1.3f) // 1.3 times the calm pace the tutor had
         done = CountDownLatch(1)
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "un-${System.nanoTime()}")
         done.await(30, TimeUnit.SECONDS)

@@ -112,6 +112,23 @@ struct Mic {
     /// The tutor's line spoken with the microphone open (during a count), and when it ended:
     /// its words are taken out of what the microphone hears for a moment.
     echo: Option<(String, Option<Instant>)>,
+    /// The tutor's recent lines and when each ended (`None` while it is being said): a
+    /// transcript that is mostly one of them is the tutor heard through the microphone.
+    lines: Vec<(String, Option<Instant>)>,
+}
+
+/// How long after the tutor's line a transcript of it may still come back from the microphone.
+const ECHO_WINDOW: Duration = Duration::from_secs(8);
+
+/// Whether `heard` is mostly the tutor's own words: at least two of them, and seven in ten of
+/// what was heard. "Готов" or "да, готов" after "...Готов?" is the child; "Хорошо до встречи"
+/// after "Хорошо, Вася, до встречи." is the tutor.
+fn is_echo(heard: &str, tutor: &str) -> bool {
+    let word = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+    let tutor: Vec<String> = tutor.split_whitespace().map(word).filter(|w| !w.is_empty()).collect();
+    let heard: Vec<String> = heard.split_whitespace().map(word).filter(|w| !w.is_empty()).collect();
+    let matched = heard.iter().filter(|w| tutor.contains(w)).count();
+    !heard.is_empty() && matched >= 2 && matched * 10 >= heard.len() * 7
 }
 
 /// How long after the tutor's line its words may still turn up in a transcript: a recogniser
@@ -502,6 +519,11 @@ impl Inner {
                     state.status = Status::new(StatusKind::Speaking);
                 }
                 self.log(&format!("tutor: {text}"));
+                {
+                    let mut mic = self.mic.lock();
+                    mic.lines.retain(|(_, ended)| ended.is_none_or(|t| t.elapsed() < ECHO_WINDOW));
+                    mic.lines.push((text.clone(), None));
+                }
                 // During a count the microphone stays open: the tutor's "good" overlaps the child's
                 // next number. Its words are taken out of the transcript instead.
                 let counting = {
@@ -534,6 +556,12 @@ impl Inner {
                 }
                 if let Some(speech_in) = &self.speech_in {
                     speech_in.tutor_silent();
+                }
+                {
+                    let mut mic = self.mic.lock();
+                    if let Some(line) = mic.lines.iter_mut().rev().find(|(_, ended)| ended.is_none()) {
+                        line.1 = Some(Instant::now());
+                    }
                 }
                 if self.options.always_listen {
                     let mut mic = self.mic.lock();
@@ -691,6 +719,16 @@ impl Inner {
             if mic.speaking {
                 drop(mic);
                 self.log(&format!("ignored while the tutor speaks: {text}"));
+                return;
+            }
+            let echo = mic
+                .lines
+                .iter()
+                .filter(|(_, ended)| ended.is_none_or(|t| t.elapsed() < ECHO_WINDOW))
+                .any(|(line, _)| is_echo(&text, line));
+            if echo {
+                drop(mic);
+                self.log(&format!("the tutor's own line came back, ignored: {text}"));
                 return;
             }
             match &mic.echo {
@@ -1010,6 +1048,19 @@ mod echo_tests {
             "Поставь палец на одну игрушку, скажи один. Скажи два."
         );
         assert_eq!(super::for_voice("Say \"one\"."), "Say one.");
+    }
+
+    #[test]
+    fn the_tutor_heard_through_the_microphone_is_told_from_the_child() {
+        use super::is_echo;
+        assert!(is_echo("Хорошо до встречи", "Хорошо, Вася, до встречи."));
+        assert!(is_echo(
+            "Привет Вася сегодня будем считать с помощью игрушек готов",
+            "Привет, Вася! Сегодня будем считать с помощью игрушек. Готов?"
+        ));
+        assert!(!is_echo("готов", "Привет, Вася! Сегодня будем считать с помощью игрушек. Готов?"));
+        assert!(!is_echo("да готов", "Привет, Вася! Сегодня будем считать с помощью игрушек. Готов?"));
+        assert!(!is_echo("один два", "Теперь покажи пальцем на каждую игрушку и посчитай вслух."));
     }
 
     #[test]

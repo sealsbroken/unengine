@@ -16,10 +16,13 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, AVSpeechSynthesiz
     func speak(text: String, language: UnLanguage) throws {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: language == .russian ? "ru-RU" : "en-US")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
+        // 1.3 times the calm pace the tutor had (0.9 of the default).
+        utterance.rate = min(AVSpeechUtteranceDefaultSpeechRate * 0.9 * 1.3, AVSpeechUtteranceMaximumSpeechRate)
         finished = DispatchSemaphore(value: 0)
+        AudioSession.tutorSpeaking(true)
         DispatchQueue.main.async { self.synthesizer.speak(utterance) }
         finished.wait()
+        AudioSession.tutorSpeaking(false)
     }
 
     func stopSpeaking() {
@@ -48,6 +51,8 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var cancelled = false
+    /// Bumped by every cancel; a request set up before the latest one gives up.
+    private var cancelGeneration = 0
     private var tapInstalled = false
     private var sampleRate: Double = 48_000
     /// The last few seconds of audio, by sample time: an utterance is handed over a moment after
@@ -115,7 +120,9 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
     }
 
     /// One buffer from the microphone: kept for a few seconds, and fed to the request if any.
+    /// While the tutor speaks (and a moment after) the microphone hears the tutor: dropped.
     private func heard(_ buffer: AVAudioPCMBuffer, at time: AVAudioFramePosition) {
+        if AudioSession.isTutorSpeaking { return }
         guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else { return }
         copy.frameLength = buffer.frameLength
         if let from = buffer.floatChannelData, let to = copy.floatChannelData {
@@ -138,6 +145,13 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
     /// something, the recogniser finishes, or the timeout; returns the transcript, nil when
     /// nothing was said.
     private func listen(language: UnLanguage, timeoutSeconds: Double, done: @escaping (String) -> Bool) -> String? {
+        lock.lock(); let generation = cancelGeneration; lock.unlock()
+        // Never start recognising over the tutor's own voice.
+        let waitUntil = Date().addingTimeInterval(timeoutSeconds)
+        while AudioSession.isTutorSpeaking {
+            if Date() >= waitUntil { return nil }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language == .russian ? "ru-RU" : "en-US")),
               recognizer.isAvailable, microphone() else { return nil }
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -168,7 +182,9 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
         for item in carried { request.append(item.buffer) }
         self.request = request
         self.task = task
-        cancelled = false
+        // A cancel that came while this request was being set up (the tutor began to speak) still
+        // counts: the generation tells.
+        cancelled = cancelGeneration != generation
         resumeAt = nil
         lock.unlock()
         if !carried.isEmpty { debug("carried over \(String(format: "%.2f", Double(carried.count) * 1024 / sampleRate)) s") }
@@ -180,13 +196,13 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
             let stop = over || paused || Date() >= deadline
             state.unlock()
             if stop { break }
-            lock.lock(); let wasCancelled = cancelled; lock.unlock()
-            if wasCancelled { break }
+            lock.lock(); let wasCancelled = cancelled || cancelGeneration != generation; lock.unlock()
+            if wasCancelled || AudioSession.isTutorSpeaking { break }
         }
         state.lock(); let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines); let end = wordsEnd; state.unlock()
         lock.lock()
         if self.request === request { self.request = nil; self.task = nil }
-        let wasCancelled = cancelled
+        let wasCancelled = cancelled || cancelGeneration != generation || AudioSession.isTutorSpeaking
         // The next request takes over from the end of these words (a little after, so the last
         // word is not heard twice): whatever the child began meanwhile is carried over.
         if !wasCancelled && !text.isEmpty {
@@ -210,6 +226,7 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
     func cancelListening() {
         lock.lock()
         cancelled = true
+        cancelGeneration += 1
         resumeAt = nil
         let task = self.task
         lock.unlock()
@@ -222,6 +239,21 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
 enum AudioSession {
     private static var configured = false
     private static let lock = NSLock()
+    nonisolated(unsafe) private static var speakingUntil: Date?
+    nonisolated(unsafe) private static var speaking = false
+
+    /// The tutor's voice is playing (or ended a moment ago, while its echo dies away): the
+    /// microphone's audio is the tutor, not the child.
+    static var isTutorSpeaking: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return speaking || (speakingUntil.map { Date() < $0 } ?? false)
+    }
+
+    static func tutorSpeaking(_ on: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        speaking = on
+        if !on { speakingUntil = Date().addingTimeInterval(0.3) }
+    }
 
     static func configure() {
         lock.lock(); defer { lock.unlock() }

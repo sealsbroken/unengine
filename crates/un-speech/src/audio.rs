@@ -549,7 +549,7 @@ impl SpeakerOutput {
         Self {
             models,
             voices: RwLock::new(HashMap::new()),
-            speed: 0.9,
+            speed: 0.9 * 1.3, // 1.3 times the calm pace the tutor had
             stop: Mutex::new(Arc::new(AtomicBool::new(false))),
             playing: Mutex::new(()),
         }
