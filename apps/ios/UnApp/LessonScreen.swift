@@ -81,6 +81,30 @@ final class LessonModel: ObservableObject {
         return "\(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
     }
 
+    #if DEBUG
+    /// Times every bundled language model on the tutor's master prompt, first with the camera and
+    /// its detector running, then with the camera stopped, so the console shows what the camera
+    /// costs the model. `UN_LLM_BENCH=1 UN_LLM=1 tools/ios.sh run`.
+    private func benchChat(modelsDir: String) {
+        let dir = URL(fileURLWithPath: modelsDir).appendingPathComponent("llm")
+        let models = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+            .filter { $0.hasSuffix(".gguf") }.sorted().map { dir.appendingPathComponent($0).path }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 3) { [weak self] in
+            for path in models {
+                FileHandle.standardError.write("bench: camera on\n".data(using: .utf8)!)
+                unmethod_bench_chat(path)
+            }
+            DispatchQueue.main.sync { self?.camera?.stop() }
+            for path in models {
+                FileHandle.standardError.write("bench: camera off\n".data(using: .utf8)!)
+                unmethod_bench_chat(path)
+            }
+            DispatchQueue.main.sync { self?.camera?.start() }
+            FileHandle.standardError.write("bench: done\n".data(using: .utf8)!)
+        }
+    }
+    #endif
+
     /// The first `.gguf` in models/llm, if the app was built with one.
     static func chatModel(in modelsDir: String) -> String? {
         let dir = URL(fileURLWithPath: modelsDir).appendingPathComponent("llm")
@@ -114,6 +138,9 @@ final class LessonModel: ObservableObject {
         }
         camera = CameraSource { [weak self] y, uv, w, h, ys, uvs, t in
             guard let self, let perception = self.perception else { return }
+            // While the language model writes an answer the child is talking, not laying out:
+            // the detector rests and the model gets the GPU (about twice as fast).
+            if self.session?.isThinking() == true { return }
             let began = Date()
             let result = Result { try perception.processNv12(y: y, uv: uv, width: w, height: h, yStride: ys, uvStride: uvs, timestamp: t) }
             #if DEBUG
@@ -146,6 +173,9 @@ final class LessonModel: ObservableObject {
         }
         camera?.start()
         session?.start()
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["UN_LLM_BENCH"] != nil { benchChat(modelsDir: modelsDir) }
+        #endif
         running = true
         // The phone lies on the table for minutes with nobody touching it: no auto-lock while
         // a lesson runs.

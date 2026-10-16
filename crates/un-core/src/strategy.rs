@@ -171,6 +171,10 @@ pub struct ChatPrompt {
     pub turns: Vec<ChatTurn>,
     /// Upper bound on the answer's length, in model tokens.
     pub max_tokens: u32,
+    /// The answer ends after this many sentences (0: only `max_tokens` bounds it). One sentence
+    /// is said a moment after the child stops; every further one costs another second or two.
+    #[serde(default)]
+    pub sentences: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -311,6 +311,7 @@ impl un_core::strategy::Strategy for Chatty {
                 system: "You are Amber.".into(),
                 turns: vec![ChatTurn { child: true, text }],
                 max_tokens: 40,
+                sentences: 1,
             })],
             Event::Replied(Some(text)) => vec![Effect::Say(text)],
             _ => vec![],
@@ -405,5 +406,27 @@ fn a_no_in_the_middle_of_a_count_is_a_word_not_zero() {
     assert!(wait_for(|| events.lock().contains(&Event::Numbers(vec![1, 2])), Duration::from_secs(10)));
     assert!(events.lock().contains(&Event::Said("нет".into())));
     assert!(!events.lock().iter().any(|e| matches!(e, Event::Counted(n) if n.contains(&0))));
+    engine.close();
+}
+
+#[test]
+fn a_sentence_that_starts_with_no_is_talk_not_zero() {
+    use un_core::strategy::Event;
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let speech_in = Arc::new(ScriptedSpeechInput::saying(
+        vec!["нет объясни зачем мне учиться считать".into(), "нет".into()],
+        Duration::from_millis(20),
+    ));
+    let config = SessionConfig { language: un_core::Language::Russian, ..Default::default() };
+    let engine = Engine::new(
+        Box::new(Recorder::new(&events)),
+        config,
+        Some(speech_in),
+        Arc::new(SilentSpeechOutput::new(false)),
+        EngineOptions { log: Some(Arc::new(|_| {})), ..Default::default() },
+    );
+    engine.start();
+    assert!(wait_for(|| events.lock().contains(&Event::Heard(0)), Duration::from_secs(5)));
+    assert!(events.lock().contains(&Event::Said("нет объясни зачем мне учиться считать".into())));
     engine.close();
 }

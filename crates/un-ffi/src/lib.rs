@@ -420,14 +420,15 @@ impl SpeechOutput for CallbackOutput {
 
 // ------------------------------------------------------------------ session
 
+/// The language model at `path` (loaded on its first request), for a session or a benchmark.
 #[cfg(feature = "llm")]
-fn chat_at(path: String) -> Option<Arc<dyn un_engine::ChatModel>> {
+pub fn chat_at(path: String) -> Option<Arc<dyn un_engine::ChatModel>> {
     let path = std::path::PathBuf::from(path);
     path.exists().then(|| un_app::session::load_chat_model(&path))
 }
 
 #[cfg(not(feature = "llm"))]
-fn chat_at(_path: String) -> Option<Arc<dyn un_engine::ChatModel>> {
+pub fn chat_at(_path: String) -> Option<Arc<dyn un_engine::ChatModel>> {
     None
 }
 
@@ -520,6 +521,12 @@ impl UnSession {
 
     pub fn snapshot(&self) -> UnSnapshot {
         self.engine.snapshot().into()
+    }
+
+    /// The language model is writing an answer: skip object detection meanwhile, so the model
+    /// gets the GPU (the child is talking, the table waits).
+    pub fn is_thinking(&self) -> bool {
+        self.engine.is_thinking()
     }
 }
 

@@ -5,7 +5,7 @@
     python3 tools/fetch_models.py --speech    # + recognisers, VAD and voices for EN and RU (~400 MB)
     python3 tools/fetch_models.py --speech --language en
     python3 tools/fetch_models.py --whisper small    # better recogniser for both languages (~250 MB)
-    python3 tools/fetch_models.py --llm       # the language model for the tutor's free answers (2.5 GB)
+    python3 tools/fetch_models.py --llm       # the language model for the tutor's free answers (1.1 GB)
     python3 tools/fetch_models.py --dest /path/to/models
 
 Sources (all Apache-2.0 / MIT):
@@ -13,7 +13,7 @@ Sources (all Apache-2.0 / MIT):
                post-processing, hand landmark "sparse"), github.com/PINTO0309/hand-gesture-recognition-using-onnx
   recognisers: sherpa-onnx Zipformer transducers (k2-fsa) and Silero VAD
   voices:      Piper voices packaged for sherpa-onnx (with espeak-ng-data), from the sherpa-onnx tts-models release
-  chat:        Qwen3 4B Instruct 2507 (Apache-2.0), 4-bit GGUF from unsloth on Hugging Face
+  chat:        Qwen3 1.7B (Apache-2.0), 4-bit GGUF from unsloth on Hugging Face
 
 The object detector is produced by tools/export_detector.py (it needs training weights).
 """
@@ -41,10 +41,11 @@ VOICES = {"en": "vits-piper-en_US-lessac-medium", "ru": "vits-piper-ru_RU-irina-
 # Whisper hears short answers far better than the small Zipformers and covers both languages;
 # the engine prefers it whenever one of these directories is present.
 WHISPER_SIZES = ("tiny", "base", "small", "medium", "turbo")
-# The tutor's free answers: small enough for an iPad, good enough Russian for a five-year-old.
+# The tutor's free answers: one sentence in about a second on an iPad with the camera running
+# (Qwen3 4B Instruct answers better but takes 8 to 11 s there).
 CHAT_MODEL = (
-    "qwen3-4b-instruct-2507-q4_k_m.gguf",
-    "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "qwen3-1.7b-q4_k_m.gguf",
+    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
 )
 
 
@@ -93,7 +94,7 @@ def main() -> int:
     parser.add_argument("--whisper", choices=WHISPER_SIZES, metavar="SIZE",
                         help="Also fetch a multilingual Whisper recogniser (tiny, base, small, medium, turbo).")
     parser.add_argument("--llm", action="store_true",
-                        help="Also fetch the language model for the tutor's free answers (2.5 GB).")
+                        help="Also fetch the language model for the tutor's free answers (1.1 GB).")
     parser.add_argument("--language", nargs="+", choices=["en", "ru"], default=["en", "ru"],
                         help="Languages to fetch speech models for (default: both).")
     parser.add_argument("--dest", type=Path, default=ROOT / "models", help="Target directory (default: models/).")

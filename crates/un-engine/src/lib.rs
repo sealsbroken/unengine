@@ -236,6 +236,8 @@ struct Inner {
     utterances: (Sender<String>, Receiver<String>),
     /// The chat request in flight, cancelled by a newer one.
     chat_token: Mutex<Option<Arc<CancelToken>>>,
+    /// The language model is writing an answer.
+    thinking: AtomicBool,
     chat_generation: AtomicU64,
 }
 
@@ -289,6 +291,7 @@ impl Engine {
             mic_cv: Condvar::new(),
             utterances: unbounded(),
             chat_token: Mutex::new(None),
+            thinking: AtomicBool::new(false),
             chat_generation: AtomicU64::new(0),
         });
         Self { inner, worker: Mutex::new(None), effects_rx: Mutex::new(Some(rx)) }
@@ -449,6 +452,12 @@ impl Engine {
             mic_level: self.inner.speech_in.as_ref().map(|s| s.level()).unwrap_or(0.0),
             heard_text: self.inner.speech_in.as_ref().map(|s| s.last_transcript()).unwrap_or_default(),
         }
+    }
+
+    /// The language model is writing an answer: a phone can rest its object detector meanwhile
+    /// (the child is talking, not laying out), which gives the model the GPU.
+    pub fn is_thinking(&self) -> bool {
+        self.inner.thinking.load(Ordering::SeqCst)
     }
 
     /// The strategy's own view, for tests and logs.
@@ -634,11 +643,16 @@ impl Inner {
             older.cancel();
         }
         let this = self.arc();
+        self.thinking.store(true, Ordering::SeqCst);
         thread::Builder::new()
             .name("un-chat".into())
             .spawn(move || {
                 let started = Instant::now();
                 let result = model.reply(&prompt, &token);
+                let current = this.chat_token.lock().as_ref().is_some_and(|t| Arc::ptr_eq(t, &token));
+                if current {
+                    this.thinking.store(false, Ordering::SeqCst);
+                }
                 if token.is_cancelled() {
                     this.log("chat: replaced by a newer request");
                     return;
@@ -909,6 +923,9 @@ impl Inner {
                         // A count starts at one: "нет" / "none" (zero) in a count is a word, not a number
                         // ("нет, ты какашка" said over the toys is not a count of nothing).
                         numbers.retain(|n| *n > 0);
+                    } else if numbers.iter().all(|n| *n == 0) && text.split_whitespace().count() >= 3 {
+                        // "Нет, объясни, зачем мне учиться считать" is talk, not the answer zero.
+                        numbers.clear();
                     }
                     if numbers.is_empty() {
                         self.log(&format!("child: {text}"));

@@ -5,8 +5,9 @@
 //! A model is loaded on the first request ([`OnDemand`]), then shared for the process ([`LlamaChat::shared`]); one answer is
 //! generated at a time, on the engine's chat thread, and the context is kept between answers so
 //! the master prompt is read once, not every time. Any instruction-tuned GGUF works; the
-//! default is Qwen3 4B Instruct 2507 (Apache-2.0, 2.5 GB at Q4_K_M), which speaks Russian and
-//! English well enough for a small child and answers in a second or two on an Apple GPU.
+//! default is Qwen3 1.7B (Apache-2.0, 1.1 GB at Q4_K_M): one sentence in about a second on an
+//! iPad with the camera running. Qwen3's hybrid models think before they answer unless the
+//! answer starts with an empty thought, which is added for them.
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -47,6 +48,10 @@ pub struct LlamaChat {
     /// Loaded for the life of the process (see [`LlamaChat::shared`]), so a context can keep it.
     model: &'static LlamaModel,
     template: LlamaChatTemplate,
+    /// A model that thinks before it answers unless told not to (Qwen3's hybrid models): the
+    /// answer is started with an empty thought, as its own template does for `enable_thinking`
+    /// off, so the child hears the answer and not the reasoning.
+    thinks: bool,
     name: String,
     /// The context of the last answer and the tokens in its cache: the master prompt and the
     /// conversation so far are the same from one request to the next, so only the new tail is
@@ -74,7 +79,8 @@ impl LlamaChat {
         let model = LlamaModel::load_from_file(backend, path, &params).map_err(|e| format!("{}: {e}", path.display()))?;
         let template = model.chat_template(None).map_err(|e| format!("{}: no chat template ({e})", path.display()))?;
         let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        Ok(Self { model: Box::leak(Box::new(model)), template, name, session: Mutex::new(None) })
+        let thinks = template.to_str().is_ok_and(|t| t.contains("enable_thinking"));
+        Ok(Self { model: Box::leak(Box::new(model)), template, thinks, name, session: Mutex::new(None) })
     }
 
     /// The model at `path`, loaded on first use and shared afterwards: sessions come and go,
@@ -97,7 +103,10 @@ impl LlamaChat {
             let role = if turn.child { "user" } else { "assistant" };
             messages.push(LlamaChatMessage::new(role.into(), turn.text.clone()).map_err(|e| e.to_string())?);
         }
-        let text = self.model.apply_chat_template(&self.template, &messages, true).map_err(|e| e.to_string())?;
+        let mut text = self.model.apply_chat_template(&self.template, &messages, true).map_err(|e| e.to_string())?;
+        if self.thinks {
+            text.push_str("<think>\n\n</think>\n\n");
+        }
         // The template already carries the special tokens; parse them, add none.
         Ok(self.model.vocab().tokenize(text.as_bytes(), false, true))
     }
@@ -122,7 +131,8 @@ impl LlamaChat {
             *slot = Some(Session { context, tokens: Vec::new() });
         }
         let session = slot.as_mut().expect("a session");
-        let result = answer(self.model, session, &tokens, max_tokens, cancel);
+        let sentences = if prompt.sentences == 0 { 2 } else { prompt.sentences as usize };
+        let result = answer(self.model, session, &tokens, max_tokens, sentences, cancel);
         // A cancelled answer leaves the cache consistent (every token in it was read); any other
         // failure may have left it half-written: start afresh next time.
         if result.as_ref().is_err_and(|e| e != CANCELLED) {
@@ -138,6 +148,7 @@ fn answer(
     session: &mut Session,
     tokens: &[LlamaToken],
     max_tokens: usize,
+    sentences: usize,
     cancel: &CancelToken,
 ) -> Result<String, String> {
     let vocab = model.vocab();
@@ -177,7 +188,7 @@ fn answer(
             break;
         }
         out.extend(vocab.token_to_piece(token, false, None));
-        if ends_a_sentence_pair(&out) {
+        if sentence_ends(&String::from_utf8_lossy(&out)).len() >= sentences {
             break;
         }
         batch.clear();
@@ -193,7 +204,7 @@ fn answer(
         tokens.len(),
         started.elapsed().as_secs_f64() - read
     );
-    Ok(tidy(&String::from_utf8_lossy(&out)))
+    Ok(tidy_to(&String::from_utf8_lossy(&out), sentences))
 }
 
 impl ChatModel for LlamaChat {
@@ -259,12 +270,6 @@ fn seed() -> u32 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1)
 }
 
-/// Two sentences are as much as a small child listens to: generation stops there.
-fn ends_a_sentence_pair(out: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(out);
-    sentence_ends(&text).len() >= 2
-}
-
 fn sentence_ends(text: &str) -> Vec<usize> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let mut ends = Vec::new();
@@ -281,6 +286,11 @@ fn sentence_ends(text: &str) -> Vec<usize> {
 
 /// The answer as the tutor says it: no markup, no emoji, at most two sentences.
 pub fn tidy(text: &str) -> String {
+    tidy_to(text, 2)
+}
+
+/// [`tidy`], keeping at most `sentences` sentences.
+pub fn tidy_to(text: &str, sentences: usize) -> String {
     let cleaned: String = text
         .chars()
         .filter(|c| !matches!(c, '*' | '#' | '_' | '`' | '~' | '[' | ']' | '<' | '>' | '|'))
@@ -292,7 +302,7 @@ pub fn tidy(text: &str) -> String {
         .collect();
     let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     let ends = sentence_ends(&cleaned);
-    let cut = if ends.len() >= 2 { ends[1] } else { cleaned.len() };
+    let cut = if sentences > 0 && ends.len() >= sentences { ends[sentences - 1] } else { cleaned.len() };
     cleaned[..cut].trim().to_string()
 }
 
@@ -306,6 +316,7 @@ mod tests {
         assert_eq!(tidy("Yes, I see 3.5 toys"), "Yes, I see 3.5 toys");
         assert_eq!(tidy("  Great job!  😊 "), "Great job!");
         assert_eq!(tidy("Как в сказке! ️"), "Как в сказке!");
+        assert_eq!(tidy_to("Очень люблю! А теперь давай считать.", 1), "Очень люблю!");
         assert_eq!(tidy("Let's count: one, two."), "Let's count: one, two.");
     }
 
@@ -319,6 +330,7 @@ mod tests {
                 .into(),
             turns: vec![un_core::strategy::ChatTurn { child: true, text: "А ты любишь собак?".into() }],
             max_tokens: 60,
+            sentences: 1,
         };
         let started = std::time::Instant::now();
         let answer = chat.reply(&prompt, &CancelToken::default()).unwrap();

@@ -37,7 +37,7 @@ Rust 1.92+ (`rustup`), Python 3 for the model tools. On Linux: `libasound2-dev l
 
 ```sh
 python3 tools/fetch_models.py --speech     # hand models (15 MB) + EN/RU recognisers, VAD and voices (~400 MB)
-python3 tools/fetch_models.py --llm        # the tutor's language model, Qwen3 4B Instruct (2.5 GB)
+python3 tools/fetch_models.py --llm        # the tutor's language model, Qwen3 1.7B (1.1 GB)
 cargo build --release --workspace
 cargo run --release -p un-cli -- check-speech --language ru   # the voice says "три", the recogniser hears it
 ```
@@ -127,10 +127,12 @@ newer request replaced it. The strategy decides whether to say it. Building with
 `cmake` (`brew install cmake`) and the `llm` feature (`metal` on Apple GPUs) of `un-app`,
 `un-ffi`, the CLI or the desktop app.
 
-Qwen3 4B Instruct 2507 at 4 bits answers a five-year-old in Russian or English in 0.6 to 1.6 s on
-an Apple laptop. The 1.5B models tried (Qwen2.5, Vikhr) answered in half the time but made
-things up ("the sky is blue because of molirs") or lectured; Qwen2.5 3B is not licensed for
-commercial use.
+Qwen3 1.7B at 4 bits answers in one sentence in about a second on an iPad mini with the camera
+running (half a second on an Apple laptop); the strategy asks for one sentence (`ChatPrompt::sentences`)
+and steers back to the task itself. Qwen3 4B Instruct 2507 answers better but took 8 to 11 s on the
+iPad (5 to 7 s with the camera off); Qwen2.5 1.5B and Vikhr 1.5B made things up; Qwen2.5 3B is not
+licensed for commercial use. While the model writes, `Engine::is_thinking` lets a phone rest its
+object detector, which gives the model the GPU.
 
 ## Run
 
@@ -196,7 +198,7 @@ cargo run -p un-cli -- check-speech
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it refers to in `LICENSE.GPL`). Third-party
 components: ONNX Runtime, `ort`, egui, nokhwa, cpal (MIT/Apache-2.0); sherpa-onnx, the
 Zipformer models and MediaPipe's hand models (Apache-2.0); Whisper, Silero VAD and Piper voices (MIT);
-llama.cpp and its Rust bindings (MIT); Qwen3 4B Instruct 2507 (Apache-2.0).
+llama.cpp and its Rust bindings (MIT); Qwen3 1.7B (Apache-2.0).
 
 The toy detector is not part of this repository and is under a different licence: YOLOE and
 everything exported or trained with Ultralytics (`models/toys.onnx`, models from `tools/teach.py`)

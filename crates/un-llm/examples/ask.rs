@@ -23,7 +23,7 @@ fn main() {
     let chat = un_llm::LlamaChat::shared(Path::new(&args[1])).expect("model");
     for line in args[3].split('|') {
         turns.push(ChatTurn { child: true, text: line.trim().to_string() });
-        let prompt = ChatPrompt { system: system.clone(), turns: turns.clone(), max_tokens: 60 };
+        let prompt = ChatPrompt { system: system.clone(), turns: turns.clone(), max_tokens: 60, sentences: 1 };
         let started = Instant::now();
         let answer = chat.reply(&prompt, &CancelToken::default()).expect("answer");
         println!("> {}\n{answer}  ({:.2} s)", line.trim(), started.elapsed().as_secs_f64());
