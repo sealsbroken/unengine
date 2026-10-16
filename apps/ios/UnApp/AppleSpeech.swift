@@ -36,11 +36,19 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, AVSpeechSynthesiz
 /// `listenForNumber` returns as soon as a number is in the transcript; `listenForText` returns the
 /// transcript once the child has paused. The engine parses numbers itself too (0...20), the local
 /// parser only decides when to stop listening.
-final class AppleSpeechInput: SpeechInputCallback {
+///
+/// The audio engine runs for the whole session; only the recognition requests come and go. A
+/// child counting slowly, finger by finger, says the next number right after the last one was
+/// handed over, and restarting the microphone for every utterance lost it ("один", then
+/// nothing). Between requests (and while the tutor speaks) the audio goes nowhere.
+final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
     private let audioEngine = AVAudioEngine()
-    private var task: SFSpeechRecognitionTask?
     private let lock = NSLock()
+    /// The request the microphone's audio goes to, if any.
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
     private var cancelled = false
+    private var tapInstalled = false
     /// How long the transcript must stay unchanged before the utterance counts as finished.
     private let pause: TimeInterval = 1.2
 
@@ -68,36 +76,44 @@ final class AppleSpeechInput: SpeechInputCallback {
         listen(language: language, timeoutSeconds: timeoutSeconds) { _ in false }
     }
 
-    /// Records until `done` accepts a partial transcript, the child pauses after saying something,
-    /// the recogniser finishes, or the timeout; returns the transcript, nil when nothing was said.
-    private func listen(language: UnLanguage, timeoutSeconds: Double, done: @escaping (String) -> Bool) -> String? {
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language == .russian ? "ru-RU" : "en-US")),
-              recognizer.isAvailable else { return nil }
+    /// Starts the microphone once (again after an interruption stopped it); false without one.
+    private func microphone() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if tapInstalled && audioEngine.isRunning { return true }
         AudioSession.configure()
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
-        request.taskHint = .dictation
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
         // No microphone (the simulator, say): installing a tap would raise an Objective-C
         // exception, which cannot pass through the engine's Rust frames.
-        guard format.channelCount > 0, format.sampleRate > 0 else { return nil }
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 2048, format: format) { buffer, _ in request.append(buffer) }
-        audioEngine.prepare()
-        guard (try? audioEngine.start()) != nil else { return nil }
-        defer {
-            audioEngine.stop()
-            input.removeTap(onBus: 0)
+        guard format.channelCount > 0, format.sampleRate > 0 else { return false }
+        if !tapInstalled {
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+                guard let self else { return }
+                self.lock.lock(); let request = self.request; self.lock.unlock()
+                request?.append(buffer)
+            }
+            tapInstalled = true
         }
-        lock.lock(); cancelled = false; lock.unlock()
+        audioEngine.prepare()
+        return (try? audioEngine.start()) != nil
+    }
+
+    /// Recognises until `done` accepts a partial transcript, the child pauses after saying
+    /// something, the recogniser finishes, or the timeout; returns the transcript, nil when
+    /// nothing was said.
+    private func listen(language: UnLanguage, timeoutSeconds: Double, done: @escaping (String) -> Bool) -> String? {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language == .russian ? "ru-RU" : "en-US")),
+              recognizer.isAvailable, microphone() else { return nil }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+        request.taskHint = .dictation
         let finished = DispatchSemaphore(value: 0)
         let state = NSLock()
         var transcript = ""
         var changedAt = Date()
         var over = false
-        task = recognizer.recognitionTask(with: request) { result, error in
+        let task = recognizer.recognitionTask(with: request) { result, error in
             state.lock(); defer { state.unlock() }
             if let result = result {
                 let text = result.bestTranscription.formattedString
@@ -106,6 +122,7 @@ final class AppleSpeechInput: SpeechInputCallback {
             }
             if error != nil { over = true; finished.signal() }
         }
+        lock.lock(); self.request = request; self.task = task; cancelled = false; lock.unlock()
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while true {
             if finished.wait(timeout: .now() + 0.1) == .success { break }
@@ -114,16 +131,25 @@ final class AppleSpeechInput: SpeechInputCallback {
             let stop = over || paused || Date() >= deadline
             state.unlock()
             if stop { break }
+            lock.lock(); let wasCancelled = cancelled; lock.unlock()
+            if wasCancelled { break }
         }
-        task?.cancel()
+        lock.lock()
+        if self.request === request { self.request = nil; self.task = nil }
+        let wasCancelled = cancelled
+        lock.unlock()
         request.endAudio()
-        lock.lock(); let wasCancelled = cancelled; lock.unlock()
+        task.cancel()
         state.lock(); let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines); state.unlock()
         return wasCancelled || text.isEmpty ? nil : text
     }
 
+    /// Ends the recognition in progress; the microphone itself keeps running.
     func cancelListening() {
-        lock.lock(); cancelled = true; lock.unlock()
+        lock.lock()
+        cancelled = true
+        let task = self.task
+        lock.unlock()
         task?.cancel()
     }
 }
