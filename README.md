@@ -91,7 +91,8 @@ detector is sure of keeps the table busy (the count waits for it to leave) even 
 landmarks did not fit, but it never points.
 
 While any part of a hand is over the table (landmarks, or a hand or finger box from the detector
-at 0.15 or more) the toys' layout is held (`un_core::freeze`): the numbered toys and their boxes
+at 0.15 or more) toys are not recognised anew: the count, the estimator and the overlay all see
+the toys' layout as it was (`un_core::freeze`): the numbered toys and their boxes
 from the last frame without a hand. A finger that splits a toy into two boxes, or a hand that hides
 one, changes nothing, and the fingertip is matched against the held boxes. When the hand leaves,
 tracking goes on, and the table settles again before anything is counted.

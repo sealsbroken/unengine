@@ -46,6 +46,12 @@ impl LayoutFreeze {
         (tracked, self.last.numbered.clone())
     }
 
+    /// The toys as they stand with a hand over the table: the held layout, or the one about to be
+    /// held (the last without a hand). Nothing is recognised anew while a hand is in view.
+    pub fn held_toys(&self) -> Vec<Detection> {
+        self.held.as_ref().unwrap_or(&self.last).tracked.iter().map(|t| t.detection.clone()).collect()
+    }
+
     pub fn holding(&self) -> bool {
         self.held.is_some()
     }
@@ -71,6 +77,8 @@ mod tests {
         let (before, boxes) = freeze.step(false, &mut tracker, &two);
         assert_eq!(before.len(), 2);
         assert_eq!(boxes.len(), 2);
+        // What a hand coming in finds on the table: the toys as they were, not this frame's.
+        assert_eq!(freeze.held_toys(), before.iter().map(|t| t.detection.clone()).collect::<Vec<_>>());
         // A hand comes: the second toy is split in two by the finger, the first is hidden.
         let split = [toy(0.55), toy(0.65)];
         for _ in 0..5 {

@@ -164,10 +164,16 @@ impl Perception {
             Some(tracker) => tracker.track(frame, &seed_boxes)?,
             None => vec![],
         };
-        // A hand the detector is sure of keeps the table "busy" even when its landmarks did not fit
-        // (the count waits for the hand to leave), but it neither points nor counts fingers.
+        // Any part of a hand over the table (landmarks, or a hand or finger box) stops toy
+        // recognition: the toys stay as they were (see `un_core::freeze`) and nothing is counted.
+        let hand_over_table = !hands.is_empty() || seeds.iter().any(|d| d.confidence >= FREEZE_CONFIDENCE);
+        if hand_over_table {
+            detections = self.freeze.held_toys();
+        }
+        // A hand seen only as a box keeps the table "busy" too (the count waits for it to leave),
+        // but it neither points nor counts fingers.
         let mut present = hands.clone();
-        for seed in seeds.iter().filter(|d| d.confidence >= self.object_confidence) {
+        for seed in seeds.iter().filter(|d| d.confidence >= FREEZE_CONFIDENCE) {
             if !hands.iter().any(|h| h.bbox.is_some_and(|b| b.intersection(&seed.bbox).is_some())) {
                 present.push(HandObservation {
                     chirality: un_core::Chirality::Unknown,
@@ -180,8 +186,7 @@ impl Perception {
             }
         }
         let mut state = self.estimator.ingest(&detections, &present, timestamp);
-        // Any part of a hand over the table holds the layout: a split or hidden toy changes nothing.
-        let hand_over_table = state.hands_present || !hands.is_empty() || seeds.iter().any(|d| d.confidence >= FREEZE_CONFIDENCE);
+        let hand_over_table = hand_over_table || state.hands_present;
         let (tracked, numbered) = self.freeze.step(hand_over_table, &mut self.tracker, &state.detections);
         if self.freeze.holding() {
             // What is shown and pointed at is the held layout, not this frame's boxes.
