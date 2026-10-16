@@ -33,7 +33,7 @@ pub use geometry::{Box2, Point};
 pub use hands::{Chirality, FingerCounter, HandJoint, HandObservation};
 pub use language::{Language, Noun, Numerals};
 pub use numbers::{CountQuestion, NumberParser, NumberWords};
-pub use pointing::{touched_object, TOUCH_MARGIN};
+pub use pointing::{pointing_tip, touched_object, TOUCH_MARGIN};
 pub use strategy::{
     Effect, Event, ListenMode, SessionConfig, SessionSummary, Strategy, StrategyFactory, StrategyInfo, TableObservation,
     TaskRecord,

@@ -75,7 +75,9 @@ hand never becomes a toy, then dropped), and `finger` is shown over the picture 
 counted.
 
 Only the **index finger** points. Its tip comes from MediaPipe's hand landmarks (joint 8), which
-tell it from the thumb and the other fingers. A child's hand reaching over a table filmed from
+tell it from the thumb and the other fingers. It counts only when the landmarks show a pointing index finger:
+stretched out, straight from its knuckle, and its tip clearly apart from the thumb's, so a thumb
+the model took for the index finger, or a fist, points at nothing. A child's hand reaching over a table filmed from
 above often has its palm out of the picture, where MediaPipe's palm detector finds nothing, so a
 new hand is found from the toy detector's own `_hand` and `finger` boxes instead (kept down to
 a confidence of 0.1 for this): each box is turned so the fingers point away from the frame edge
