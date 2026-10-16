@@ -208,13 +208,8 @@ impl UnApp {
         let Some(live) = &mut self.live else { return };
         let s = &self.setup;
         let labels = live.worker.latest.lock().labels.clone();
-        let noun = if live.sim.is_some() {
-            "cube".to_string()
-        } else if labels.len() == 1 {
-            labels[0].clone()
-        } else {
-            "object".to_string()
-        };
+        // One kind of toy on the detector: its name ("машинки"); several: "игрушки".
+        let noun = if live.sim.is_none() && labels.len() == 1 { labels[0].clone() } else { "toy".to_string() };
         let config = SessionConfig {
             language: s.language,
             child_name: (!s.child_name.trim().is_empty()).then(|| s.child_name.trim().to_string()),

@@ -454,7 +454,7 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
         }
         let mut per_label: BTreeMap<String, u32> = BTreeMap::new();
         for d in &state.detections {
-            *per_label.entry(d.label_or("object")).or_default() += 1;
+            *per_label.entry(d.label_or("toy")).or_default() += 1;
         }
         let summary = serde_json::json!({
             "count": state.cube_count, "stable": state.is_stable, "raw": state.raw_count,
@@ -599,11 +599,8 @@ fn args_noun(vision: &VisionArgs, labels: &[String], sim: bool) -> String {
     if let Some(label) = &vision.count {
         return label.clone();
     }
-    if sim {
-        return "cube".into();
-    }
-    if labels.len() == 1 {
+    if !sim && labels.len() == 1 {
         return labels[0].clone();
     }
-    "object".into()
+    "toy".into()
 }

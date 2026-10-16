@@ -251,9 +251,9 @@ mod tests {
     #[test]
     fn asks_checks_and_finishes() {
         let mut s = DemoStrategy::new(SessionConfig { max_tasks: 1, ..Default::default() });
-        assert_eq!(spoken(&s.handle(Event::Start)), vec!["Hi! Put some cubes on the table."]);
+        assert_eq!(spoken(&s.handle(Event::Start)), vec!["Hi! Put some toys on the table."]);
         let asked = s.handle(Event::Table(TableObservation::stable(3)));
-        assert_eq!(spoken(&asked), vec!["How many cubes are on the table?"]);
+        assert_eq!(spoken(&asked), vec!["How many toys are on the table?"]);
         assert_eq!(listens(&asked), vec![ListenMode::Voice]);
         let answered = s.handle(Event::Heard(3));
         assert!(answered.contains(&Effect::Celebrate));

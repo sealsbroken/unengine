@@ -21,13 +21,15 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.education</string>
 	<key>NSCameraUsageDescription</key>
-	<string>The camera looks at the table to count the objects on it. Nothing leaves the phone.</string>
+	<string>The camera looks at the table to count the toys on it. Nothing leaves the device.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>The tutor listens for the spoken answer. Nothing leaves the phone.</string>
+	<string>The tutor listens for the spoken answer. Nothing leaves the device.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Spoken numbers are recognised on the device.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

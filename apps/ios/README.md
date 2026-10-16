@@ -1,6 +1,6 @@
 # Un for iOS
 
-A SwiftUI shell over the shared Rust engine. The phone's camera frames go to the shared
+A SwiftUI shell over the shared Rust engine, for iPhone and iPad (portrait, full screen). The phone's camera frames go to the shared
 perception (`UnPerception`, ONNX Runtime on the CPU/CoreML) and the lesson runs in the shared
 engine (`UnSession`); speech uses Apple's on-device synthesiser and recogniser through the
 `SpeechOutputCallback` / `SpeechInputCallback` interfaces. Swap in Vision's hand pose or
@@ -41,10 +41,11 @@ Notes:
 
 ## Tests
 
-`Tests/Doubles.swift` holds the doubles for synthetic lesson tests: a scripted child
-(`ScriptedSpeech`, lines queued by the test) and the tutor's lines written down
-(`RecordedVoice`), with a simulated table through `UnSession.observe`. No camera, no
-microphone, no host app; the engine's own timers run. The toy lessons' tests go next to it. `tools/ios.sh test` in the unmethod checkout runs them on the
+`Tests/` holds synthetic lesson tests: lesson 1 with toys driven end to end through the Swift
+bindings with a scripted child (`ScriptedSpeech`, lines queued by the test), a simulated table
+(`UnSession.observe`) and the tutor's lines written down (`RecordedVoice`). No camera, no
+microphone, no host app; the engine's own timers run, so a count takes the beat and a half the
+tutor waits after the last number. `tools/ios.sh test` in the unmethod checkout runs them on the
 simulator (`xcodebuild test -scheme UnApp -only-testing:UnAppTests`).
 
 Generated files: `Generated/un_ffi.swift`, `Generated/un_ffiFFI.h`, `Generated/un_ffiFFI.modulemap`.

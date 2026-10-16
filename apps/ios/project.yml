@@ -36,7 +36,7 @@ targets:
         # No -all_load: the prebuilt ONNX Runtime carries some objects twice, which would then
         # collide. Strategies are registered explicitly (unmethod_mobile_init) instead.
         OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"  # iPhone and iPad, portrait, full screen
   # Synthetic lesson tests: the engine and the lessons through the Swift bindings, with a
   # scripted child and a simulated table, no host app (tools/ios.sh test).
   UnAppTests:

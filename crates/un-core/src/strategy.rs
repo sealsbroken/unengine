@@ -51,7 +51,7 @@ impl Default for SessionConfig {
             perform_timeout: 25.0,
             nudge_interval: 10.0,
             seed: 0,
-            noun: "cube".to_string(),
+            noun: "toy".to_string(),
             extra: HashMap::new(),
         }
     }
