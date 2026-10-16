@@ -442,7 +442,7 @@ impl UnSession {
     /// `speech_input` may be `None`: the lesson then uses the number pad only. `always_listen`
     /// keeps the microphone open for the whole lesson (closed only while the tutor speaks), so
     /// the child can talk at any time. `chat_model` is the path of a GGUF language model for the
-    /// tutor's answers to free speech; it loads in the background, and without it (or in a
+    /// tutor's answers to free speech; it loads on the first such answer, and without it (or in a
     /// library built without the `llm` feature) the lesson keeps to its script.
     #[allow(clippy::too_many_arguments)]
     #[uniffi::constructor]

@@ -2,7 +2,7 @@
 //!
 //! [`LlamaChat`] implements the engine's [`ChatModel`]: it applies the model's own chat template
 //! to the strategy's master prompt and the conversation so far, and samples a short answer.
-//! A model is loaded once per process and shared ([`LlamaChat::shared`]); one answer is
+//! A model is loaded on the first request ([`OnDemand`]), then shared for the process ([`LlamaChat::shared`]); one answer is
 //! generated at a time, on the engine's chat thread, and the context is kept between answers so
 //! the master prompt is read once, not every time. Any instruction-tuned GGUF works; the
 //! default is Qwen3 4B Instruct 2507 (Apache-2.0, 2.5 GB at Q4_K_M), which speaks Russian and
@@ -206,56 +206,47 @@ impl ChatModel for LlamaChat {
     }
 }
 
-/// A model loading on a thread of its own: a session starts at once, and the first answer waits
-/// for the weights only if they are not in yet.
-/// The model once loaded (or why it could not be), and a signal for those waiting.
-type Slot = Arc<(Mutex<Option<Result<Arc<LlamaChat>, String>>>, parking_lot::Condvar)>;
-
-pub struct Background {
-    slot: Slot,
+/// A model that loads only when the first answer is wanted: nothing touches the GPU or the
+/// memory for it while the lesson keeps to its script. Once loaded it stays (see
+/// [`LlamaChat::shared`]); a model that failed to load is not tried again.
+pub struct OnDemand {
+    path: PathBuf,
+    model: Mutex<Option<Result<Arc<LlamaChat>, String>>>,
     name: String,
 }
 
-impl Background {
-    pub fn load(path: &Path) -> Arc<Self> {
-        let slot: Slot = Arc::new((Mutex::new(None), parking_lot::Condvar::new()));
+impl OnDemand {
+    pub fn new(path: &Path) -> Arc<Self> {
         let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let (path, filled) = (path.to_path_buf(), Arc::clone(&slot));
-        std::thread::Builder::new()
-            .name("un-llm-load".into())
-            .spawn(move || {
-                let started = std::time::Instant::now();
-                let model = LlamaChat::shared(&path);
-                // On stderr as well as the log: a phone has no logger, and a model that will not
-                // load (memory, a bad file) must be visible in the console.
-                match &model {
-                    Ok(_) => eprintln!("un-llm: {} loaded in {:.1} s", path.display(), started.elapsed().as_secs_f64()),
-                    Err(error) => {
-                        log::warn!("chat model unavailable: {error}");
-                        eprintln!("un-llm: chat model unavailable: {error}");
-                    }
+        Arc::new(Self { path: path.to_path_buf(), model: Mutex::new(None), name })
+    }
+
+    fn model(&self) -> Result<Arc<LlamaChat>, String> {
+        let mut slot = self.model.lock();
+        if slot.is_none() {
+            let started = std::time::Instant::now();
+            let model = LlamaChat::shared(&self.path);
+            // On stderr as well as the log: a phone has no logger, and a model that will not
+            // load (memory, a bad file) must be visible in the console.
+            match &model {
+                Ok(_) => eprintln!("un-llm: {} loaded in {:.1} s", self.path.display(), started.elapsed().as_secs_f64()),
+                Err(error) => {
+                    log::warn!("chat model unavailable: {error}");
+                    eprintln!("un-llm: chat model unavailable: {error}");
                 }
-                *filled.0.lock() = Some(model);
-                filled.1.notify_all();
-            })
-            .expect("spawn");
-        Arc::new(Self { slot, name })
+            }
+            *slot = Some(model);
+        }
+        slot.as_ref().expect("loaded").clone()
     }
 }
 
-impl ChatModel for Background {
+impl ChatModel for OnDemand {
     fn reply(&self, prompt: &ChatPrompt, cancel: &CancelToken) -> Result<String, String> {
-        let model = {
-            let (lock, loaded) = &*self.slot;
-            let mut slot = lock.lock();
-            while slot.is_none() {
-                if cancel.is_cancelled() {
-                    return Err("cancelled".into());
-                }
-                loaded.wait_for(&mut slot, std::time::Duration::from_millis(100));
-            }
-            slot.as_ref().expect("loaded").clone()?
-        };
+        let model = self.model()?;
+        if cancel.is_cancelled() {
+            return Err(CANCELLED.into());
+        }
         model.reply(prompt, cancel)
     }
 

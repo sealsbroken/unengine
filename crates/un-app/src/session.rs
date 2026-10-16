@@ -239,10 +239,10 @@ pub fn chat_model(paths: &ModelPaths, log: Option<&un_engine::Logger>) -> Option
     Some(load_chat_model(&path))
 }
 
-/// The language model at `path`, loading in the background (see `un_llm::Background`).
+/// The language model at `path`, loaded on the first request (see `un_llm::OnDemand`).
 #[cfg(feature = "llm")]
 pub fn load_chat_model(path: &std::path::Path) -> Arc<dyn un_engine::ChatModel> {
-    un_llm::Background::load(path)
+    un_llm::OnDemand::new(path)
 }
 
 #[cfg(not(feature = "llm"))]
