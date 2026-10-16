@@ -1,7 +1,7 @@
 //! Stand-in for camera + detector: a table with a configurable number of objects.
 //!
 //! The fake detections go through the real estimator and tracker, so the whole lesson
-//! loop runs on any machine without a camera, and CI gets a deterministic table.
+//! loop runs on any machine without a camera, and tests get a deterministic table.
 
 use parking_lot::Mutex;
 use un_core::{Box2, Detection};

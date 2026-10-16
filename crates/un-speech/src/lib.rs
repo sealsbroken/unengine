@@ -6,7 +6,7 @@
 //! * With the `audio` feature: [`MicrophoneInput`] and [`SpeakerOutput`], the
 //!   [`un_engine::SpeechInput`] / [`un_engine::SpeechOutput`] implementations for desktops.
 //! * [`check`]: a round trip without any audio device (the voice says a number, the recogniser
-//!   hears it), for installers and CI.
+//!   hears it), for installers and smoke tests.
 //!
 //! Models are laid out by `tools/fetch_models.py`; see [`SpeechModels`].
 

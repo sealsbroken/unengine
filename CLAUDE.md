@@ -1,6 +1,6 @@
 # Un — notes for Claude Code
 
-- Rust workspace; `cargo test --workspace` must stay green on macOS, Linux and Windows (CI runs all three).
+- Rust workspace; `cargo test --workspace` must stay green on macOS, Linux and Windows (there is no CI: run it before pushing).
 - Everything is on-device: no network calls at runtime, no analytics. Models are fetched by `tools/fetch_models.py`.
 - `un-core` is pure and platform-independent; perception and speech I/O never leak into it.
 - Lesson content (tasks, difficulty, wording) is a *strategy* behind `un_core::strategy::Strategy`. The only strategy in

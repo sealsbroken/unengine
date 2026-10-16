@@ -75,8 +75,8 @@ itself; this matters for third parties reusing the engine.)
 | Platform | Status | Notes |
 |---|---|---|
 | macOS | runs | Verified: camera 25 fps with the detector + hands (M-series, CPU), speech self-test EN/RU. |
-| Windows | builds in CI | nokhwa Media Foundation, cpal WASAPI, sherpa-onnx prebuilt; DirectML via the `directml` feature. |
-| Linux | builds in CI | V4L2, ALSA; needs the dev packages listed in the README. |
+| Windows | builds (cross-compiled with cargo-xwin) | nokhwa Media Foundation, cpal WASAPI, sherpa-onnx prebuilt; DirectML via the `directml` feature. |
+| Linux | builds | V4L2, ALSA; needs the dev packages listed in the README. |
 | iOS | shell scaffolded | `apps/ios`: AVFoundation camera → `UnPerception` (NV12), Apple speech adapters, SwiftUI screen. Needs `cargo build --target aarch64-apple-ios`, bindings generation and an Xcode run to validate. |
 | Android | shell scaffolded | `apps/android`: CameraX → `UnPerception`, Android TTS/SpeechRecognizer adapters, Compose screen. Needs the NDK (`cargo-ndk`) and a device run to validate. |
 

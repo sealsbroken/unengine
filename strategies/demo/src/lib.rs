@@ -1,6 +1,6 @@
 //! A minimal strategy: "How many are on the table?", repeated.
 //!
-//! It exists so the engine, the apps and the CI build and run without any
+//! It exists so the engine, the apps and the tests build and run without any
 //! proprietary lesson content, and as the smallest example of a [`Strategy`].
 //! Real methodics live in separate crates registered the same way.
 
