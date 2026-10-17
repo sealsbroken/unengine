@@ -2,7 +2,7 @@
 //!
 //! * [`paths`]: where the models are.
 //! * [`speech_setup`]: the microphone and the voice for a language, or doubles.
-//! * [`Perception`]: detector + hands + estimator + tracker on a frame.
+//! * [`Perception`]: detector + estimator + tracker on a frame.
 //! * [`SimulatedTable`]: a table without a camera.
 //! * [`Session`]: strategy + engine + perception, with a JSON transcript for headless runs.
 

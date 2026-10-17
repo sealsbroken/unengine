@@ -2,8 +2,8 @@
 //!
 //! Phones keep their own camera and speech APIs and hand the engine what it needs:
 //!
-//! * perception: either call [`UnSession::observe`] with the platform's own counts (Vision on
-//!   iOS, MediaPipe on Android), or run the shared models with [`UnPerception`] and pass frames;
+//! * perception: either call [`UnSession::observe`] with the platform's own counts, or run the
+//!   shared detector with [`UnPerception`] and pass frames;
 //! * speech: implement [`SpeechInputCallback`] / [`SpeechOutputCallback`] over the platform's
 //!   recogniser and synthesiser (sherpa-onnx's own Swift/Kotlin packages work too).
 //!
@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 use un_core::strategy::{SessionConfig, StrategyInfo, StrategyRegistry, TableObservation};
-use un_core::{Chirality, EstimatorConfig, Language};
+use un_core::{EstimatorConfig, Language};
 use un_engine::{CancelToken, Engine, EngineOptions, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 use un_vision::RgbFrame;
 
@@ -186,7 +186,6 @@ impl From<SessionConfig> for UnSessionConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum UnListenMode {
     Voice,
-    VoiceOrFingers,
     NumberPad,
     Counting,
 }
@@ -270,7 +269,6 @@ impl From<un_engine::EngineSnapshot> for UnSnapshot {
             },
             listen_mode: s.status.listen_mode.map(|m| match m {
                 ListenMode::Voice => UnListenMode::Voice,
-                ListenMode::VoiceOrFingers => UnListenMode::VoiceOrFingers,
                 ListenMode::NumberPad => UnListenMode::NumberPad,
                 ListenMode::Counting => UnListenMode::Counting,
             }),
@@ -420,18 +418,6 @@ impl SpeechOutput for CallbackOutput {
 
 // ------------------------------------------------------------------ session
 
-/// The language model at `path` (loaded on its first request), for a session or a benchmark.
-#[cfg(feature = "llm")]
-pub fn chat_at(path: String) -> Option<Arc<dyn un_engine::ChatModel>> {
-    let path = std::path::PathBuf::from(path);
-    path.exists().then(|| un_app::session::load_chat_model(&path))
-}
-
-#[cfg(not(feature = "llm"))]
-pub fn chat_at(_path: String) -> Option<Arc<dyn un_engine::ChatModel>> {
-    None
-}
-
 /// One lesson: a strategy driven by the engine.
 #[derive(uniffi::Object)]
 pub struct UnSession {
@@ -442,10 +428,7 @@ pub struct UnSession {
 impl UnSession {
     /// `speech_input` may be `None`: the lesson then uses the number pad only. `always_listen`
     /// keeps the microphone open for the whole lesson (closed only while the tutor speaks), so
-    /// the child can talk at any time. `chat_model` is the path of a GGUF language model for the
-    /// tutor's answers to free speech; it loads on the first such answer, and without it (or in a
-    /// library built without the `llm` feature) the lesson keeps to its script.
-    #[allow(clippy::too_many_arguments)]
+    /// the child can talk at any time.
     #[uniffi::constructor]
     pub fn new(
         strategy_id: String,
@@ -454,7 +437,6 @@ impl UnSession {
         speech_output: Arc<dyn SpeechOutputCallback>,
         chime: bool,
         always_listen: bool,
-        chat_model: Option<String>,
     ) -> Result<Arc<Self>, UnError> {
         let registry = registry();
         let config: SessionConfig = config.into();
@@ -469,9 +451,7 @@ impl UnSession {
             EngineOptions {
                 chime,
                 always_listen,
-                chat: chat_model.and_then(chat_at),
-                // The engine's one-line log (what the tutor said, what it heard, how long the
-                // model took) on stderr: the Xcode console, `devicectl ... --console`, logcat.
+                // The engine's one-line log (what the tutor said, what it heard) on stderr: the Xcode console, `devicectl ... --console`, logcat.
                 log: Some(Arc::new(|line: &str| eprintln!("un: {line}"))),
                 ..Default::default()
             },
@@ -506,27 +486,13 @@ impl UnSession {
     }
 
     /// What the platform's own perception sees. `count` is the committed count, `None` while
-    /// unsettled; `pointed_at` the number of the object a finger is on.
-    pub fn observe(
-        &self,
-        count: Option<u32>,
-        hands_present: bool,
-        is_stable: bool,
-        finger_count: Option<u32>,
-        groups: u32,
-        pointed_at: Option<u32>,
-    ) {
-        self.engine.observe_table(TableObservation { count, hands_present, is_stable, finger_count, groups, pointed_at });
+    /// unsettled.
+    pub fn observe(&self, count: Option<u32>, is_stable: bool, groups: u32) {
+        self.engine.observe_table(TableObservation { count, is_stable, groups });
     }
 
     pub fn snapshot(&self) -> UnSnapshot {
         self.engine.snapshot().into()
-    }
-
-    /// The language model is writing an answer: skip object detection meanwhile, so the model
-    /// gets the GPU (the child is talking, the table waits).
-    pub fn is_thinking(&self) -> bool {
-        self.engine.is_thinking()
     }
 }
 
@@ -549,37 +515,14 @@ pub struct UnDetection {
     pub number: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum UnChirality {
-    Left,
-    Right,
-    Unknown,
-}
-
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct UnHand {
-    pub chirality: UnChirality,
-    /// 21 joints, x then y, normalized to the frame.
-    pub joints: Vec<f32>,
-    pub raised_fingers: u32,
-    pub score: f32,
-}
-
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct UnTableState {
     pub count: Option<u32>,
     pub raw_count: u32,
     pub is_stable: bool,
-    pub hands_present: bool,
-    pub finger_count: Option<u32>,
     /// Separate groups the objects lie in.
     pub groups: u32,
     pub detections: Vec<UnDetection>,
-    /// Fingers seen over the table (the detector's `finger` label): shown, never counted.
-    pub fingers: Vec<UnDetection>,
-    /// The number of the object a finger is on, if any.
-    pub pointed_at: Option<u32>,
-    pub hands: Vec<UnHand>,
     pub timestamp: f64,
 }
 
@@ -589,14 +532,12 @@ pub struct UnPerceptionConfig {
     /// Detector name in `models_dir` (`toys`) or a path to an `.onnx`.
     pub detector: String,
     pub confidence: f32,
-    pub hands: bool,
     pub count_label: Option<String>,
-    pub mirrored: bool,
     /// Table area as normalized x1,y1,x2,y2; empty means the whole frame.
     pub roi: Option<UnBox>,
 }
 
-/// The shared detector, hand landmarks, estimator and tracker. Feed it RGB8 frames.
+/// The shared detector, estimator and tracker. Feed it RGB8 frames.
 #[derive(uniffi::Object)]
 pub struct UnPerception {
     inner: Mutex<un_app::Perception>,
@@ -615,10 +556,8 @@ impl UnPerception {
                 detector: config.detector,
                 confidence: config.confidence,
                 provider: un_vision::Provider::Auto,
-                hands: config.hands,
                 count_label: config.count_label,
                 estimator,
-                mirrored: config.mirrored,
             },
         )
         .map_err(|e| e.to_string())?;
@@ -664,24 +603,10 @@ impl UnPerception {
         let mut p = self.inner.lock();
         let out = p.process(frame, timestamp).map_err(|e| e.to_string())?;
         let numbered = |d: &un_core::Detection| out.tracked.iter().find(|t| t.detection == *d).map(|t| t.number).unwrap_or(0);
-        let fingers = out
-            .fingers
-            .iter()
-            .map(|d| UnDetection {
-                bbox: UnBox { x1: d.bbox.x1, y1: d.bbox.y1, x2: d.bbox.x2, y2: d.bbox.y2 },
-                confidence: d.confidence,
-                label: d.label.clone(),
-                number: 0,
-            })
-            .collect();
         Ok(UnTableState {
-            fingers,
-            pointed_at: out.state.pointed_at,
             count: out.state.cube_count,
             raw_count: out.state.raw_count,
             is_stable: out.state.is_stable,
-            hands_present: out.state.hands_present,
-            finger_count: out.state.finger_count,
             groups: out.state.groups,
             detections: out
                 .state
@@ -692,23 +617,6 @@ impl UnPerception {
                     confidence: d.confidence,
                     label: d.label.clone(),
                     number: numbered(d),
-                })
-                .collect(),
-            hands: out
-                .hands
-                .iter()
-                .map(|h| UnHand {
-                    chirality: match h.chirality {
-                        Chirality::Left => UnChirality::Left,
-                        Chirality::Right => UnChirality::Right,
-                        Chirality::Unknown => UnChirality::Unknown,
-                    },
-                    joints: un_core::HandJoint::ALL
-                        .iter()
-                        .flat_map(|j| h.joints.get(j).map(|p| [p.0, p.1]).unwrap_or([f32::NAN; 2]))
-                        .collect(),
-                    raised_fingers: h.raised_finger_count.unwrap_or(0),
-                    score: h.score,
                 })
                 .collect(),
             timestamp: out.state.timestamp,

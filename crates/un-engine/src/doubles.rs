@@ -181,29 +181,6 @@ impl SpeechOutput for SilentSpeechOutput {
     }
 }
 
-/// A language model that always gives the same answer after `delay`, and keeps the prompts.
-pub struct ScriptedChat {
-    pub answer: String,
-    pub delay: Duration,
-    pub prompts: Mutex<Vec<un_core::strategy::ChatPrompt>>,
-}
-
-impl ScriptedChat {
-    pub fn new(answer: &str, delay: Duration) -> Self {
-        Self { answer: answer.to_string(), delay, prompts: Mutex::new(Vec::new()) }
-    }
-}
-
-impl crate::chat::ChatModel for ScriptedChat {
-    fn reply(&self, prompt: &un_core::strategy::ChatPrompt, cancel: &CancelToken) -> Result<String, String> {
-        self.prompts.lock().push(prompt.clone());
-        if cancel.wait(self.delay) {
-            return Err("cancelled".into());
-        }
-        Ok(self.answer.clone())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

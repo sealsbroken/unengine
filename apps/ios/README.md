@@ -3,8 +3,8 @@
 A SwiftUI shell over the shared Rust engine, for iPhone and iPad (portrait, full screen). The phone's camera frames go to the shared
 perception (`UnPerception`, ONNX Runtime on the CPU/CoreML) and the lesson runs in the shared
 engine (`UnSession`); speech uses Apple's on-device synthesiser and recogniser through the
-`SpeechOutputCallback` / `SpeechInputCallback` interfaces. Swap in Vision's hand pose or
-sherpa-onnx's Swift package by implementing the same interfaces.
+`SpeechOutputCallback` / `SpeechInputCallback` interfaces. Swap in sherpa-onnx's Swift package
+by implementing the same interfaces.
 
 ## Build
 
@@ -18,7 +18,7 @@ cargo build -p un-ffi --release --target aarch64-apple-ios-sim        # aarch64-
 cargo run -p un-ffi --bin uniffi-bindgen -- generate \
     --library ../../target/aarch64-apple-ios-sim/release/libun_ffi.a --language swift --no-format --out-dir Generated
 mkdir -p Frameworks/iphonesimulator Resources/models && cp ../../target/aarch64-apple-ios-sim/release/libun_ffi.a Frameworks/iphonesimulator/
-cp ../../models/toys.{onnx,json} ../../models/{hand_landmark,palm_detection}.onnx Resources/models/
+cp ../../models/toys.{onnx,json} Resources/models/
 xcodegen generate && open UnApp.xcodeproj
 ```
 

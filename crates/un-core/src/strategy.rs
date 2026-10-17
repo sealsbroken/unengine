@@ -61,31 +61,19 @@ impl Default for SessionConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct TableObservation {
     pub count: Option<u32>,
-    pub hands_present: bool,
     pub is_stable: bool,
-    pub finger_count: Option<u32>,
     /// How many separate groups the objects lie in; 0 without objects or when unknown.
     #[serde(default)]
     pub groups: u32,
-    /// The stable number of the object a finger is on, `None` when no finger is on one.
-    #[serde(default)]
-    pub pointed_at: Option<u32>,
 }
 
 impl TableObservation {
-    /// A settled, hands-free table with `count` objects in one group.
+    /// A settled table with `count` objects in one group.
     pub fn stable(count: u32) -> Self {
-        Self {
-            count: Some(count),
-            hands_present: false,
-            is_stable: true,
-            finger_count: None,
-            groups: count.min(1),
-            pointed_at: None,
-        }
+        Self { count: Some(count), is_stable: true, groups: count.min(1) }
     }
 
-    /// A settled, hands-free table with `count` objects lying in `groups` groups.
+    /// A settled table with `count` objects lying in `groups` groups.
     pub fn grouped(count: u32, groups: u32) -> Self {
         Self { groups, ..Self::stable(count) }
     }
@@ -97,7 +85,7 @@ pub enum Event {
     Start,
     Stop,
     Table(TableObservation),
-    /// A number was heard (voice), shown (fingers) or tapped.
+    /// A number was heard (voice) or tapped.
     Heard(u32),
     /// Words were heard that are not a number: a name, "yes", "I don't understand", chatter.
     /// Listening goes on afterwards unless the strategy replaces or stops it.
@@ -119,9 +107,6 @@ pub enum Event {
     TimerFired(u64),
     RepeatRequested,
     SkipRequested,
-    /// The language model's answer to the last [`Effect::Chat`]; `None` when there is no model,
-    /// it failed, or a newer request replaced it. The strategy decides whether to say it.
-    Replied(Option<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -129,8 +114,6 @@ pub enum Event {
 pub enum ListenMode {
     /// A spoken answer: the first number ends the listen.
     Voice,
-    /// A spoken answer or fingers held up.
-    VoiceOrFingers,
     /// A tap on the number pad.
     NumberPad,
     /// The child counts aloud: every number is collected, across pauses, until the sequence
@@ -157,31 +140,6 @@ pub enum Effect {
     },
     CancelTimer(u64),
     SessionEnded(SessionSummary),
-    /// Ask the on-device language model for the tutor's answer to free speech; the engine runs
-    /// it on its own thread and sends [`Event::Replied`]. A newer request replaces an older one.
-    Chat(ChatPrompt),
-}
-
-/// A conversation for the language model: the strategy's master prompt and the turns so far.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChatPrompt {
-    /// Who the tutor is, what the lesson is doing now and how to answer.
-    pub system: String,
-    /// Oldest first; the last one is the child's.
-    pub turns: Vec<ChatTurn>,
-    /// Upper bound on the answer's length, in model tokens.
-    pub max_tokens: u32,
-    /// The answer ends after this many sentences (0: only `max_tokens` bounds it). One sentence
-    /// is said a moment after the child stops; every further one costs another second or two.
-    #[serde(default)]
-    pub sentences: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChatTurn {
-    /// `true` for the child's words, `false` for the tutor's.
-    pub child: bool,
-    pub text: String,
 }
 
 impl Effect {

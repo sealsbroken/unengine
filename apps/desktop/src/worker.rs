@@ -1,4 +1,4 @@
-//! The perception thread: camera (or simulated table) -> detector/hands/estimator -> shared state.
+//! The perception thread: camera (or simulated table) -> detector/estimator -> shared state.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -7,9 +7,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use un_app::{ModelPaths, Perception, PerceptionConfig, SimulatedTable};
-use un_core::{
-    Box2, Detection, DetectionTracker, HandObservation, TableState, TableStateEstimator, TrackedDetection, TrackerConfig,
-};
+use un_core::{Box2, DetectionTracker, TableState, TableStateEstimator, TrackedDetection, TrackerConfig};
 use un_media::{CameraSource, FrameSource};
 use un_vision::RgbFrame;
 
@@ -17,13 +15,9 @@ pub struct Latest {
     pub frame: Option<Arc<RgbFrame>>,
     pub state: Option<TableState>,
     pub tracked: Vec<TrackedDetection>,
-    pub hands: Vec<HandObservation>,
-    /// Fingers the detector saw (shown, not counted).
-    pub fingers: Vec<Detection>,
     pub fps: f32,
     pub error: Option<String>,
     pub labels: Vec<String>,
-    pub hands_enabled: bool,
     pub frame_serial: u64,
 }
 
@@ -46,12 +40,9 @@ impl Worker {
             frame: None,
             state: None,
             tracked: vec![],
-            hands: vec![],
-            fingers: vec![],
             fps: 0.0,
             error: None,
             labels: vec![],
-            hands_enabled: false,
             frame_serial: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -111,17 +102,13 @@ fn run_loop(
                     &mut estimator,
                     &mut tracker,
                     &table.detections(),
-                    &[],
                     started.elapsed().as_secs_f64(),
-                    None,
                 );
                 fps = tick(&mut last_tick, fps);
                 let mut l = latest.lock();
                 l.frame = Some(Arc::new(frame));
                 l.state = Some(out.state);
                 l.tracked = out.tracked;
-                l.hands = vec![];
-                l.fingers = out.fingers;
                 l.fps = fps;
                 l.frame_serial += 1;
             }
@@ -134,11 +121,7 @@ fn run_loop(
                     return;
                 }
             };
-            {
-                let mut l = latest.lock();
-                l.labels = perception.labels.clone();
-                l.hands_enabled = perception.hands.is_some();
-            }
+            latest.lock().labels = perception.labels.clone();
             let mut camera = match CameraSource::open(index, width, height) {
                 Ok(c) => c,
                 Err(error) => {
@@ -167,8 +150,6 @@ fn run_loop(
                         l.frame = Some(Arc::new(frame));
                         l.state = Some(out.state);
                         l.tracked = out.tracked;
-                        l.hands = out.hands;
-                        l.fingers = out.fingers;
                         l.fps = fps;
                         l.frame_serial += 1;
                     }

@@ -18,7 +18,7 @@ import java.util.TimerTask
 
 /**
  * Wires CameraX frames into the shared perception and the lesson into the shared engine, as the
- * iOS `LessonModel` does: the toys detector with hand tracking, lesson 1 when it is registered,
+ * iOS `LessonModel` does: the toys detector, lesson 1 when it is registered,
  * the camera's picture behind the overlay, the language remembered between runs.
  */
 class LessonModel(private val context: Context) {
@@ -59,10 +59,10 @@ class LessonModel(private val context: Context) {
             // As on iOS: a debug build skips the introductions and goes straight to the lesson.
             config = config.copy(childName = if (language.value == UnLanguage.RUSSIAN) "Вася" else "Mia")
         }
-        perception = UnPerception(UnPerceptionConfig(modelsDir, "toys", 0.25f, true, null, false, null))
+        perception = UnPerception(UnPerceptionConfig(modelsDir, "toys", 0.25f, null, null))
         val strategies = availableStrategies()
         val lesson = strategies.firstOrNull { it.id == "lesson-01" } ?: strategies.firstOrNull()
-        session = UnSession(lesson?.id ?: "demo", config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true, true, null)
+        session = UnSession(lesson?.id ?: "demo", config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true, true)
         startCamera()
         session?.start()
         running.value = true
@@ -96,7 +96,7 @@ class LessonModel(private val context: Context) {
             val t = (System.nanoTime() - started) / 1e9
             val state = perception?.processNv12(yBytes, uvBytes, it.width.toUInt(), it.height.toUInt(), y.rowStride.toUInt(), uv.rowStride.toUInt(), t)
             if (state != null) {
-                session?.observe(state.count, state.handsPresent, state.isStable, state.fingerCount, state.groups, state.pointedAt)
+                session?.observe(state.count, state.isStable, state.groups)
                 table.value = state
                 frameSize.value = Pair(it.width, it.height)
             }

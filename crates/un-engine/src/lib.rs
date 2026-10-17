@@ -1,13 +1,12 @@
 //! The lesson runtime. A [`Strategy`] is a pure reducer; this crate owns the threads:
-//! an effect queue that speaks and listens in order, a nudge timer, a listening
-//! thread and a finger watcher. The app calls [`Engine::observe`] once per frame and
+//! an effect queue that speaks and listens in order, a nudge timer and a listening
+//! thread. The app calls [`Engine::observe`] once per frame and
 //! reads [`Engine::snapshot`] to draw the HUD.
 //!
 //! Speech is abstracted by [`SpeechInput`] and [`SpeechOutput`]; `un-speech` provides
 //! sherpa-onnx implementations, and the test doubles in [`doubles`] drive a lesson
 //! without audio.
 
-pub mod chat;
 pub mod doubles;
 pub mod speech;
 
@@ -25,7 +24,6 @@ use un_core::strategy::{
 };
 use un_core::{NumberParser, TableState};
 
-pub use chat::ChatModel;
 pub use speech::{CancelToken, NumberHeard, SpeechError, SpeechInput, SpeechOutput};
 
 /// How long a child counting aloud may be quiet before the sequence is taken as finished
@@ -97,9 +95,6 @@ pub struct EngineOptions {
     /// whatever the child says outside an answer window reaches the strategy as `Said`. It is
     /// closed only while the tutor speaks, so the tutor never hears itself.
     pub always_listen: bool,
-    /// The on-device language model for [`Effect::Chat`]; without one every request is
-    /// answered with `Replied(None)`.
-    pub chat: Option<Arc<dyn ChatModel>>,
 }
 
 /// The always-on microphone's state (see [`EngineOptions::always_listen`]).
@@ -194,7 +189,6 @@ struct State {
     show_number_pad: bool,
     always_show_number_pad: bool,
     last_observation: Option<TableObservation>,
-    finger_count: Option<u32>,
     /// When the tutor last finished a line: a count's quiet window starts after it.
     tutor_silent_at: Option<Instant>,
     /// Whether the microphone currently picks up sound, as last told to the strategy.
@@ -234,11 +228,6 @@ struct Inner {
     mic_cv: Condvar,
     /// Utterances from the always-on microphone for the strategy's listen in progress.
     utterances: (Sender<String>, Receiver<String>),
-    /// The chat request in flight, cancelled by a newer one.
-    chat_token: Mutex<Option<Arc<CancelToken>>>,
-    /// The language model is writing an answer.
-    thinking: AtomicBool,
-    chat_generation: AtomicU64,
 }
 
 /// Runs one lesson session.
@@ -276,7 +265,6 @@ impl Engine {
                 show_number_pad: false,
                 always_show_number_pad: always,
                 last_observation: None,
-                finger_count: None,
                 tutor_silent_at: None,
                 sound: None,
                 sound_heard_at: None,
@@ -290,9 +278,6 @@ impl Engine {
             mic: Mutex::new(Mic::default()),
             mic_cv: Condvar::new(),
             utterances: unbounded(),
-            chat_token: Mutex::new(None),
-            thinking: AtomicBool::new(false),
-            chat_generation: AtomicU64::new(0),
         });
         Self { inner, worker: Mutex::new(None), effects_rx: Mutex::new(Some(rx)) }
     }
@@ -371,9 +356,6 @@ impl Engine {
             token.cancel();
         }
         self.inner.mic_cv.notify_all();
-        if let Some(token) = self.inner.chat_token.lock().take() {
-            token.cancel();
-        }
         if let Some(speech_in) = &self.inner.speech_in {
             speech_in.stop();
         }
@@ -402,7 +384,7 @@ impl Engine {
         self.inner.dispatch(Event::Heard(number));
     }
 
-    /// A number arrived from any other input (a platform's own hand tracker, a test).
+    /// A number arrived from any other input (a test).
     pub fn heard(&self, number: u32) {
         self.inner.cancel_listening();
         self.inner.dispatch(Event::Heard(number));
@@ -411,14 +393,7 @@ impl Engine {
     // ------------------------------------------------------------------ perception
 
     pub fn observe(&self, state: &TableState) {
-        let observation = TableObservation {
-            count: state.cube_count,
-            hands_present: state.hands_present,
-            is_stable: state.is_stable,
-            finger_count: state.finger_count,
-            groups: state.groups,
-            pointed_at: state.pointed_at,
-        };
+        let observation = TableObservation { count: state.cube_count, is_stable: state.is_stable, groups: state.groups };
         self.observe_table(observation);
     }
 
@@ -426,7 +401,6 @@ impl Engine {
         self.inner.sense_sound();
         {
             let mut state = self.inner.state.lock();
-            state.finger_count = observation.finger_count;
             if state.last_observation == Some(observation) {
                 return;
             }
@@ -452,12 +426,6 @@ impl Engine {
             mic_level: self.inner.speech_in.as_ref().map(|s| s.level()).unwrap_or(0.0),
             heard_text: self.inner.speech_in.as_ref().map(|s| s.last_transcript()).unwrap_or_default(),
         }
-    }
-
-    /// The language model is writing an answer: a phone can rest its object detector meanwhile
-    /// (the child is talking, not laying out), which gives the model the GPU.
-    pub fn is_thinking(&self) -> bool {
-        self.inner.thinking.load(Ordering::SeqCst)
     }
 
     /// The strategy's own view, for tests and logs.
@@ -623,57 +591,8 @@ impl Inner {
                     self.start_timer(&mut state, token, seconds);
                 }
             }
-            Effect::Chat(prompt) => self.chat(prompt),
             Effect::CancelTimer(_) | Effect::StopListening => {}
         }
-    }
-
-    // ------------------------------------------------------------------ chat
-
-    /// Runs a chat request on its own thread; the answer comes back as `Replied`.
-    fn chat(&self, prompt: un_core::strategy::ChatPrompt) {
-        let Some(model) = self.options.chat.clone() else {
-            self.log("chat: no language model; the script goes on");
-            self.dispatch(Event::Replied(None));
-            return;
-        };
-        self.log(&format!("chat: asking ({} turns)", prompt.turns.len()));
-        let token = Arc::new(CancelToken::new(self.chat_generation.fetch_add(1, Ordering::SeqCst) + 1));
-        if let Some(older) = self.chat_token.lock().replace(Arc::clone(&token)) {
-            older.cancel();
-        }
-        let this = self.arc();
-        self.thinking.store(true, Ordering::SeqCst);
-        thread::Builder::new()
-            .name("un-chat".into())
-            .spawn(move || {
-                let started = Instant::now();
-                let result = model.reply(&prompt, &token);
-                let current = this.chat_token.lock().as_ref().is_some_and(|t| Arc::ptr_eq(t, &token));
-                if current {
-                    this.thinking.store(false, Ordering::SeqCst);
-                }
-                if token.is_cancelled() {
-                    this.log("chat: replaced by a newer request");
-                    return;
-                }
-                let seconds = started.elapsed().as_secs_f64();
-                match result {
-                    Ok(text) if !text.trim().is_empty() => {
-                        this.log(&format!("chat ({seconds:.1} s): {}", text.trim()));
-                        this.dispatch(Event::Replied(Some(text.trim().to_string())));
-                    }
-                    Ok(_) => {
-                        this.log(&format!("chat ({seconds:.1} s): empty answer"));
-                        this.dispatch(Event::Replied(None));
-                    }
-                    Err(error) => {
-                        this.log(&format!("chat failed: {error}"));
-                        this.dispatch(Event::Replied(None));
-                    }
-                }
-            })
-            .expect("spawn");
     }
 
     // ------------------------------------------------------------------ the always-on microphone
@@ -827,10 +746,6 @@ impl Inner {
                     .expect("spawn");
             }
         }
-        if mode == ListenMode::VoiceOrFingers {
-            let token = Arc::clone(&token);
-            thread::Builder::new().name("un-fingers".into()).spawn(move || this.watch_fingers(token)).expect("spawn");
-        }
     }
 
     /// Tells the strategy when the microphone starts or stops picking up sound. Called on the
@@ -953,25 +868,6 @@ impl Inner {
                     self.log(&format!("{kind} ({error})"));
                     self.finish_listening(Some(&token), false);
                     self.dispatch(Event::NothingHeard);
-                    return;
-                }
-            }
-        }
-    }
-
-    fn watch_fingers(&self, token: Arc<CancelToken>) {
-        let mut candidate: Option<u32> = None;
-        let mut since = Instant::now();
-        while !token.wait(Duration::from_millis(100)) {
-            let fingers = self.state.lock().finger_count;
-            if fingers != candidate {
-                candidate = fingers;
-                since = Instant::now();
-            } else if let Some(fingers) = fingers {
-                if since.elapsed() > Duration::from_millis(1500) {
-                    self.log(&format!("fingers: {fingers}"));
-                    self.finish_listening(Some(&token), false);
-                    self.dispatch(Event::Heard(fingers));
                     return;
                 }
             }

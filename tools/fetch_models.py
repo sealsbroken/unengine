@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
 """Download the models Un needs into models/. Works on macOS, Windows and Linux; standard library only.
 
-    python3 tools/fetch_models.py             # hand landmarks (palm detector + landmark model, 15 MB)
-    python3 tools/fetch_models.py --speech    # + recognisers, VAD and voices for EN and RU (~400 MB)
-    python3 tools/fetch_models.py --speech --language en
+    python3 tools/fetch_models.py             # recognisers, VAD and voices for EN and RU (~400 MB)
+    python3 tools/fetch_models.py --language en
     python3 tools/fetch_models.py --whisper small    # better recogniser for both languages (~250 MB)
-    python3 tools/fetch_models.py --llm       # the language model for the tutor's free answers (1.1 GB)
     python3 tools/fetch_models.py --dest /path/to/models
 
 Sources (all Apache-2.0 / MIT):
-  hand models: PINTO0309's ONNX conversion of MediaPipe Hands (palm detection with
-               post-processing, hand landmark "sparse"), github.com/PINTO0309/hand-gesture-recognition-using-onnx
   recognisers: sherpa-onnx Zipformer transducers (k2-fsa) and Silero VAD
   voices:      Piper voices packaged for sherpa-onnx (with espeak-ng-data), from the sherpa-onnx tts-models release
-  chat:        Qwen3 1.7B (Apache-2.0), 4-bit GGUF from unsloth on Hugging Face
 
 The object detector is produced by tools/export_detector.py (it needs training weights).
 """
@@ -29,11 +24,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-PINTO = "https://github.com/PINTO0309/hand-gesture-recognition-using-onnx/raw/main/model"
-HAND_MODELS = {
-    "palm_detection.onnx": f"{PINTO}/palm_detection/palm_detection_full_inf_post_192x192.onnx",
-    "hand_landmark.onnx": f"{PINTO}/hand_landmark/hand_landmark_sparse_Nx3x224x224.onnx",
-}
 SHERPA_ASR = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
 SHERPA_TTS = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
 RECOGNIZERS = {"en": "sherpa-onnx-zipformer-small-en-2023-06-26", "ru": "sherpa-onnx-zipformer-ru-int8-2025-04-20"}
@@ -41,12 +31,6 @@ VOICES = {"en": "vits-piper-en_US-lessac-medium", "ru": "vits-piper-ru_RU-irina-
 # Whisper hears short answers far better than the small Zipformers and covers both languages;
 # the engine prefers it whenever one of these directories is present.
 WHISPER_SIZES = ("tiny", "base", "small", "medium", "turbo")
-# The tutor's free answers: one sentence in about a second on an iPad with the camera running
-# (Qwen3 4B Instruct answers better but takes 8 to 11 s there).
-CHAT_MODEL = (
-    "qwen3-1.7b-q4_k_m.gguf",
-    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
-)
 
 
 def shown(path: Path) -> str:
@@ -90,11 +74,9 @@ def fetch_archive(url: str, folder: Path) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--speech", action="store_true", help="Also fetch speech recognition and synthesis models.")
+    parser.add_argument("--speech", action="store_true", help=argparse.SUPPRESS)  # always on; kept for old scripts
     parser.add_argument("--whisper", choices=WHISPER_SIZES, metavar="SIZE",
                         help="Also fetch a multilingual Whisper recogniser (tiny, base, small, medium, turbo).")
-    parser.add_argument("--llm", action="store_true",
-                        help="Also fetch the language model for the tutor's free answers (1.1 GB).")
     parser.add_argument("--language", nargs="+", choices=["en", "ru"], default=["en", "ru"],
                         help="Languages to fetch speech models for (default: both).")
     parser.add_argument("--dest", type=Path, default=ROOT / "models", help="Target directory (default: models/).")
@@ -103,21 +85,13 @@ def main() -> int:
     speech = models / "speech"
 
     ok = True
-    print("hand landmarks:")
-    for name, url in HAND_MODELS.items():
-        ok &= download(url, models / name, min_size=1_000_000)
-    if args.speech:
-        print("voice activity detection:")
-        ok &= download(f"{SHERPA_ASR}/silero_vad.onnx", speech / "silero_vad.onnx", min_size=100_000)
-        for lang in args.language:
-            print(f"{lang}: recogniser")
-            ok &= fetch_archive(f"{SHERPA_ASR}/{RECOGNIZERS[lang]}.tar.bz2", speech / RECOGNIZERS[lang])
-            print(f"{lang}: voice")
-            ok &= fetch_archive(f"{SHERPA_TTS}/{VOICES[lang]}.tar.bz2", speech / VOICES[lang])
-    if args.llm:
-        print("chat:")
-        name, url = CHAT_MODEL
-        ok &= download(url, models / "llm" / name, min_size=100_000_000)
+    print("voice activity detection:")
+    ok &= download(f"{SHERPA_ASR}/silero_vad.onnx", speech / "silero_vad.onnx", min_size=100_000)
+    for lang in args.language:
+        print(f"{lang}: recogniser")
+        ok &= fetch_archive(f"{SHERPA_ASR}/{RECOGNIZERS[lang]}.tar.bz2", speech / RECOGNIZERS[lang])
+        print(f"{lang}: voice")
+        ok &= fetch_archive(f"{SHERPA_TTS}/{VOICES[lang]}.tar.bz2", speech / VOICES[lang])
     if args.whisper:
         name = f"sherpa-onnx-whisper-{args.whisper}"
         ok &= fetch_archive(f"{SHERPA_ASR}/{name}.tar.bz2", speech / name)

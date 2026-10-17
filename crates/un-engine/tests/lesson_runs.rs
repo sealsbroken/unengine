@@ -17,7 +17,7 @@ fn cubes(count: u32) -> Vec<Detection> {
 fn settle(engine: &Engine, estimator: &mut TableStateEstimator, count: u32, clock: &mut f64) {
     for _ in 0..40 {
         *clock += 1.0 / 30.0;
-        engine.observe(&estimator.ingest(&cubes(count), &[], *clock));
+        engine.observe(&estimator.ingest(&cubes(count), *clock));
     }
 }
 
@@ -84,47 +84,6 @@ fn missing_microphone_falls_back_to_number_pad() {
     assert!(!snap.speech_available);
     assert!(snap.show_number_pad);
     assert!(snap.warning.unwrap().contains("number pad"));
-    engine.close();
-}
-
-#[test]
-fn nothing_heard_escalates_and_fingers_answer() {
-    let config = SessionConfig { answer_timeout: 10.0, seed: 1, ..Default::default() };
-    // Two listens time out at once; the third (voice or fingers) waits the full 10 s.
-    let timeout = || Err(un_engine::SpeechError::Timeout { last_transcript: None });
-    let speech_in = Arc::new(ScriptedSpeechInput::with_script(vec![timeout(), timeout()], Duration::ZERO));
-    let engine = Engine::new(
-        Box::new(DemoStrategy::new(config.clone())),
-        config,
-        Some(speech_in),
-        Arc::new(SilentSpeechOutput::new(false)),
-        EngineOptions { chime: false, always_show_number_pad: false, log: Some(Arc::new(|_| {})), ..Default::default() },
-    );
-    let mut estimator = TableStateEstimator::new(EstimatorConfig::default());
-    let mut clock = 0.0;
-    engine.start();
-    settle(&engine, &mut estimator, 2, &mut clock);
-    assert!(wait_for(|| engine.phase() == PhaseKind::Asking, Duration::from_secs(5)));
-    // Two timeouts later the engine listens for voice or fingers; hold up two fingers for 1.5 s.
-    assert!(wait_for(
-        || engine.snapshot().status.listen_mode == Some(un_core::strategy::ListenMode::VoiceOrFingers),
-        Duration::from_secs(5)
-    ));
-    let fingers = Instant::now();
-    while fingers.elapsed() < Duration::from_millis(2500) && engine.strategy_snapshot().correct == 0 {
-        clock += 1.0 / 30.0;
-        let hand = un_core::HandObservation {
-            chirality: un_core::Chirality::Right,
-            joints: Default::default(),
-            joint_confidences: Default::default(),
-            raised_finger_count: Some(2),
-            bbox: Some(Box2::new(0.4, 0.4, 0.6, 0.7)),
-            score: 1.0,
-        };
-        engine.observe(&estimator.ingest(&cubes(2), &[hand], clock));
-        std::thread::sleep(Duration::from_millis(30));
-    }
-    assert_eq!(engine.strategy_snapshot().correct, 1);
     engine.close();
 }
 
@@ -293,8 +252,8 @@ fn counting_that_stops_short_is_delivered_after_the_gap() {
     assert!(started.elapsed() >= un_engine::COUNTING_GAP);
 }
 
-/// Greets, then: words become a chat request, the model's answer is said; `ask` also opens a
-/// voice listen after the greeting.
+/// Greets, then answers any words with a scripted line; `ask` also opens a voice listen after
+/// the greeting.
 struct Chatty {
     events: Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>,
     ask: bool,
@@ -302,18 +261,12 @@ struct Chatty {
 
 impl un_core::strategy::Strategy for Chatty {
     fn handle(&mut self, event: un_core::strategy::Event) -> Vec<un_core::strategy::Effect> {
-        use un_core::strategy::{ChatPrompt, ChatTurn, Effect, Event, ListenMode};
+        use un_core::strategy::{Effect, Event, ListenMode};
         self.events.lock().push(event.clone());
         match event {
             Event::Start if self.ask => vec![Effect::Say("How many?".into()), Effect::listen(ListenMode::Voice, 5.0)],
             Event::Start => vec![Effect::Say("Hello there.".into())],
-            Event::Said(text) => vec![Effect::Chat(ChatPrompt {
-                system: "You are Amber.".into(),
-                turns: vec![ChatTurn { child: true, text }],
-                max_tokens: 40,
-                sentences: 1,
-            })],
-            Event::Replied(Some(text)) => vec![Effect::Say(text)],
+            Event::Said(_) => vec![Effect::Say("I like blue.".into())],
             _ => vec![],
         }
     }
@@ -335,7 +288,6 @@ impl un_core::strategy::Strategy for Chatty {
 fn chatty_engine(
     lines: Vec<&str>,
     ask: bool,
-    chat: Option<Arc<un_engine::doubles::ScriptedChat>>,
 ) -> (Engine, Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>, Arc<SilentSpeechOutput>) {
     let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let speech_in =
@@ -346,46 +298,29 @@ fn chatty_engine(
         SessionConfig::default(),
         Some(speech_in),
         speech_out.clone(),
-        EngineOptions {
-            log: Some(Arc::new(|_| {})),
-            always_listen: true,
-            chat: chat.map(|c| c as Arc<dyn un_engine::ChatModel>),
-            ..Default::default()
-        },
+        EngineOptions { log: Some(Arc::new(|_| {})), always_listen: true, ..Default::default() },
     );
     (engine, events, speech_out)
 }
 
 #[test]
-fn an_open_microphone_hears_the_child_outside_any_listen_and_the_model_answers() {
+fn an_open_microphone_hears_the_child_outside_any_listen() {
     use un_core::strategy::Event;
-    let chat = Arc::new(un_engine::doubles::ScriptedChat::new("I like blue.", Duration::from_millis(50)));
-    let (engine, events, speech_out) = chatty_engine(vec!["what is your favourite colour"], false, Some(Arc::clone(&chat)));
+    let (engine, events, speech_out) = chatty_engine(vec!["what is your favourite colour"], false);
     engine.start();
     // No listen was ever asked for: the always-on microphone heard it anyway.
     assert!(wait_for(|| speech_out.spoken_joined().contains("I like blue."), Duration::from_secs(5)));
     assert!(events.lock().contains(&Event::Said("what is your favourite colour".into())));
-    assert_eq!(chat.prompts.lock()[0].turns[0].text, "what is your favourite colour");
     engine.close();
 }
 
 #[test]
 fn an_answer_window_still_takes_the_number_with_the_microphone_always_open() {
     use un_core::strategy::Event;
-    let (engine, events, _) = chatty_engine(vec!["three"], true, None);
+    let (engine, events, _) = chatty_engine(vec!["three"], true);
     engine.start();
     assert!(wait_for(|| events.lock().contains(&Event::Heard(3)), Duration::from_secs(5)));
     assert!(!events.lock().iter().any(|e| matches!(e, Event::Said(_))));
-    engine.close();
-}
-
-#[test]
-fn without_a_model_a_chat_request_gets_no_answer() {
-    use un_core::strategy::Event;
-    let (engine, events, speech_out) = chatty_engine(vec!["tell me a story"], false, None);
-    engine.start();
-    assert!(wait_for(|| events.lock().contains(&Event::Replied(None)), Duration::from_secs(5)));
-    assert_eq!(speech_out.spoken_texts(), vec!["Hello there."]);
     engine.close();
 }
 

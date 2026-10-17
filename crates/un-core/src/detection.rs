@@ -22,7 +22,7 @@ impl Detection {
     }
 
     /// Labels starting with `_` are decoys: things the detector is taught to recognise only so
-    /// that they are *not* mistaken for objects (the keyboard, a hand). They are never counted.
+    /// that they are *not* mistaken for objects (the keyboard, a hand, a finger). They are never counted.
     pub fn is_decoy(&self) -> bool {
         self.label.as_deref().is_some_and(|l| l.starts_with('_'))
     }

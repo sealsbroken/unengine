@@ -180,13 +180,8 @@ impl UnApp {
                 (SourceSpec::Simulated(Arc::clone(&table)), Some(table))
             }
         };
-        let config = PerceptionConfig {
-            detector: s.detector.clone(),
-            hands: true,
-            mirrored: s.mirror,
-            estimator: EstimatorConfig::default(),
-            ..Default::default()
-        };
+        let config =
+            PerceptionConfig { detector: s.detector.clone(), estimator: EstimatorConfig::default(), ..Default::default() };
         let worker = Worker::start(self.paths.clone(), source, config);
         self.live = Some(Live {
             worker,
@@ -348,19 +343,9 @@ impl UnApp {
     fn live_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let paths_models = self.paths.root.display().to_string();
         let Some(live) = &mut self.live else { return };
-        let (frame, state, tracked, hands, fingers, fps, error, serial, hands_enabled) = {
+        let (frame, state, tracked, fps, error, serial) = {
             let l = live.worker.latest.lock();
-            (
-                l.frame.clone(),
-                l.state.clone(),
-                l.tracked.clone(),
-                l.hands.clone(),
-                l.fingers.clone(),
-                l.fps,
-                l.error.clone(),
-                l.frame_serial,
-                l.hands_enabled,
-            )
+            (l.frame.clone(), l.state.clone(), l.tracked.clone(), l.fps, l.error.clone(), l.frame_serial)
         };
         if let Some(error) = error {
             self.error = Some(format!("{error} (models: {paths_models})"));
@@ -437,11 +422,8 @@ impl UnApp {
                     if state.is_stable { overlay::GREEN } else { Color32::LIGHT_GRAY },
                     format!("count: {text}   seen now: {}   groups: {}", state.raw_count, state.groups),
                 );
-                if let Some(f) = state.finger_count {
-                    ui.label(format!("fingers: {f}"));
-                }
             }
-            ui.label(format!("{fps:.0} fps{}", if hands_enabled { "" } else { "  (hand models missing)" }));
+            ui.label(format!("{fps:.0} fps"));
             // The tutor's language, as on the phone's HUD; a running lesson starts over in the
             // new one, since a session's language is fixed when it is created.
             let before = self.setup.language;
@@ -501,8 +483,6 @@ impl UnApp {
         if let Some(state) = &state {
             overlay::draw_detections(&painter, &map, state, &tracked, snapshot.as_ref().and_then(|s| s.highlight_count));
         }
-        overlay::draw_fingers(&painter, &map, &fingers);
-        overlay::draw_hands(&painter, &map, &hands);
 
         // Tutor HUD.
         if let Some(snap) = &snapshot {

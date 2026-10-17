@@ -21,7 +21,7 @@ pub struct TrackedDetection {
 pub struct TrackerConfig {
     pub min_hits: u32,
     /// Frames a numbered object survives unseen: long enough (about a second and a half at
-    /// camera rate) for a finger resting on it while a number is said.
+    /// camera rate) for a hand passing over it.
     pub max_missed: u32,
     pub max_distance: f32,
 }
@@ -58,7 +58,7 @@ impl DetectionTracker {
     }
 
     /// Every numbered object with its last box, including those missed for a few frames
-    /// (a finger on an object may hide it from the detector).
+    /// (a hand passing over an object may hide it from the detector).
     pub fn numbered(&self) -> Vec<(u32, Box2)> {
         let mut live: Vec<(u64, Box2)> = self.tracks.iter().filter_map(|t| t.serial.map(|s| (s, t.bbox))).collect();
         live.sort_by_key(|(serial, _)| *serial);

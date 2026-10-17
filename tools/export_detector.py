@@ -7,9 +7,8 @@ Three kinds of detector:
 
 * Zero-shot YOLOE (default): object types are text prompts baked into the model. Each --class is
   ``label=prompt[,prompt...]``; labels starting with ``_`` are decoys (things the camera sees that
-  must not be counted, e.g. the laptop keyboard) and are dropped by the engine after NMS. The
-  label ``finger`` is special too: the engine shows those boxes but never counts them, so the
-  child can point at an object without the finger becoming one.
+  must not be counted, e.g. the laptop keyboard, a hand or a finger) and are dropped by the engine
+  after NMS.
 * Any Ultralytics detector with no --class: your own trained weights (``--model best.pt``, see
   tools/teach.py). RT-DETR weights (``--model rtdetr-l.pt``) export with
   the ``rtdetr`` head.
@@ -20,7 +19,7 @@ detectors (RT-DETR, D-FINE, YOLOX) or your own training pipeline.
 
     python3 tools/export_detector.py                      # models/toys.onnx: every toy kind below
     python3 tools/export_detector.py --name cars --class "car=toy car,toy truck" \
-        --class "finger=finger,index finger,fingertip,pointing finger" --class "_hand=hand"
+        --class "_finger=finger,index finger,fingertip" --class "_hand=hand"
 """
 
 from __future__ import annotations
@@ -44,9 +43,8 @@ DEFAULT_CLASSES = [
     "animal=toy animal,plastic animal,toy dinosaur,animal figurine,stuffed animal,plush toy",
     # Catch-all: a toy none of the kinds above names.
     "toy=toy,small toy,plastic toy",
-    # Shown over the picture, never counted: the child points with it.
-    "finger=finger,index finger,fingertip,pointing finger",
-    # Decoys: soak up boxes on things that are always in view.
+    # Decoys: soak up boxes on things that are always in view, so they never become toys.
+    "_finger=finger,index finger,fingertip,pointing finger",
     "_keyboard=laptop keyboard,computer keyboard,trackpad",
     "_hand=hand",
 ]

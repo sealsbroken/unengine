@@ -297,7 +297,7 @@ impl Detector {
         Ok(self.detect_all(frame)?.into_iter().filter(|d| !d.is_decoy()).collect())
     }
 
-    /// Every detection, decoys included (a `_hand` decoy is never counted but seeds the hand landmarks).
+    /// Every detection, decoys included (a `_hand` or `_finger` decoy is never counted).
     pub fn detect_all(&mut self, frame: &RgbFrame) -> Result<Vec<Detection>, VisionError> {
         let fit = Letterbox::fit(frame.width, frame.height, self.input_w, self.input_h);
         frame.write_planar(&mut self.buffer, self.input_w, self.input_h, fit.scale, fit.pad_x, fit.pad_y, [PAD_VALUE; 3]);

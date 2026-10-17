@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Un for macOS, Windows and Linux: the camera watches the table, the tutor talks, the child answers by voice, fingers or taps. Library plus a binary that ships the demo lesson."
+description = "Un for macOS, Windows and Linux: the camera watches the table, the tutor talks, the child answers by voice or taps. Library plus a binary that ships the demo lesson."
 
 [lib]
 name = "un_desktop"
@@ -20,8 +20,6 @@ default = []
 coreml = ["un-app/coreml"]
 cuda = ["un-app/cuda"]
 directml = ["un-app/directml"]
-llm = ["un-app/llm"]
-metal = ["llm", "un-app/metal"]
 
 [dependencies]
 un-core.workspace = true

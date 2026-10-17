@@ -20,8 +20,6 @@ default = []
 coreml = ["un-app/coreml"]
 cuda = ["un-app/cuda"]
 directml = ["un-app/directml"]
-llm = ["un-app/llm"]
-metal = ["llm", "un-app/metal"]
 
 [dependencies]
 un-core.workspace = true

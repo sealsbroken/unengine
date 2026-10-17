@@ -1,7 +1,7 @@
 # Un
 
 The open engine behind Unnumberium: a camera looks at the table, recognises and counts the
-toys on it and the child's fingers, and a tutor talks about what it sees, listens to the
+toys on it, and a tutor talks about what it sees, listens to the
 spoken answer and adapts. One Rust core on **macOS, Windows, Linux, iOS and Android**;
 everything runs on the device and nothing leaves it.
 
@@ -16,19 +16,17 @@ stays open and relinkable (see [Licence](#licence)).
 
 | Path | What |
 |---|---|
-| `crates/un-core` | Pure, platform-independent: geometry, detections, hand joints and finger counting, the debounced table state and object numbering, languages and numerals, the forgiving number parser, and the **strategy interface**. Fully unit-tested. |
-| `crates/un-engine` | The lesson runtime: runs a strategy against perception, speech and taps; owns timers, listening, the finger watcher and the HUD snapshot. Speech is behind traits. A listen in `ListenMode::Counting` collects the numbers of a count said aloud across the child's pauses (every recogniser cuts an utterance at a pause), reporting each utterance as `Event::Counted` and the whole sequence as `Event::Numbers` once the child has been quiet for five seconds after the last number or the tutor's last word, or for a beat and a half after the sequence reached the expected answer. |
-| `crates/un-vision` | ONNX Runtime (`ort`): object detector (Ultralytics raw heads, end-to-end rows, RT-DETR rows) and MediaPipe-style hand landmarks (palm detection + 21 landmarks, converted to ONNX). |
-| `crates/un-llm` | llama.cpp: the on-device language model behind `Effect::Chat`, the tutor's answers to whatever the child says outside the lesson's script. The strategy writes the master prompt; the engine runs the model on its own thread and answers with `Event::Replied`. Nothing runs while the lesson keeps to its script: the model loads on the first request, stays loaded for the process, and keeps its context between answers so the master prompt is read once. |
-| `crates/un-speech` | sherpa-onnx: an always-on microphone (Silero VAD, Whisper or the small Zipformer recognisers) so an answer is heard the moment the tutor stops talking, Piper voices for the tutor, an optional "listen now" chime, and a round-trip self-test. |
+| `crates/un-core` | Pure, platform-independent: geometry, detections, the debounced table state and object numbering, languages and numerals, the forgiving number parser, and the **strategy interface**. Fully unit-tested. |
+| `crates/un-engine` | The lesson runtime: runs a strategy against perception, speech and taps; owns timers, listening and the HUD snapshot. Speech is behind traits. A listen in `ListenMode::Counting` collects the numbers of a count said aloud across the child's pauses (every recogniser cuts an utterance at a pause), reporting each utterance as `Event::Counted` and the whole sequence as `Event::Numbers` once the child has been quiet for five seconds after the last number or the tutor's last word, or for a beat and a half after the sequence reached the expected answer. |
+| `crates/un-vision` | ONNX Runtime (`ort`): object detector (Ultralytics raw heads, end-to-end rows, RT-DETR rows). |
 | `crates/un-media` | Desktop camera capture (AVFoundation, Media Foundation, V4L2) and image files. |
 | `crates/un-app` | Assembles a session: finds models, builds speech in/out, runs perception, simulated table. |
 | `crates/un-cli` | `un`: headless counting and lessons, the speech self-test, camera and strategy listing. |
 | `crates/un-ffi` | UniFFI bindings for Swift and Kotlin: sessions, snapshots, the shared vision, and callback interfaces for platform speech. |
 | `apps/desktop` | The desktop window (egui): camera view with overlay, tutor HUD, number pad. A library plus a binary that ships the demo lesson. |
-| `apps/ios`, `apps/android` | SwiftUI and Compose shells over `un-ffi`: the phone's camera and speech APIs, the shared engine. The iOS screen is the reference: the tutor's line and status, the camera picture with the overlay (objects, numbers, the finger's ring, fingers, hand skeletons), the number pad, start/end, repeat, skip and the EN/RU switch; Android and the desktop's live view carry the same controls. |
+| `apps/ios`, `apps/android` | SwiftUI and Compose shells over `un-ffi`: the phone's camera and speech APIs, the shared engine. The iOS screen is the reference: the tutor's line and status, the camera picture with the overlay (toys and their numbers), the number pad, start/end, repeat, skip and the EN/RU switch; Android and the desktop's live view carry the same controls. |
 | `strategies/demo` | The smallest strategy: "how many are on the table?" |
-| `tools/` | `fetch_models.py` (hand, speech models), `export_detector.py` (export a detector), `teach.py` (fine-tune on `un collect` frames). |
+| `tools/` | `fetch_models.py` (speech models), `export_detector.py` (export a detector), `teach.py` (fine-tune on `un collect` frames). |
 | `docs/architecture.md` | Design, the strategy boundary, and the per-platform feasibility matrix. |
 
 ## Setup
@@ -36,8 +34,7 @@ stays open and relinkable (see [Licence](#licence)).
 Rust 1.92+ (`rustup`), Python 3 for the model tools. On Linux: `libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libgtk-3-dev`.
 
 ```sh
-python3 tools/fetch_models.py --speech     # hand models (15 MB) + EN/RU recognisers, VAD and voices (~400 MB)
-python3 tools/fetch_models.py --llm        # the tutor's language model, Qwen3 1.7B (1.1 GB)
+python3 tools/fetch_models.py              # EN/RU recognisers, VAD and voices (~400 MB)
 cargo build --release --workspace
 cargo run --release -p un-cli -- check-speech --language ru   # the voice says "три", the recogniser hears it
 ```
@@ -52,9 +49,7 @@ text prompts are baked into the model. `tools/export_detector.py` with no argume
 `models/toys.onnx` plus its `.json` sidecar; it is the detector every app and the CLI load by
 default. The model input is a 960×960 square: phones and tablets send portrait frames, desktop
 cameras landscape, and toys a tenth of the frame wide score about 0.8 at 960 against 0.3 at
-640. On iPhone and iPad the detector runs on CoreML (about 80 ms a frame with the hands on an
-iPad mini); the hand landmark model stays on the CPU, and with no hand in view a new one is
-looked for only every third frame. The kinds of toy and their prompts:
+640. On iPhone and iPad the detector runs on CoreML. The kinds of toy and their prompts:
 
 | Label | Prompts | Said as |
 |---|---|---|
@@ -70,32 +65,9 @@ Detection is class-agnostic after the head (one box per toy, whichever kind scor
 "how many toys?" counts every kind together and "how many cars?" counts one. Add or narrow
 kinds with `--class label=prompt,prompt` (repeat per kind) and `--name`.
 
-Two labels are special: labels starting with `_` are decoys (recognised so that a keyboard or a
-hand never becomes a toy, then dropped), and `finger` is shown over the picture but never
-counted.
-
-Only the **index finger** points. Its tip comes from MediaPipe's hand landmarks (joint 8), which
-tell it from the thumb and the other fingers. It counts only when the landmarks show a pointing index finger:
-stretched out, straight from its knuckle, and its tip clearly apart from the thumb's, so a thumb
-the model took for the index finger, or a fist, points at nothing. A child's hand reaching over a table filmed from
-above often has its palm out of the picture, where MediaPipe's palm detector finds nothing, so a
-new hand is found from the toy detector's own `_hand` and `finger` boxes instead (kept down to
-a confidence of 0.1 for this): each box is turned so the fingers point away from the frame edge
-the hand comes in from (the other three turns are tried too), the landmark model runs on it,
-and the crop is refined once from its own landmarks; from then on the hand is tracked from
-frame to frame as in MediaPipe. The palm detector is only loaded for a detector without hand
-labels. A toy is touched when the index fingertip lies within its box grown by a third of its
-size (the nearest centre when several), and the toy touched last time keeps its claim while the
-tip is still within its grown box, so a tip between two close toys does not flicker. A hand the
-detector is sure of keeps the table busy (the count waits for it to leave) even when its
-landmarks did not fit, but it never points.
-
-While any part of a hand is over the table (landmarks, or a hand or finger box from the detector
-at 0.15 or more) toys are not recognised anew: the count, the estimator and the overlay all see
-the toys' layout as it was (`un_core::freeze`): the numbered toys and their boxes
-from the last frame without a hand. A finger that splits a toy into two boxes, or a hand that hides
-one, changes nothing, and the fingertip is matched against the held boxes. When the hand leaves,
-tracking goes on, and the table settles again before anything is counted.
+Labels starting with `_` are decoys: `_keyboard`, `_hand` and `_finger` are recognised so that a
+keyboard, a hand or a finger never becomes a toy, then dropped. The engine has no hand or finger
+tracking: the child answers by voice (or the number pad), and the camera only counts toys.
 
 For a detector that is sure of *your* toys on *your* table, teach it: record auto-labelled
 frames with the CLI (the zero-shot model labels them), then fine-tune a small model and export:
@@ -118,21 +90,7 @@ window is open goes to it (numbers, a count), anything else reaches the strategy
 answers itself, except during a count, where the tutor's "good" overlaps the child's next
 number: then it stays open and the tutor's own words are taken out of the transcript.
 
-A strategy answers free speech with `Effect::Chat(ChatPrompt)`: its master prompt (who the
-tutor is, what the lesson is doing, what the camera sees, how to answer) and the conversation so
-far. The engine runs the language model (`crates/un-llm`, any instruction-tuned GGUF in
-`models/llm`) on its own thread, so speech, listening and timers never wait for it, and hands
-the answer back as `Event::Replied(Some(text))`; `None` when there is no model, it failed, or a
-newer request replaced it. The strategy decides whether to say it. Building with the model needs
-`cmake` (`brew install cmake`) and the `llm` feature (`metal` on Apple GPUs) of `un-app`,
-`un-ffi`, the CLI or the desktop app.
-
-Qwen3 1.7B at 4 bits answers in one sentence in about a second on an iPad mini with the camera
-running (half a second on an Apple laptop); the strategy asks for one sentence (`ChatPrompt::sentences`)
-and steers back to the task itself. Qwen3 4B Instruct 2507 answers better but took 8 to 11 s on the
-iPad (5 to 7 s with the camera off); Qwen2.5 1.5B and Vikhr 1.5B made things up; Qwen2.5 3B is not
-licensed for commercial use. While the model writes, `Engine::is_thinking` lets a phone rest its
-object detector, which gives the model the GPU.
+There is no language model: a strategy answers everything the child says from its own script.
 
 ## Run
 
@@ -176,12 +134,12 @@ A product is a binary (or a mobile library) that links the engine and its strate
 
 ## Platforms
 
-| | Camera | Detector + hands | Speech in | Speech out | UI |
+| | Camera | Detector | Speech in | Speech out | UI |
 |---|---|---|---|---|---|
 | macOS | nokhwa (AVFoundation) | `un-vision` (ORT CPU/CoreML) | sherpa-onnx | sherpa-onnx (Piper) | egui |
 | Windows | nokhwa (Media Foundation) | `un-vision` (ORT CPU/DirectML) | sherpa-onnx | sherpa-onnx | egui |
 | Linux | nokhwa (V4L2) | `un-vision` (ORT CPU) | sherpa-onnx | sherpa-onnx | egui |
-| iOS | AVFoundation (Swift) | `un-vision` via FFI, or Vision hand pose | Apple Speech or sherpa-onnx Swift | AVSpeechSynthesizer or Piper | SwiftUI |
+| iOS | AVFoundation (Swift) | `un-vision` via FFI | Apple Speech or sherpa-onnx Swift | AVSpeechSynthesizer or Piper | SwiftUI |
 | Android | CameraX (Kotlin) | `un-vision` via FFI (ORT CPU/NNAPI), or MediaPipe | Android SpeechRecognizer or sherpa-onnx Kotlin | Android TTS or Piper | Compose |
 
 See `docs/architecture.md` for the reasoning and the state of each shell.
@@ -197,9 +155,8 @@ cargo run -p un-cli -- check-speech
 
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it refers to in `LICENSE.GPL`). Third-party
 components: ONNX Runtime, `ort`, egui, nokhwa, cpal (MIT/Apache-2.0); sherpa-onnx, the
-Zipformer models and MediaPipe's hand models (Apache-2.0); Whisper and Silero VAD (MIT); the Piper voices' training data has its own terms (Irina's, from
+Zipformer models (Apache-2.0); Whisper and Silero VAD (MIT); the Piper voices' training data has its own terms (Irina's, from
 RHVoice, is marked "Unknown" in its model card; check before shipping it);
-llama.cpp and its Rust bindings (MIT); Qwen3 1.7B (Apache-2.0).
 
 The toy detector is not part of this repository and is under a different licence: YOLOE and
 everything exported or trained with Ultralytics (`models/toys.onnx`, models from `tools/teach.py`)

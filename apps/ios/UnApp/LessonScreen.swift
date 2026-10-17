@@ -81,37 +81,6 @@ final class LessonModel: ObservableObject {
         return "\(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
     }
 
-    #if DEBUG
-    /// Times every bundled language model on the tutor's master prompt, first with the camera and
-    /// its detector running, then with the camera stopped, so the console shows what the camera
-    /// costs the model. `UN_LLM_BENCH=1 UN_LLM=1 tools/ios.sh run`.
-    private func benchChat(modelsDir: String) {
-        let dir = URL(fileURLWithPath: modelsDir).appendingPathComponent("llm")
-        let models = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
-            .filter { $0.hasSuffix(".gguf") }.sorted().map { dir.appendingPathComponent($0).path }
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 3) { [weak self] in
-            for path in models {
-                FileHandle.standardError.write("bench: camera on\n".data(using: .utf8)!)
-                unmethod_bench_chat(path)
-            }
-            DispatchQueue.main.sync { self?.camera?.stop() }
-            for path in models {
-                FileHandle.standardError.write("bench: camera off\n".data(using: .utf8)!)
-                unmethod_bench_chat(path)
-            }
-            DispatchQueue.main.sync { self?.camera?.start() }
-            FileHandle.standardError.write("bench: done\n".data(using: .utf8)!)
-        }
-    }
-    #endif
-
-    /// The first `.gguf` in models/llm, if the app was built with one.
-    static func chatModel(in modelsDir: String) -> String? {
-        let dir = URL(fileURLWithPath: modelsDir).appendingPathComponent("llm")
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        return files.filter { $0.hasSuffix(".gguf") }.sorted().first.map { dir.appendingPathComponent($0).path }
-    }
-
     func start() {
         let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
         var config = defaultSessionConfig()
@@ -123,24 +92,20 @@ final class LessonModel: ObservableObject {
         #endif
         do {
             perception = try UnPerception(config: UnPerceptionConfig(
-                modelsDir: modelsDir, detector: "toys", confidence: 0.25, hands: true, countLabel: nil, mirrored: false, roi: nil))
+                modelsDir: modelsDir, detector: "toys", confidence: 0.25, countLabel: nil, roi: nil))
             let strategies = availableStrategies()
             let lesson = strategies.first { $0.id == "lesson-01" } ?? strategies.first
-            // The microphone stays open for the whole lesson, so the child can talk to the tutor
-            // at any time; what the script has no answer for goes to the bundled language model.
+            // The microphone stays open for the whole lesson, so the child can answer at any time.
             session = try UnSession(
                 strategyId: lesson?.id ?? "demo", config: config,
                 speechInput: AppleSpeechInput(), speechOutput: AppleSpeechOutput(), chime: true,
-                alwaysListen: true, chatModel: Self.chatModel(in: modelsDir))
+                alwaysListen: true)
         } catch {
             print("start failed: \(error)")
             return
         }
         camera = CameraSource { [weak self] y, uv, w, h, ys, uvs, t in
             guard let self, let perception = self.perception else { return }
-            // While the language model writes an answer the child is talking, not laying out:
-            // the detector rests and the model gets the GPU (about twice as fast).
-            if self.session?.isThinking() == true { return }
             let began = Date()
             let result = Result { try perception.processNv12(y: y, uv: uv, width: w, height: h, yStride: ys, uvStride: uvs, timestamp: t) }
             #if DEBUG
@@ -150,9 +115,7 @@ final class LessonModel: ObservableObject {
             if case .failure = result { Self.debugFrames += 1 }
             #endif
             if let state = try? result.get() {
-                self.session?.observe(
-                    count: state.count, handsPresent: state.handsPresent, isStable: state.isStable, fingerCount: state.fingerCount,
-                    groups: state.groups, pointedAt: state.pointedAt)
+                self.session?.observe(count: state.count, isStable: state.isStable, groups: state.groups)
                 Task { @MainActor in
                     self.table = state
                     self.frameSize = CGSize(width: CGFloat(w), height: CGFloat(h))
@@ -165,7 +128,7 @@ final class LessonModel: ObservableObject {
                     let lines = state.detections.map { d in
                         String(format: "%@ %.2f  %.3f %.3f %.3f %.3f", d.label ?? "-", d.confidence, d.bbox.x1, d.bbox.y1, d.bbox.x2, d.bbox.y2)
                     }
-                    let text = "t=\(t) fps=\(String(format: "%.1f", Double(Self.debugFrames) / t)) frame=\(w)x\(h) count=\(String(describing: state.count)) raw=\(state.rawCount) hands=\(state.hands.count)\n" + lines.joined(separator: "\n")
+                    let text = "t=\(t) fps=\(String(format: "%.1f", Double(Self.debugFrames) / t)) frame=\(w)x\(h) count=\(String(describing: state.count)) raw=\(state.rawCount)\n" + lines.joined(separator: "\n")
                     try? text.write(to: dir.appendingPathComponent("detections.txt"), atomically: true, encoding: .utf8)
                 }
                 #endif
@@ -173,9 +136,6 @@ final class LessonModel: ObservableObject {
         }
         camera?.start()
         session?.start()
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["UN_LLM_BENCH"] != nil { benchChat(modelsDir: modelsDir) }
-        #endif
         running = true
         // The phone lies on the table for minutes with nobody touching it: no auto-lock while
         // a lesson runs.

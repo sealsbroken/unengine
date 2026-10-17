@@ -103,20 +103,18 @@ impl Strategy for DemoStrategy {
                 vec![self.say(text)]
             }
             Event::Stop => self.finish(),
-            Event::Table(TableObservation { count: Some(count), is_stable: true, hands_present: false, .. }) => {
-                match self.phase {
-                    Phase::Waiting if count > 0 => {
-                        let mut effects = vec![Effect::CancelTimer(self.timer)];
-                        effects.extend(self.ask(count));
-                        effects
-                    }
-                    Phase::Asking { count: asked } if count != asked => {
-                        self.phase = Phase::Asking { count };
-                        vec![]
-                    }
-                    _ => vec![],
+            Event::Table(TableObservation { count: Some(count), is_stable: true, .. }) => match self.phase {
+                Phase::Waiting if count > 0 => {
+                    let mut effects = vec![Effect::CancelTimer(self.timer)];
+                    effects.extend(self.ask(count));
+                    effects
                 }
-            }
+                Phase::Asking { count: asked } if count != asked => {
+                    self.phase = Phase::Asking { count };
+                    vec![]
+                }
+                _ => vec![],
+            },
             Event::Table(_) => vec![],
             Event::Heard(answer) => {
                 let Phase::Asking { count } = self.phase else { return vec![] };
@@ -150,13 +148,12 @@ impl Strategy for DemoStrategy {
                 }
                 self.misses += 1;
                 let mode = match self.misses {
-                    1 => ListenMode::Voice,
-                    2 => ListenMode::VoiceOrFingers,
+                    1 | 2 => ListenMode::Voice,
                     _ => ListenMode::NumberPad,
                 };
                 let text = match self.language() {
-                    Language::English => "I didn't hear you. Say the number, show it with your fingers, or tap it.".to_string(),
-                    Language::Russian => "Мне не слышно. Скажи число, покажи на пальцах или нажми его.".to_string(),
+                    Language::English => "I didn't hear you. Say the number or tap it.".to_string(),
+                    Language::Russian => "Мне не слышно. Скажи число или нажми его.".to_string(),
                 };
                 vec![self.say(text), Effect::listen(mode, self.config.answer_timeout)]
             }
@@ -168,12 +165,7 @@ impl Strategy for DemoStrategy {
                 self.timer += 1;
                 vec![self.say(text), Effect::StartTimer { token: self.timer, seconds: self.config.nudge_interval }]
             }
-            Event::TimerFired(_)
-            | Event::Said(_)
-            | Event::Numbers(_)
-            | Event::Counted(_)
-            | Event::Sound(_)
-            | Event::Replied(_) => vec![],
+            Event::TimerFired(_) | Event::Said(_) | Event::Numbers(_) | Event::Counted(_) | Event::Sound(_) => vec![],
             Event::RepeatRequested => {
                 let mut effects = vec![];
                 if let Some(prompt) = self.last_prompt.clone() {
@@ -277,7 +269,7 @@ mod tests {
         s.handle(Event::Start);
         s.handle(Event::Table(TableObservation::stable(2)));
         assert_eq!(listens(&s.handle(Event::NothingHeard)), vec![ListenMode::Voice]);
-        assert_eq!(listens(&s.handle(Event::NothingHeard)), vec![ListenMode::VoiceOrFingers]);
+        assert_eq!(listens(&s.handle(Event::NothingHeard)), vec![ListenMode::Voice]);
         assert_eq!(listens(&s.handle(Event::NothingHeard)), vec![ListenMode::NumberPad]);
     }
 }

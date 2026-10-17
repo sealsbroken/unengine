@@ -8,16 +8,16 @@
           └──────────────────────────────────────────┬────────────────────────────────────────────────┘
                                                      │ Strategy trait + link-time registration
 ┌───────────────────────────────────────────── un (LGPL) ─────────────────────────────────────────────┐
-│ un-core ─ geometry, hands, estimator, tracker, language, numbers, strategy interface (pure)          │
-│ un-engine ─ effect queue, timers, listening, finger watcher, snapshot ─ SpeechInput/Output traits    │
-│ un-vision (ort) ─ detector, hand landmarks      un-speech (sherpa-onnx) ─ ASR, VAD, TTS, chime     │
+│ un-core ─ geometry, estimator, tracker, language, numbers, strategy interface (pure)                 │
+│ un-engine ─ effect queue, timers, listening, snapshot ─ SpeechInput/Output traits                    │
+│ un-vision (ort) ─ detector                      un-speech (sherpa-onnx) ─ ASR, VAD, TTS, chime     │
 │ un-app ─ model paths, speech setup, perception pipeline, simulated table, session builder           │
 │ un-media (desktop camera)   un-cli   apps/desktop (egui)   un-ffi (UniFFI) → apps/ios, apps/android │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 Frames are plain RGB8 (or NV12 from phones). Every platform produces one; the models and the
-state machines behind them are identical everywhere, so a count or a finger total means the
+state machines behind them are identical everywhere, so a count means the
 same thing on a laptop and on a phone.
 
 ## The strategy boundary
@@ -53,13 +53,7 @@ itself; this matters for third parties reusing the engine.)
 * **Detector**: an exported ONNX model, letterboxed to the model input, decoded from the raw head
   (Ultralytics one-to-many `[1, 4+nc, anchors]`, end-to-end rows `[1, K, 6]`, RT-DETR rows
   `[1, K, 4+nc]`), class-agnostic NMS, decoys (labels starting with `_`) dropped.
-* **Hands**: PINTO0309's ONNX conversion of MediaPipe Hands. Palm detection (192×192, post-processing
-  inside the graph) yields a rotated square region; the landmark model (224×224, batched) yields 21
-  joints, a presence score and handedness. Regions are carried from frame to frame from the previous
-  landmarks, with palm detection re-run periodically or when a hand is lost. Finger counting is the
-  geometric heuristic from the iOS app, so Vision (iOS) or MediaPipe Tasks (Android) can feed the same
-  `HandObservation` if a platform prefers its native tracker.
-* **Table state**: lower-median windows that commit after 0.7 s with no hand over the table; left/right
+* **Table state**: lower-median windows that commit after 0.7 s; left/right
   zones; overlap and midline ambiguity flags. Objects get stable 1…n numbers from a greedy tracker.
 
 ## Speech
@@ -74,7 +68,7 @@ itself; this matters for third parties reusing the engine.)
 
 | Platform | Status | Notes |
 |---|---|---|
-| macOS | runs | Verified: camera 25 fps with the detector + hands (M-series, CPU), speech self-test EN/RU. |
+| macOS | runs | Verified: camera 25 fps with the detector (M-series, CPU), speech self-test EN/RU. |
 | Windows | builds (cross-compiled with cargo-xwin) | nokhwa Media Foundation, cpal WASAPI, sherpa-onnx prebuilt; DirectML via the `directml` feature. |
 | Linux | builds | V4L2, ALSA; needs the dev packages listed in the README. |
 | iOS | shell scaffolded | `apps/ios`: AVFoundation camera → `UnPerception` (NV12), Apple speech adapters, SwiftUI screen. Needs `cargo build --target aarch64-apple-ios`, bindings generation and an Xcode run to validate. |

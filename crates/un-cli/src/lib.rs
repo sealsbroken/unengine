@@ -126,8 +126,6 @@ struct VisionArgs {
     /// Execution provider: cpu, coreml, cuda, directml, auto.
     #[arg(long, default_value = "cpu")]
     provider: String,
-    #[arg(long)]
-    no_hands: bool,
     /// Count only this label.
     #[arg(long, value_name = "LABEL")]
     count: Option<String>,
@@ -345,10 +343,8 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
                     detector: vision.model.clone(),
                     confidence: vision.conf,
                     provider,
-                    hands: !vision.no_hands,
                     count_label: vision.count.clone(),
                     estimator: estimator_config.clone(),
-                    mirrored: source.mirror,
                 },
             )
             .map_err(|e| anyhow!("{e}"))?,
@@ -404,9 +400,8 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
     };
 
     eprintln!(
-        "labels: {labels:?}  counting: {}  hands: {}  {}",
+        "labels: {labels:?}  counting: {}  {}",
         vision.count.as_deref().unwrap_or("all"),
-        perception.as_ref().map(|p| p.hands.is_some()).unwrap_or(false),
         session.as_ref().map(|s| format!("strategy: {}  speech: {}", s.options.strategy, s.speech_available)).unwrap_or_default()
     );
     if let Some(session) = &session {
@@ -415,45 +410,39 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
 
     let started = Instant::now();
     let mut last_tracked: Vec<TrackedDetection> = Vec::new();
-    let mut last_tips: Vec<(f32, f32)> = Vec::new();
     let mut processed = 0u32;
     let mut last_summary: Option<serde_json::Value> = None;
     let mut last_frame = None;
     let sim_period = Duration::from_millis(66);
     loop {
-        let (state, tracked, fingers) = match &mut frame_source {
+        let (state, tracked) = match &mut frame_source {
             Source::Sim(table) => {
                 std::thread::sleep(sim_period);
                 let out = Perception::process_detections(
                     &mut sim_estimator,
                     &mut sim_tracker,
                     &table.detections(),
-                    &[],
                     started.elapsed().as_secs_f64(),
-                    None,
                 );
-                (out.state, out.tracked, out.fingers)
+                (out.state, out.tracked)
             }
             Source::Camera(cam) => {
                 let Some((frame, t)) = cam.next_frame().map_err(|e| anyhow!("{e}"))? else { break };
                 let frame = if source.mirror { frame.flipped() } else { frame };
                 let out = perception.as_mut().unwrap().process(&frame, t).map_err(|e| anyhow!("{e}"))?;
                 last_frame = Some(frame);
-                (out.state, out.tracked, out.fingers)
+                (out.state, out.tracked)
             }
             Source::File(file) => {
                 let Some((frame, t)) = file.next_frame().map_err(|e| anyhow!("{e}"))? else { break };
                 let frame = if source.mirror { frame.flipped() } else { frame };
                 let out = perception.as_mut().unwrap().process(&frame, t).map_err(|e| anyhow!("{e}"))?;
                 last_frame = Some(frame);
-                (out.state, out.tracked, out.fingers)
+                (out.state, out.tracked)
             }
         };
         processed += 1;
         last_tracked = tracked.clone();
-        let tips: Vec<(f32, f32)> =
-            state.hands.iter().filter_map(|h| h.joints.get(&un_core::HandJoint::IndexTip).copied()).collect();
-        last_tips = tips.clone();
         if let Some(session) = &session {
             session.engine.observe(&state);
         }
@@ -464,10 +453,6 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
         let summary = serde_json::json!({
             "count": state.cube_count, "stable": state.is_stable, "raw": state.raw_count,
             "labels": per_label, "numbered": tracked.iter().map(|t| t.number).collect::<Vec<_>>(),
-            "hands": state.hands.len(), "fingers": state.finger_count,
-            "pointing": fingers.iter().map(|d| (d.confidence * 100.0).round() / 100.0).collect::<Vec<_>>(),
-            "pointed_at": state.pointed_at,
-            "tips": tips.iter().map(|(x, y)| [(x * 1000.0).round() / 1000.0, (y * 1000.0).round() / 1000.0]).collect::<Vec<_>>(),
         });
         if Some(&summary) != last_summary.as_ref() {
             let mut line = summary.clone();
@@ -492,10 +477,6 @@ fn run(paths: &ModelPaths, source: SourceArgs, vision: VisionArgs, lesson: Optio
         for t in &last_tracked {
             let b = &t.detection.bbox;
             frame.draw_rect(b.x1, b.y1, b.x2, b.y2, [80, 220, 120], 3);
-        }
-        // The index fingertips: a small red square each.
-        for (x, y) in &last_tips {
-            frame.draw_rect(x - 0.012, y - 0.007, x + 0.012, y + 0.007, [235, 40, 40], 4);
         }
         if let Some(roi) = perception.as_ref().and_then(|p| p.estimator.roi()) {
             frame.draw_rect(roi.x1, roi.y1, roi.x2, roi.y2, [255, 190, 60], 2);
