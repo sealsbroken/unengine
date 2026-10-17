@@ -197,7 +197,8 @@ cargo run -p un-cli -- check-speech
 
 LGPL-3.0-or-later (`LICENSE`, with the GPL text it refers to in `LICENSE.GPL`). Third-party
 components: ONNX Runtime, `ort`, egui, nokhwa, cpal (MIT/Apache-2.0); sherpa-onnx, the
-Zipformer models and MediaPipe's hand models (Apache-2.0); Whisper, Silero VAD and Piper voices (MIT);
+Zipformer models and MediaPipe's hand models (Apache-2.0); Whisper and Silero VAD (MIT); the Piper voices' training data has its own terms (Irina's, from
+RHVoice, is marked "Unknown" in its model card; check before shipping it);
 llama.cpp and its Rust bindings (MIT); Qwen3 1.7B (Apache-2.0).
 
 The toy detector is not part of this repository and is under a different licence: YOLOE and
@@ -207,3 +208,9 @@ combined work under the AGPL: its complete source, lessons included, must be off
 users (also over a network). A product that keeps its lessons closed needs either an Ultralytics
 Enterprise licence or a detector under a permissive licence (OmDet-Turbo, OWLv2, RF-DETR,
 D-FINE: Apache-2.0) exported to one of the supported heads.
+
+The desktop voice is not LGPL-compatible for closed products. The prebuilt sherpa-onnx library
+(`sherpa-onnx-c-api`, used by `un-speech` for Piper voices) contains espeak-ng, which is GPL-3.0:
+an app shipped with it is a combined work under the GPL, lessons included. The mobile libraries
+leave `un-speech` out and use the platform's speech, so they are not affected. A closed desktop
+product needs the system voice instead of Piper, or the voice in a separate GPL process.
