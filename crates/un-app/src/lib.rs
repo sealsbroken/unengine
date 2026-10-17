@@ -15,5 +15,7 @@ pub use paths::ModelPaths;
 pub use perception::{Perception, PerceptionConfig, PerceptionOutput};
 #[cfg(feature = "speech")]
 pub use session::list_microphones;
-pub use session::{build_session, pick_microphone, registry, speech_setup, MicChoice, Session, SessionOptions, VoiceChoice};
+pub use session::{
+    build_session, pick_microphone, registry, set_registry, speech_setup, MicChoice, Session, SessionOptions, VoiceChoice,
+};
 pub use sim::SimulatedTable;

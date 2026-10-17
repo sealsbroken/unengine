@@ -106,7 +106,14 @@ pub fn add_strategies(register: Registration) {
     }
 }
 
-/// Every strategy linked into this library plus those added with [`add_strategies`].
+/// Makes `lessons` the only strategies this library offers (no linked strategies, no demo): a
+/// product library calls it from its startup function, before listing or creating sessions.
+pub fn set_registry(lessons: fn() -> StrategyRegistry) {
+    un_app::set_registry(lessons);
+}
+
+/// Every strategy linked into this library (or the product's list, see [`set_registry`]) plus
+/// those added with [`add_strategies`].
 pub fn registry() -> StrategyRegistry {
     let mut registry = un_app::registry();
     for register in REGISTRATIONS.lock().iter() {

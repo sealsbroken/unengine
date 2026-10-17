@@ -1,11 +1,24 @@
 import SwiftUI
 
-/// One screen: the tutor's line, status, the camera's picture, and the number pad.
-/// Perception runs through the shared Rust models (`UnPerception`); speech through Apple's APIs.
+/// The lesson list, then the lesson: the tutor's line, status, the camera's picture, and the
+/// number pad. Perception runs through the shared Rust models (`UnPerception`); speech through
+/// Apple's APIs. The list is whatever lessons the linked library offers (`availableStrategies`).
 struct LessonScreen: View {
     @StateObject private var model = LessonModel()
 
     var body: some View {
+        Group {
+            if model.running {
+                lesson
+            } else {
+                LessonList(model: model)
+            }
+        }
+        .onAppear { model.reloadLessons(); Permissions.request {} }
+        .onDisappear { model.close() }
+    }
+
+    private var lesson: some View {
         VStack(spacing: 12) {
             Text(model.snapshot?.lastSpoken ?? "…").font(.title2).multilineTextAlignment(.center).padding()
             Text(model.statusLine).font(.footnote).foregroundStyle(.secondary)
@@ -27,7 +40,7 @@ struct LessonScreen: View {
                 }.padding()
             }
             HStack {
-                Button(model.running ? "End lesson" : "Start lesson") { model.running ? model.stop() : model.start() }
+                Button("End lesson") { model.end() }
                 Button("Repeat") { model.repeatLine() }
                 Button("Skip") { model.skip() }
                 // The tutor's language; a running lesson starts over in the new one.
@@ -37,10 +50,43 @@ struct LessonScreen: View {
                 }.pickerStyle(.segmented).frame(width: 100)
             }.buttonStyle(.bordered).padding(.bottom)
         }
-        // The lesson starts by itself once the permissions are answered; the button remains for
-        // starting over after "End lesson".
-        .onAppear { Permissions.request { if !model.running { model.start() } } }
-        .onDisappear { model.close() }
+    }
+}
+
+/// Every lesson the app offers, in the library's order; a tap starts one. The last lesson
+/// played is ticked.
+struct LessonList: View {
+    @ObservedObject var model: LessonModel
+
+    var body: some View {
+        NavigationStack {
+            List(model.lessons, id: \.id) { lesson in
+                Button { model.start(lesson.id) } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(lesson.title).font(.headline)
+                            Text(lesson.description).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if lesson.id == model.lessonId {
+                            Image(systemName: "checkmark").foregroundStyle(.tint)
+                        }
+                    }
+                }
+                .foregroundStyle(.primary)
+            }
+            .overlay {
+                if model.lessons.isEmpty { Text(model.language == .russian ? "Уроков нет" : "No lessons").foregroundStyle(.secondary) }
+            }
+            .navigationTitle(model.language == .russian ? "Уроки" : "Lessons")
+            .toolbar {
+                // The tutor's language for the next lesson.
+                Picker("Language", selection: $model.language) {
+                    Text("EN").tag(UnLanguage.english)
+                    Text("RU").tag(UnLanguage.russian)
+                }.pickerStyle(.segmented).frame(width: 100)
+            }
+        }
     }
 }
 
@@ -67,6 +113,14 @@ final class LessonModel: ObservableObject {
         }
     }
     private var timer: Timer?
+    /// The lessons the library offers, in its order.
+    @Published private(set) var lessons: [UnStrategyInfo] = []
+    /// The lesson last started, remembered between runs.
+    @Published private(set) var lessonId: String = UserDefaults.standard.string(forKey: "lesson") ?? ""
+
+    func reloadLessons() {
+        lessons = availableStrategies()
+    }
 
     private static func savedLanguage() -> UnLanguage {
         switch UserDefaults.standard.string(forKey: "language") {
@@ -77,11 +131,18 @@ final class LessonModel: ObservableObject {
     }
 
     var statusLine: String {
-        guard let s = snapshot else { return "idle" }
-        return "\(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
+        let title = lessons.first { $0.id == lessonId }?.title ?? lessonId
+        guard let s = snapshot else { return title }
+        return "\(title)  \(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
     }
 
-    func start() {
+    /// Starts lesson `id` (the last one when `nil`, else the first in the list).
+    func start(_ id: String? = nil) {
+        if lessons.isEmpty { reloadLessons() }
+        if let id { lessonId = id }
+        guard let lesson = lessons.first(where: { $0.id == lessonId }) ?? lessons.first else { return }
+        lessonId = lesson.id
+        UserDefaults.standard.set(lesson.id, forKey: "lesson")
         let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
         var config = defaultSessionConfig()
         config.language = language
@@ -93,11 +154,9 @@ final class LessonModel: ObservableObject {
         do {
             perception = try UnPerception(config: UnPerceptionConfig(
                 modelsDir: modelsDir, detector: "toys", confidence: 0.25, countLabel: nil, roi: nil))
-            let strategies = availableStrategies()
-            let lesson = strategies.first { $0.id == "lesson-01" } ?? strategies.first
             // The microphone stays open for the whole lesson, so the child can answer at any time.
             session = try UnSession(
-                strategyId: lesson?.id ?? "demo", config: config,
+                strategyId: lesson.id, config: config,
                 speechInput: AppleSpeechInput(), speechOutput: AppleSpeechOutput(), chime: true,
                 alwaysListen: true)
         } catch {
@@ -151,6 +210,13 @@ final class LessonModel: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
     }
     func restart() { close(); start() }
+    /// Ends the lesson and goes back to the list.
+    func end() {
+        session?.stop()
+        close()
+        running = false
+        snapshot = nil
+    }
     func tap(_ n: UInt32) { session?.tap(number: n) }
     func repeatLine() { session?.`repeat`() }
     func skip() { session?.skip() }

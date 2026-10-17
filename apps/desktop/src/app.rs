@@ -23,7 +23,7 @@ use crate::worker::{SourceSpec, Worker};
 pub struct Defaults {
     /// A detector name in the models directory (`toys`); ignored when it is not installed.
     pub detector: Option<String>,
-    /// A strategy id (`lesson-01`); ignored when it is not registered.
+    /// A strategy id (`unmath-count-to-five`); ignored when it is not registered.
     pub strategy: Option<String>,
 }
 

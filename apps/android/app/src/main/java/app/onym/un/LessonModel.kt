@@ -18,8 +18,9 @@ import java.util.TimerTask
 
 /**
  * Wires CameraX frames into the shared perception and the lesson into the shared engine, as the
- * iOS `LessonModel` does: the toys detector, lesson 1 when it is registered,
- * the camera's picture behind the overlay, the language remembered between runs.
+ * iOS `LessonModel` does: the toys detector, the lesson picked from the list of lessons the
+ * library offers, the camera's picture behind the overlay, the language and the last lesson
+ * remembered between runs.
  */
 class LessonModel(private val context: Context) {
     val snapshot = MutableStateFlow<UnSnapshot?>(null)
@@ -37,6 +38,12 @@ class LessonModel(private val context: Context) {
     private val prefs = context.getSharedPreferences("un", Context.MODE_PRIVATE)
     /** The tutor's language, remembered between runs; the device's language the first time. */
     val language = MutableStateFlow(savedLanguage())
+    /** The lessons the library offers, in its order. */
+    val lessons = MutableStateFlow<List<UnStrategyInfo>>(emptyList())
+    /** The lesson last started. */
+    val lessonId = MutableStateFlow(prefs.getString("lesson", "") ?: "")
+
+    fun reloadLessons() { lessons.value = availableStrategies() }
 
     private fun savedLanguage(): UnLanguage = when (prefs.getString("language", null)) {
         "ru" -> UnLanguage.RUSSIAN
@@ -52,7 +59,13 @@ class LessonModel(private val context: Context) {
         if (running.value) { close(); start() }
     }
 
-    fun start() {
+    /** Starts lesson `id` (the last one when null, else the first in the list). */
+    fun start(id: String? = null) {
+        if (lessons.value.isEmpty()) reloadLessons()
+        if (id != null) lessonId.value = id
+        val lesson = lessons.value.firstOrNull { it.id == lessonId.value } ?: lessons.value.firstOrNull() ?: return
+        lessonId.value = lesson.id
+        prefs.edit().putString("lesson", lesson.id).apply()
         val modelsDir = ModelAssets.unpack(context)   // copies assets/models to filesDir once
         var config = defaultSessionConfig().copy(language = language.value)
         if (BuildConfig.DEBUG) {
@@ -60,9 +73,7 @@ class LessonModel(private val context: Context) {
             config = config.copy(childName = if (language.value == UnLanguage.RUSSIAN) "Вася" else "Mia")
         }
         perception = UnPerception(UnPerceptionConfig(modelsDir, "toys", 0.25f, null, null))
-        val strategies = availableStrategies()
-        val lesson = strategies.firstOrNull { it.id == "lesson-01" } ?: strategies.firstOrNull()
-        session = UnSession(lesson?.id ?: "demo", config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true, true)
+        session = UnSession(lesson.id, config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true, true)
         startCamera()
         session?.start()
         running.value = true
@@ -104,6 +115,8 @@ class LessonModel(private val context: Context) {
     }
 
     fun stop() { session?.stop(); running.value = false }
+    /** Ends the lesson and goes back to the list. */
+    fun end() { session?.stop(); close(); running.value = false; snapshot.value = null }
     fun tap(n: UInt) { session?.tap(n) }
     fun repeat() { session?.repeat() }
     fun skip() { session?.skip() }

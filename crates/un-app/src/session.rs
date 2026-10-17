@@ -92,9 +92,21 @@ impl Default for SessionOptions {
 
 /// Every strategy linked into this binary, the demo included.
 pub fn registry() -> StrategyRegistry {
+    if let Some(product) = PRODUCT_REGISTRY.get() {
+        return product();
+    }
     let mut registry = StrategyRegistry::linked();
     un_strategy_demo::register(&mut registry);
     registry
+}
+
+static PRODUCT_REGISTRY: std::sync::OnceLock<fn() -> StrategyRegistry> = std::sync::OnceLock::new();
+
+/// Makes `lessons` the strategies every session, lesson list and `un strategies` sees, in place
+/// of the linked strategies and the demo: a product calls it once at startup with its own list.
+/// Later calls are ignored.
+pub fn set_registry(lessons: fn() -> StrategyRegistry) {
+    let _ = PRODUCT_REGISTRY.set(lessons);
 }
 
 /// A speech input (or none: number pad only) and a speech output.

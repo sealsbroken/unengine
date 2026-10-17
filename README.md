@@ -81,6 +81,17 @@ uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset dataset
 Move the toys between grabs, add and remove some, cover a few with a hand. The desktop app
 picks the most recently exported or trained detector, so `models/my-toys.onnx` takes over.
 
+## Lessons and the lesson list
+
+A lesson is a strategy crate (`un_core::strategy::StrategyFactory`). The apps list every
+lesson the registry holds and start the one picked: the iOS and Android apps open on a lesson
+list (title and description from `StrategyInfo`), the desktop app has its **Lesson** box. By
+default the registry is every linked strategy plus the demo. A product shows its own list
+instead by calling `un_app::set_registry(my_lessons)` (desktop, CLI) or
+`un_ffi::set_registry(my_lessons)` (mobile library, from its startup function) once at startup;
+`my_lessons` returns a `StrategyRegistry` in list order. See the `unmethod` repository's
+`crates/lessons` for a product list.
+
 ## Talking to the tutor
 
 With `EngineOptions::always_listen` (on in every app) the microphone is open for the whole
