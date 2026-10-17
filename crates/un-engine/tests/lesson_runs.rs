@@ -365,3 +365,32 @@ fn a_sentence_that_starts_with_no_is_talk_not_zero() {
     assert!(events.lock().contains(&Event::Said("нет объясни зачем мне учиться считать".into())));
     engine.close();
 }
+
+#[test]
+fn a_spoken_count_starting_at_zero_reaches_the_strategy_unchanged() {
+    use un_core::strategy::Event;
+    let seen = counted(&["zero", "one", "two", "three"], 3);
+    assert!(seen.contains(&Event::Counted(vec![0])));
+    assert!(seen.contains(&Event::Numbers(vec![0, 1, 2, 3])));
+    assert_eq!(seen.last(), Some(&Event::Heard(3)));
+}
+
+#[test]
+fn a_table_observed_before_start_is_replayed_to_the_active_strategy() {
+    use un_core::strategy::{Event, TableObservation};
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let engine = Engine::new(
+        Box::new(Recorder::new(&events)),
+        SessionConfig::default(),
+        None,
+        Arc::new(SilentSpeechOutput::new(false)),
+        EngineOptions { chime: false, log: Some(Arc::new(|_| {})), ..Default::default() },
+    );
+    engine.observe_table(TableObservation::stable(5));
+    engine.start();
+    assert!(events.lock().contains(&Event::Table(TableObservation::stable(5))));
+    assert_eq!(events.lock().iter().filter(|e| matches!(e, Event::Table(_))).count(), 1);
+    engine.observe_table(TableObservation::stable(5));
+    assert_eq!(events.lock().iter().filter(|e| matches!(e, Event::Table(_))).count(), 1);
+    engine.close();
+}

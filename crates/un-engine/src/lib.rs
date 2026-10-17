@@ -162,12 +162,61 @@ fn spread_digits(text: &str) -> String {
         .join(" ")
 }
 
+/// Preserve explicit zero (and invalid signed/out-of-range count tokens) for the
+/// strategy to judge. Zero-like conversational phrases remain ordinary speech.
+fn counting_numbers(text: &str, language: un_core::Language) -> Vec<u32> {
+    let spread = spread_digits(text);
+    let tokens = un_core::numbers::tokenize(&spread);
+    let mut words = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let word = tokens[i].as_str();
+        let pair = tokens.get(i + 1).map(|next| (word, next.as_str()));
+        if matches!(pair, Some(("no", "cube" | "cubes") | ("not", "any") | ("ни", "одного" | "одной"))) {
+            i += 2;
+        } else if matches!(word, "none" | "nothing" | "nope" | "нет" | "ничего" | "нисколько") {
+            i += 1;
+        } else {
+            words.push(word);
+            i += 1;
+        }
+    }
+    let mut numbers = NumberParser::all(&words.join(" "), language);
+    let invalid = invalid_numeric_input(text, &tokens, !numbers.is_empty());
+    // u32 cannot represent a negative or overflowing number. An invalid marker
+    // prevents silently dropping it and turning a wrong count into a valid one.
+    if invalid {
+        numbers.push(u32::MAX);
+    }
+    numbers
+}
+
+fn invalid_numeric_input(text: &str, tokens: &[String], has_numbers: bool) -> bool {
+    let out_of_range = tokens
+        .iter()
+        .any(|t| t.bytes().all(|b| b.is_ascii_digit()) && t.parse::<u32>().ok().is_none_or(|n| n > NumberParser::MAX));
+    let signed = tokens.iter().any(|t| matches!(t.as_str(), "minus" | "negative" | "минус"))
+        || text.split_whitespace().any(|word| {
+            (word.starts_with('-') || word.starts_with('−'))
+                && word.trim_start_matches(['-', '−']).starts_with(|c: char| c.is_ascii_digit())
+        });
+    out_of_range || (signed && has_numbers)
+}
+
+fn answer_numbers(text: &str, language: un_core::Language) -> Vec<u32> {
+    let mut numbers = NumberParser::all(text, language);
+    if invalid_numeric_input(text, &un_core::numbers::tokenize(text), !numbers.is_empty()) {
+        numbers.push(u32::MAX);
+    }
+    numbers
+}
+
 /// A count said aloud, right or wrong ("one, two, three", "1235", "один два три пять"): at least
-/// two numbers, starting at one. The strategy judges it; a wrong count is to be corrected, not
+/// two numbers, including counts starting at zero. The strategy judges it; a wrong count is to be corrected, not
 /// taken for chatter.
 fn spoken_count(text: &str, language: un_core::Language) -> Option<Vec<u32>> {
-    let numbers = NumberParser::all(&spread_digits(text), language);
-    (numbers.len() >= 2 && numbers.first() == Some(&1)).then_some(numbers)
+    let numbers = counting_numbers(text, language);
+    (numbers.len() >= 2 && numbers.first().is_some_and(|n| *n <= 1)).then_some(numbers)
 }
 
 /// `heard` without the words of `tutor` (case and punctuation aside), in order.
@@ -461,7 +510,15 @@ impl Inner {
             if state.strategy.snapshot().phase == PhaseKind::Idle && event != Event::Start {
                 return;
             }
-            let effects = state.strategy.handle(event);
+            let starting = event == Event::Start;
+            let mut effects = state.strategy.handle(event);
+            // Replay pre-start perception under the same strategy lock, so a
+            // concurrent newer table cannot be overwritten by an older replay.
+            if starting {
+                if let Some(observation) = state.last_observation {
+                    effects.extend(state.strategy.handle(Event::Table(observation)));
+                }
+            }
             let mut queued = Vec::new();
             for effect in effects {
                 // Cancelling a timer or a listen must not wait behind speech; starting a timer
@@ -829,16 +886,8 @@ impl Inner {
                     if token.is_cancelled() {
                         return;
                     }
-                    let mut numbers = if counting {
-                        NumberParser::all(&spread_digits(&text), language)
-                    } else {
-                        NumberParser::all(&text, language)
-                    };
-                    if counting {
-                        // A count starts at one: "нет" / "none" (zero) in a count is a word, not a number
-                        // ("нет, ты какашка" said over the toys is not a count of nothing).
-                        numbers.retain(|n| *n > 0);
-                    } else if numbers.iter().all(|n| *n == 0) && text.split_whitespace().count() >= 3 {
+                    let mut numbers = if counting { counting_numbers(&text, language) } else { answer_numbers(&text, language) };
+                    if !counting && numbers.iter().all(|n| *n == 0) && text.split_whitespace().count() >= 3 {
                         // "Нет, объясни, зачем мне учиться считать" is talk, not the answer zero.
                         numbers.clear();
                     }
@@ -992,5 +1041,65 @@ mod echo_tests {
         assert_eq!(without_echo("Хорошо два", "Хорошо."), "два");
         assert_eq!(without_echo("хорошо", "Хорошо."), "");
         assert_eq!(without_echo("три четыре", "Так."), "три четыре");
+    }
+}
+
+#[cfg(test)]
+mod adversarial_count_tests {
+    use super::*;
+    use un_core::Language::{English, Russian};
+    #[test]
+    fn explicit_zero_is_never_erased_from_a_count() {
+        for (text, language) in [
+            ("zero one two three", English),
+            ("0 1 2 3", English),
+            ("0123", English),
+            ("ноль один два три", Russian),
+            ("нуль один два три", Russian),
+            ("one zero two three", English),
+            ("один ноль два три", Russian),
+        ] {
+            assert!(counting_numbers(text, language).contains(&0), "{text}");
+        }
+        assert_eq!(spoken_count("zero one two", English), Some(vec![0, 1, 2]));
+    }
+    #[test]
+    fn conversational_negatives_are_not_zero_but_explicit_zero_stays() {
+        for (text, language) in [
+            ("none", English),
+            ("no cubes", English),
+            ("not any", English),
+            ("нет", Russian),
+            ("ничего", Russian),
+            ("ни одного", Russian),
+        ] {
+            assert!(counting_numbers(text, language).is_empty(), "{text}");
+        }
+        assert_eq!(counting_numbers("one no cubes two", English), vec![1, 2]);
+        assert_eq!(counting_numbers("один нет ноль два", Russian), vec![1, 0, 2]);
+    }
+    #[test]
+    fn scalar_answers_do_not_drop_a_minus_or_an_out_of_range_final_number() {
+        for text in ["minus two", "-2", "−2", "two or 999"] {
+            assert_eq!(answer_numbers(text, English).last(), Some(&u32::MAX), "{text}");
+        }
+        assert_eq!(answer_numbers("минус два", Russian).last(), Some(&u32::MAX));
+        assert_eq!(answer_numbers("zero", English), vec![0]);
+        assert_eq!(answer_numbers("нет", Russian), vec![0]);
+        assert_eq!(answer_numbers("four no five", English), vec![4, 5]);
+    }
+    #[test]
+    fn impossible_numeric_tokens_cannot_be_silently_dropped() {
+        for text in [
+            "-1 two three",
+            "−1 two three",
+            "minus one two three",
+            "negative one two three",
+            "one two three 999",
+            "one two three 99999999999999999999999999999999",
+        ] {
+            assert!(counting_numbers(text, English).contains(&u32::MAX), "{text}");
+        }
+        assert_eq!(counting_numbers("1-2-3", English), vec![1, 2, 3]);
     }
 }
