@@ -26,6 +26,7 @@ struct LessonScreen: View {
                 ZStack {
                     CameraPreview(session: camera.session)
                     TableOverlay(table: model.table, frameSize: model.frameSize, highlight: model.snapshot?.highlightCount)
+                    CameraStatus(model: model)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .padding(.horizontal)
@@ -49,6 +50,37 @@ struct LessonScreen: View {
                     Text("RU").tag(UnLanguage.russian)
                 }.pickerStyle(.segmented).frame(width: 100)
             }.buttonStyle(.bordered).padding(.bottom)
+        }
+    }
+}
+
+/// While the detector loads (or when it failed), a card the grown-up can read: the camera does
+/// not count yet. After an install or update iOS compiles the model for the Neural Engine,
+/// which takes up to a minute; later launches take seconds.
+struct CameraStatus: View {
+    @ObservedObject var model: LessonModel
+
+    var body: some View {
+        let ru = model.language == .russian
+        if model.preparingCamera {
+            VStack(spacing: 8) {
+                ProgressView().controlSize(.large)
+                Text(ru ? "Готовим камеру…" : "Preparing the camera…").font(.headline)
+                Text(ru ? "После установки или обновления это занимает до минуты. Урок можно начинать: игрушки будут видны, как только камера будет готова."
+                        : "After an install or update this takes up to a minute. You can start a lesson: the toys are seen as soon as the camera is ready.")
+                    .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
+            }
+            .padding()
+            .frame(maxWidth: 420)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .padding()
+        } else if model.detectorFailed {
+            Label(ru ? "Камера не смогла загрузить распознавание игрушек." : "The camera could not load toy recognition.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.headline).foregroundStyle(.red)
+                .padding()
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .padding()
         }
     }
 }
@@ -78,6 +110,7 @@ struct LessonList: View {
             .overlay {
                 if model.lessons.isEmpty { Text(model.language == .russian ? "Уроков нет" : "No lessons").foregroundStyle(.secondary) }
             }
+            .safeAreaInset(edge: .bottom) { CameraStatus(model: model) }
             .navigationTitle(model.language == .russian ? "Уроки" : "Lessons")
             .toolbar {
                 // The tutor's language for the next lesson.
@@ -100,6 +133,8 @@ final class LessonModel: ObservableObject {
     nonisolated(unsafe) private var perception: UnPerception?
     /// The detector is still loading.
     @Published private(set) var preparingCamera = false
+    /// The detector did not load; the lesson runs without the camera's count.
+    @Published private(set) var detectorFailed = false
     #if DEBUG
     nonisolated(unsafe) static var debugFrames = 0
     nonisolated(unsafe) static var debugWritten = 0.0
@@ -138,6 +173,7 @@ final class LessonModel: ObservableObject {
         }
         let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
         preparingCamera = true
+        detectorFailed = false
         let began = Date()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             defer { print(String(format: "timing: detector loaded in %.1f s", Date().timeIntervalSince(began))) }
@@ -145,7 +181,11 @@ final class LessonModel: ObservableObject {
                 modelsDir: modelsDir, detector: "toys", confidence: 0.25, countLabel: nil, roi: nil))
             if loaded == nil { print("the toy detector failed to load") }
             self?.perception = loaded
-            Task { @MainActor in self?.preparingCamera = false }
+            let failed = loaded == nil
+            Task { @MainActor in
+                self?.preparingCamera = false
+                self?.detectorFailed = failed
+            }
         }
     }
 
@@ -158,8 +198,7 @@ final class LessonModel: ObservableObject {
     }
 
     var statusLine: String {
-        var title = lessons.first { $0.id == lessonId }?.title ?? lessonId
-        if preparingCamera { title += language == .russian ? "  (камера готовится…)" : "  (preparing the camera…)" }
+        let title = lessons.first { $0.id == lessonId }?.title ?? lessonId
         guard let s = snapshot else { return title }
         return "\(title)  \(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
     }

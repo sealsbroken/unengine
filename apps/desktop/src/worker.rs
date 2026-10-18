@@ -17,6 +17,8 @@ pub struct Latest {
     pub tracked: Vec<TrackedDetection>,
     pub fps: f32,
     pub error: Option<String>,
+    /// The detector is still loading (its first CoreML compile takes up to a minute).
+    pub loading: bool,
     pub labels: Vec<String>,
     pub frame_serial: u64,
 }
@@ -42,6 +44,7 @@ impl Worker {
             tracked: vec![],
             fps: 0.0,
             error: None,
+            loading: false,
             labels: vec![],
             frame_serial: 0,
         }));
@@ -114,7 +117,10 @@ fn run_loop(
             }
         }
         SourceSpec::Camera { index, width, height, mirror } => {
-            let mut perception = match Perception::load(&paths, &config) {
+            latest.lock().loading = true;
+            let loaded = Perception::load(&paths, &config);
+            latest.lock().loading = false;
+            let mut perception = match loaded {
                 Ok(p) => p,
                 Err(error) => {
                     latest.lock().error = Some(error.to_string());

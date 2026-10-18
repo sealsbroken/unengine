@@ -31,7 +31,12 @@ class LessonModel(private val context: Context) {
     /** The camera's own picture, filled to the view keeping the frame's aspect (like iOS). */
     val previewView: PreviewView by lazy { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
     private var session: UnSession? = null
-    private var perception: UnPerception? = null
+    /** Set from a background thread once the detector is loaded; frames wait until then. */
+    @Volatile private var perception: UnPerception? = null
+    /** The detector is still loading (as on iOS, shown to the grown-up). */
+    val preparingCamera = MutableStateFlow(false)
+    /** The detector did not load; the lesson runs without the camera's count. */
+    val detectorFailed = MutableStateFlow(false)
     private var timer: Timer? = null
     private var cameraStarted = false
     private val started = System.nanoTime()
@@ -44,6 +49,21 @@ class LessonModel(private val context: Context) {
     val lessonId = MutableStateFlow(prefs.getString("lesson", "") ?: "")
 
     fun reloadLessons() { lessons.value = availableStrategies() }
+
+    /** Loads the detector in the background from the lesson list on, so a lesson starts with the camera counting. */
+    fun preparePerception() {
+        if (perception != null || preparingCamera.value) return
+        preparingCamera.value = true
+        detectorFailed.value = false
+        Thread {
+            val loaded = runCatching {
+                UnPerception(UnPerceptionConfig(ModelAssets.unpack(context), "toys", 0.25f, null, null))
+            }.getOrNull()
+            perception = loaded
+            detectorFailed.value = loaded == null
+            preparingCamera.value = false
+        }.start()
+    }
 
     private fun savedLanguage(): UnLanguage = when (prefs.getString("language", null)) {
         "ru" -> UnLanguage.RUSSIAN
@@ -66,13 +86,12 @@ class LessonModel(private val context: Context) {
         val lesson = lessons.value.firstOrNull { it.id == lessonId.value } ?: lessons.value.firstOrNull() ?: return
         lessonId.value = lesson.id
         prefs.edit().putString("lesson", lesson.id).apply()
-        val modelsDir = ModelAssets.unpack(context)   // copies assets/models to filesDir once
         var config = defaultSessionConfig().copy(language = language.value)
         if (BuildConfig.DEBUG) {
             // As on iOS: a debug build skips the introductions and goes straight to the lesson.
             config = config.copy(childName = if (language.value == UnLanguage.RUSSIAN) "Вася" else "Mia")
         }
-        perception = UnPerception(UnPerceptionConfig(modelsDir, "toys", 0.25f, null, null))
+        preparePerception()
         session = UnSession(lesson.id, config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true, true)
         startCamera()
         session?.start()

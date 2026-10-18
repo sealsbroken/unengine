@@ -343,9 +343,9 @@ impl UnApp {
     fn live_view(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let paths_models = self.paths.root.display().to_string();
         let Some(live) = &mut self.live else { return };
-        let (frame, state, tracked, fps, error, serial) = {
+        let (frame, state, tracked, fps, error, serial, loading) = {
             let l = live.worker.latest.lock();
-            (l.frame.clone(), l.state.clone(), l.tracked.clone(), l.fps, l.error.clone(), l.frame_serial)
+            (l.frame.clone(), l.state.clone(), l.tracked.clone(), l.fps, l.error.clone(), l.frame_serial, l.loading)
         };
         if let Some(error) = error {
             self.error = Some(format!("{error} (models: {paths_models})"));
@@ -454,6 +454,30 @@ impl UnApp {
             painter.image(texture.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
         } else {
             painter.rect_filled(rect, 0.0, Color32::from_gray(30));
+        }
+        if loading {
+            // As on the phone: the grown-up sees that the camera does not count yet.
+            let ru = self.setup.language == Language::Russian;
+            let card = Rect::from_center_size(rect.center(), Vec2::new(rect.width().min(440.0), 110.0));
+            painter.rect_filled(card, 12.0, Color32::from_black_alpha(200));
+            painter.text(
+                card.center() - Vec2::new(0.0, 22.0),
+                egui::Align2::CENTER_CENTER,
+                if ru { "Готовим камеру…" } else { "Preparing the camera…" },
+                egui::FontId::proportional(20.0),
+                Color32::WHITE,
+            );
+            painter.text(
+                card.center() + Vec2::new(0.0, 16.0),
+                egui::Align2::CENTER_CENTER,
+                if ru {
+                    "Первый запуск после установки занимает до минуты."
+                } else {
+                    "The first start after an install takes up to a minute."
+                },
+                egui::FontId::proportional(14.0),
+                Color32::LIGHT_GRAY,
+            );
         }
         let map = Mapper { rect };
 

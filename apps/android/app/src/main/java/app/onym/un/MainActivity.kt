@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         permissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
         model.reloadLessons()
+        model.preparePerception()
         setContent { MaterialTheme { Screen(model) } }
     }
 
@@ -70,7 +71,7 @@ fun LessonList(model: LessonModel) {
         if (lessons.isEmpty()) {
             Text(if (language == UnLanguage.RUSSIAN) "Уроков нет" else "No lessons", Modifier.padding(top = 24.dp))
         }
-        LazyColumn(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp)) {
             items(lessons, key = { it.id }) { lesson ->
                 ListItem(
                     headlineContent = { Text(lesson.title) },
@@ -79,6 +80,34 @@ fun LessonList(model: LessonModel) {
                     modifier = Modifier.clickable { model.start(lesson.id) },
                 )
                 HorizontalDivider()
+            }
+        }
+        CameraStatus(model, Modifier.fillMaxWidth())
+    }
+}
+
+/**
+ * As on iOS: while the detector loads (or when it failed), a card the grown-up can read: the
+ * camera does not count yet.
+ */
+@Composable
+fun CameraStatus(model: LessonModel, modifier: Modifier = Modifier) {
+    val preparing by model.preparingCamera.collectAsState()
+    val failed by model.detectorFailed.collectAsState()
+    val ru = model.language.collectAsState().value == UnLanguage.RUSSIAN
+    if (!preparing && !failed) return
+    Card(modifier.padding(16.dp).widthIn(max = 420.dp)) {
+        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (preparing) {
+                CircularProgressIndicator()
+                Text(if (ru) "Готовим камеру…" else "Preparing the camera…", style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 8.dp))
+                Text(if (ru) "После установки или обновления это занимает до минуты. Урок можно начинать: игрушки будут видны, как только камера будет готова."
+                     else "After an install or update this takes up to a minute. You can start a lesson: the toys are seen as soon as the camera is ready.",
+                    style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+            } else {
+                Text(if (ru) "Камера не смогла загрузить распознавание игрушек." else "The camera could not load toy recognition.",
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
             }
         }
     }
@@ -109,6 +138,7 @@ fun LessonScreen(model: LessonModel) {
         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp).clip(RoundedCornerShape(16.dp))) {
             AndroidView(factory = { model.previewView }, modifier = Modifier.fillMaxSize())
             TableOverlay(table, frameSize, snapshot?.highlightCount, Modifier.fillMaxSize())
+            CameraStatus(model, Modifier.align(Alignment.Center))
         }
         if (snapshot?.showNumberPad == true) {
             LazyVerticalGrid(GridCells.Fixed(5), Modifier.fillMaxWidth()) {
