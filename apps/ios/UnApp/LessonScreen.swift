@@ -342,7 +342,9 @@ final class LessonModel: ObservableObject {
         switch UserDefaults.standard.string(forKey: "language") {
         case "ru": return .russian
         case "en": return .english
-        default: return Locale.current.language.languageCode?.identifier == "ru" ? .russian : .english
+        // The device's own language (its first preferred one), not `Locale.current`: that one is
+        // the app's localisation, English unless the app ships a Russian one.
+        default: return (Locale.preferredLanguages.first ?? "").hasPrefix("ru") ? .russian : .english
         }
     }
 
