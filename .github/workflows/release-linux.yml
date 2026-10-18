@@ -1,0 +1,187 @@
+name: Release Linux
+
+# Releases Un for Linux x86-64 on its own (alpha: built and smoke-tested on a GitHub runner, never
+# run on a real PC with a camera): the tag (release-tag.yml) → the build → a .tar.gz attached to
+# the tag's GitHub Release.
+#
+#   gh workflow run "Release Linux"                 # a new release: the next patch, from main
+#   gh workflow run "Release Linux" -f tag=v0.1.11  # build v0.1.11 and attach to its release
+#
+# The app is this repository at the tag (apps/un: the desktop window and CLI) with the unmath
+# lessons (sealsbroken/unmath at main; the bundle's README records its commit). Speech is
+# sherpa-onnx: Whisper small for recognition, Piper voices for the tutor (their espeak-ng is
+# GPL-3.0, so the bundle as a whole is GPL-3.0; all of it is open source). The toy detector is the
+# models-v1 release and runs on the CPU. Built on Ubuntu 24.04: it needs glibc 2.39 or newer
+# (Ubuntu 24.04, Debian 13, Fedora 40 and later).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag: blank = the next patch of the latest v* tag (a new release from this commit); an existing tag = build it and attach'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write   # upload the archive to the release
+
+concurrency:
+  group: release-linux
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Version
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      tag: ${{ inputs.tag }}
+      platform: Linux x86-64
+    permissions:
+      contents: write
+
+  linux:
+    name: Build, smoke-test and attach
+    needs: tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unengine
+          fetch-depth: 0
+
+      - name: Resolve the tag
+        id: tag
+        working-directory: unengine
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::No tag $TAG"; exit 1; }
+          git checkout -q "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: sealsbroken/unmath
+          path: unmath
+
+      - name: System libraries
+        # ALSA (cpal), V4L2 and udev (nokhwa), X11/Wayland/GL (eframe), OpenSSL (ort's download),
+        # ImageMagick for the detector's smoke test.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libclang-dev libasound2-dev libudev-dev libv4l-dev libssl-dev \
+            libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev imagemagick
+
+      - uses: dtolnay/rust-toolchain@stable
+      # No build cache: a restored target dir once left ort-sys linking a missing cargs.lib.
+      - name: Build
+        run: cargo build --release --manifest-path unengine/apps/un/Cargo.toml
+
+      - name: Models
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+          python3 unengine/tools/fetch_models.py --whisper small
+
+      - name: Assemble the folder
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          out=dist/Un-$VERSION-linux-x86_64
+          build=unengine/apps/un/target/release
+          models=unengine/models
+          mkdir -p "$out/models/speech"
+          cp "$build/un" "$build/un-cli" "$out/"
+          # The shared libraries the executables load (onnxruntime, sherpa-onnx's C API): found next
+          # to them through the rpath $ORIGIN (apps/un/build.rs).
+          cp -P "$build"/*.so* "$out/"
+          cp "$models/toys.onnx" "$models/toys.json" "$out/models/"
+          cp "$models/speech/silero_vad.onnx" "$out/models/speech/"
+          for voice in vits-piper-ru_RU-irina-medium vits-piper-en_US-lessac-medium; do
+            cp -R "$models/speech/$voice" "$out/models/speech/"
+          done
+          whisper=sherpa-onnx-whisper-small
+          mkdir -p "$out/models/speech/$whisper"
+          cp "$models/speech/$whisper"/*int8* "$models/speech/$whisper"/*tokens* "$out/models/speech/$whisper/"
+          ls -la "$out"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Smoke tests (no camera, no microphone, no speakers)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          cd "$OUT"
+          ./un-cli strategies | tee strategies.txt
+          grep -q '^unmath-count-to-three' strategies.txt && ! grep -q '^demo' strategies.txt
+          # A scripted lesson on a drawn table: the lessons load and the tutor speaks.
+          ./un-cli --models models lesson --sim 1 --strategy unmath-count-to-three --language ru \
+            --voice console --mic off --answers "лес,один" --frames 120 | tee lesson.txt
+          grep -q 'tutor: ' lesson.txt
+          # The tutor's voice says a number and the recogniser hears it, in both languages.
+          ./un-cli --models models check-speech --language ru
+          ./un-cli --models models check-speech --language en
+          # The toy detector loads and runs on a picture.
+          convert -size 640x480 xc:BurlyWood -fill Gold -draw 'circle 310,240 370,240' table.jpg
+          ./un-cli --models models run --source table.jpg --frames 3 | tee detector.txt
+          grep -q '"raw"' detector.txt
+          rm -f strategies.txt lesson.txt detector.txt table.jpg
+
+      - name: README and zip
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          UNMATH=$(git -C unmath rev-parse HEAD)
+          cat > "$OUT/README.txt" <<README
+          Un ${VERSION} for Linux x86-64 (alpha)
+
+          Un teaches children to count with real toys on a table: the camera counts the toys, a voice
+          tutor leads the lesson, the child answers by voice.
+
+          ALPHA: built and smoke-tested automatically, never tried on a real PC with a camera. The toy
+          detector runs on the CPU and is slow; counts may take several seconds to settle.
+
+            ./un       the app: choose a child, a camera and a lesson, then start
+            ./un-cli   the command line: ./un-cli lesson --strategy unmath-count-to-three --language ru
+
+          Keep the .so files and the models folder next to the executables. Nothing is installed;
+          settings and the children's progress are kept in ~/.config/un. Needs glibc 2.39 or newer
+          (Ubuntu 24.04, Debian 13, Fedora 40 and later), X11 or Wayland, a V4L2 camera and ALSA or
+          PipeWire/PulseAudio sound.
+
+          Source: https://github.com/sealsbroken/unengine (${{ steps.tag.outputs.tag }}) and
+          https://github.com/sealsbroken/unmath (${UNMATH}). The engine and lessons are LGPL-3.0;
+          the bundled Piper voices use espeak-ng (GPL-3.0), so this bundle as a whole is GPL-3.0.
+          README
+          tar -C dist -czf "dist/Un-${VERSION}-linux-x86_64-alpha.tar.gz" "Un-${VERSION}-linux-x86_64"
+          ls -la dist
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        working-directory: unengine
+        run: |
+          set -euo pipefail
+          archive="../dist/Un-${VERSION}-linux-x86_64-alpha.tar.gz"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "Un ${VERSION}" --notes "Un ${VERSION}."
+          fi
+          gh release upload "$TAG" "$archive" --clobber
+          body=$(gh release view "$TAG" --json body --jq .body)
+          if ! grep -q 'Linux x86-64 (alpha)' <<<"$body"; then
+            printf '%s\n\n**Linux x86-64 (alpha)**: Un-%s-linux-x86_64-alpha.tar.gz, glibc 2.39+, built and smoke-tested on a GitHub runner, not yet tried on a real PC.\n' "$body" "$VERSION" > notes.md
+            gh release edit "$TAG" --notes-file notes.md
+          fi

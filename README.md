@@ -178,11 +178,12 @@ Each platform releases on its own:
 - **Release iOS**: TestFlight (then the External group and Beta App Review once processed), the
   tag and a GitHub Release.
 - **Release Windows**: the Windows x64 alpha zip.
+- **Release Linux**: the Linux x86-64 alpha `.tar.gz` (glibc 2.39+).
 - **Release macOS**: `Un.app` (Apple silicon), signed with Developer ID and notarised.
 - **Release Android**: the app bundle, signed with the upload key, attached to the release and
   uploaded to a Google Play track (`-f track=internal|alpha|beta|production|none`).
 
-Windows, macOS and Android take an existing tag too (`-f tag=v0.1.9`): that tag is built and its zip
+Windows, Linux, macOS and Android take an existing tag too (`-f tag=v0.1.9`): that tag is built and its zip
 (or bundle) attached to the same release.
 - **TestFlight External**: give an uploaded build to the External group by hand.
 
