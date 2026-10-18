@@ -4074,6 +4074,7 @@ dependencies = [
  "eframe",
  "egui",
  "env_logger",
+ "image",
  "log",
  "parking_lot",
  "serde",
