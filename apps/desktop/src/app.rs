@@ -94,6 +94,8 @@ struct LessonRun {
     leaving: Option<Instant>,
     /// Paused: the picture dimmed, Continue or Back to adventures.
     paused: bool,
+    /// Paused with the back button (or Esc): straight back to the trail once the goodbye is said.
+    back: bool,
     ended_at: Option<Instant>,
     declined: bool,
     pad_buffer: String,
@@ -345,6 +347,7 @@ impl UnApp {
                     remembered: false,
                     leaving: None,
                     paused: false,
+                    back: false,
                     ended_at: None,
                     declined: false,
                     pad_buffer: String::new(),
@@ -377,6 +380,17 @@ impl UnApp {
                 session.engine.stop();
             }
             run.leaving = Some(Instant::now());
+        }
+    }
+
+    /// The back button and Esc, as on iOS: pause (the place is saved), then the trail.
+    fn back(&mut self) {
+        let Some(run) = &mut self.run else { return };
+        if run.paused || run.session.is_none() || run.ended_at.is_some() {
+            self.leave_lesson();
+        } else {
+            run.back = true;
+            self.pause();
         }
     }
 
@@ -505,7 +519,11 @@ impl UnApp {
                 }
                 run.leaving = None;
                 run.paused = true;
+                let back = run.back;
                 self.snapshot = Some(snapshot);
+                if back {
+                    self.leave_lesson();
+                }
                 return;
             }
         }
@@ -530,8 +548,8 @@ impl UnApp {
             } else if self.adding.is_some() || self.removing.is_some() {
                 self.adding = None;
                 self.removing = None;
-            } else if self.screen == Screen::Lesson && self.run.as_ref().is_some_and(|r| r.paused) {
-                self.leave_lesson();
+            } else if self.screen == Screen::Lesson {
+                self.back();
             } else if let Screen::Trail(_) = self.screen {
                 self.screen = Screen::Children;
             }
@@ -1081,11 +1099,22 @@ impl UnApp {
         if paused {
             painter.rect_filled(picture, 0.0, Color32::from_black_alpha(140));
         }
-        // Top: the lesson chip and the parent toolbar.
+        // Top: the back button, the lesson chip and the parent toolbar.
+        let back = Rect::from_min_size(area.min + Vec2::new(16.0, 16.0), Vec2::splat(44.0));
+        un::card(&painter, back, &theme, 22.0, true);
+        let response = ui.interact(back, Id::new("lesson-back"), Sense::click());
+        if response.hovered() {
+            painter.circle_filled(back.center(), 18.0, theme.surface3);
+        }
+        icon(&painter, Icon::ChevronLeft, back.center(), 20.0, theme.text);
+        un::focus_ring(ui, &response, back, 22.0);
+        if response.on_hover_text(format!("{} (Esc)", t(ru, "lesson.back"))).clicked() {
+            self.back();
+        }
         let meta = self.run.as_ref().map(|r| LessonMeta::of(&r.lesson, &self.lessons, ru));
         if let Some(meta) = &meta {
             let galley = painter.layout_no_wrap(meta.title.clone(), semibold(15.0), theme.text);
-            let chip = Rect::from_min_size(area.min + Vec2::new(16.0, 16.0), Vec2::new(galley.size().x + 56.0, 44.0));
+            let chip = Rect::from_min_size(area.min + Vec2::new(16.0 + 52.0, 16.0), Vec2::new(galley.size().x + 56.0, 44.0));
             un::card(&painter, chip, &theme, 22.0, true);
             painter.circle_filled(Pos2::new(chip.left() + 22.0, chip.center().y), 13.0, theme.orange);
             painter.text(Pos2::new(chip.left() + 22.0, chip.center().y), Align2::CENTER_CENTER, meta.number.to_string(), rounded(14.0), Color32::WHITE);
@@ -1153,6 +1182,7 @@ impl UnApp {
         let strip = Rect::from_min_max(Pos2::new(full.left(), full.bottom() - strip_h), full.max);
         painter.rect_filled(strip, 0.0, crate::un::overlay_colors::LETTERBOX);
         let hints = [
+            ("Esc", t(ru, "lesson.back")),
             (t(ru, "key.space"), t(ru, "lesson.repeat")),
             ("N", t(ru, "lesson.skip")),
             ("P", t(ru, "lesson.pauseContinue")),
@@ -1542,6 +1572,7 @@ impl UnApp {
                             ("L", "EN / RU"),
                             ("S", t(ru, "lesson.settings")),
                             ("Esc", t(ru, "settings.close")),
+                            ("Esc", t(ru, "lesson.back")),
                             ("Y / N", t(ru, "end.ask")),
                             ("0–9", t(ru, "lesson.muted")),
                         ] {

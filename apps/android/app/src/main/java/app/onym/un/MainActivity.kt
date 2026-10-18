@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -209,7 +210,14 @@ fun LessonScreen(model: LessonModel) {
     val title = lessons.firstOrNull { it.id == lessonId }?.title ?: lessonId
     val table by model.table.collectAsState()
     val frameSize by model.frameSize.collectAsState()
+    // Back (the button top left, or the system back): pauses the lesson and returns to the list, as on iOS.
+    BackHandler { model.pause() }
     Column(Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth()) {
+            TextButton(onClick = { model.pause() }) {
+                Text(if (language == UnLanguage.RUSSIAN) "‹ К приключениям" else "‹ Back to adventures")
+            }
+        }
         Text(snapshot?.lastSpoken ?: "…", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         Text(snapshot?.let { "$title  ${it.status}  level ${it.level + 1u}/${it.levelCount}  ${it.correct}✓/${it.tasksCompleted}" } ?: title,
             style = MaterialTheme.typography.bodySmall)

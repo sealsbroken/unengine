@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The child's screen: the live camera is the hero. Only three things sit over it: the toy boxes
-/// with their number badges, one tutor panel at the bottom, and a small parent toolbar at the top
-/// (Pause, Repeat, Skip, language). The number pad appears only when speech fails; the end
+/// with their number badges, one tutor panel at the bottom, and at the top a back button (it
+/// pauses) and a small parent toolbar (Pause, Repeat, Skip, language). The number pad appears only when speech fails; the end
 /// screens follow a completed lesson.
 struct LessonView: View {
     @ObservedObject var model: LessonModel
@@ -54,7 +54,14 @@ struct LessonView: View {
     }
 
     private func topBar(meta: LessonMeta, t: Copy) -> some View {
-        HStack {
+        HStack(spacing: 8) {
+            // Back: pauses the lesson (the place is saved) and returns to the trail.
+            Button { model.pause() } label: {
+                Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold)).foregroundStyle(Un.text)
+                    .frame(width: 44, height: 44)
+            }
+            .unGlass(Circle())
+            .accessibilityLabel(t("lesson.back"))
             HStack(spacing: 8) {
                 Text("\(meta.number)").font(Un.rounded(14)).foregroundStyle(.white)
                     .frame(width: 26, height: 26).background(Un.orange, in: Circle())
