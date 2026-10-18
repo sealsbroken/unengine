@@ -56,7 +56,7 @@ platform :ios do
           "CODE_SIGN_STYLE=Automatic",
           "COMPILER_INDEX_STORE_ENABLE=NO"
         ].join(" "),
-        export_xcargs: auth,
+        # gym passes `xcargs` to the export too: the key reaches -exportArchive without a second copy.
         output_directory: "build/ios",
         output_name: "Un.ipa"
       )
