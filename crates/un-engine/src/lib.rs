@@ -110,6 +110,9 @@ struct Mic {
     /// The tutor's recent lines and when each ended (`None` while it is being said): a
     /// transcript that is mostly one of them is the tutor heard through the microphone.
     lines: Vec<(String, Option<Instant>)>,
+    /// Numbers the child said over the tutor's line (barge-in): the start of the answer the
+    /// line asks for, handed to the listen that follows it.
+    early: Vec<String>,
 }
 
 /// How long after the tutor's line a transcript of it may still come back from the microphone.
@@ -268,6 +271,9 @@ impl TimerHandle {
     }
 }
 
+/// An effect with the number of the dispatch that produced it; `None` ends the effect thread.
+type Queued = Option<(u64, Effect)>;
+
 struct Inner {
     self_arc: Weak<Inner>,
     config: SessionConfig,
@@ -275,7 +281,13 @@ struct Inner {
     speech_in: Option<Arc<dyn SpeechInput>>,
     speech_out: RwLock<Arc<dyn SpeechOutput>>,
     state: Mutex<State>,
-    effects: Sender<Option<Effect>>,
+    effects: Sender<Queued>,
+    /// Numbers each dispatch's effects; a child answering over the tutor (barge-in) makes the
+    /// lines and listens of every earlier one obsolete (`superseded`), and the effect thread
+    /// tells which one it is running (`running`).
+    batch: AtomicU64,
+    superseded: AtomicU64,
+    running: AtomicU64,
     listen_generation: AtomicU64,
     mic: Mutex<Mic>,
     mic_cv: Condvar,
@@ -287,7 +299,7 @@ struct Inner {
 pub struct Engine {
     inner: Arc<Inner>,
     worker: Mutex<Option<JoinHandle<()>>>,
-    effects_rx: Mutex<Option<Receiver<Option<Effect>>>>,
+    effects_rx: Mutex<Option<Receiver<Queued>>>,
 }
 
 impl Engine {
@@ -328,6 +340,9 @@ impl Engine {
                 closed: false,
             }),
             effects: tx,
+            batch: AtomicU64::new(0),
+            superseded: AtomicU64::new(0),
+            running: AtomicU64::new(0),
             listen_generation: AtomicU64::new(0),
             mic: Mutex::new(Mic::default()),
             mic_cv: Condvar::new(),
@@ -507,6 +522,12 @@ impl Inner {
     }
 
     fn dispatch(&self, event: Event) {
+        self.dispatch_from(event, false);
+    }
+
+    /// `barge`: the child spoke over the tutor. When the strategy answers it, the line being
+    /// said stops and the lines and listens queued before are dropped.
+    fn dispatch_from(&self, event: Event, barge: bool) {
         let queued: Vec<Effect> = {
             let mut state = self.state.lock();
             if state.closed {
@@ -558,13 +579,28 @@ impl Inner {
             }
             queued
         };
+        let batch = self.batch.fetch_add(1, Ordering::SeqCst) + 1;
+        let interrupt = barge && !queued.is_empty();
+        if interrupt {
+            self.superseded.store(batch, Ordering::SeqCst);
+        }
         for effect in queued {
-            let _ = self.effects.send(Some(effect));
+            let _ = self.effects.send(Some((batch, effect)));
+        }
+        if interrupt && self.running.load(Ordering::SeqCst) < batch {
+            self.log("the child answered over the tutor: the line stops");
+            self.speech_out.read().stop();
         }
     }
 
-    fn run_effects(self: Arc<Self>, rx: Receiver<Option<Effect>>) {
-        while let Ok(Some(effect)) = rx.recv() {
+    fn run_effects(self: Arc<Self>, rx: Receiver<Queued>) {
+        while let Ok(Some((batch, effect))) = rx.recv() {
+            if batch < self.superseded.load(Ordering::SeqCst)
+                && matches!(effect, Effect::Say(_) | Effect::Listen { .. } | Effect::HighlightCount(_))
+            {
+                continue;
+            }
+            self.running.store(batch, Ordering::SeqCst);
             self.run(effect);
         }
     }
@@ -591,6 +627,12 @@ impl Inner {
                 };
                 if self.options.always_listen && counting {
                     self.mic.lock().echo = Some((text.clone(), None));
+                } else if self.options.always_listen && self.speech_in.as_ref().is_some_and(|s| s.barge_in()) {
+                    // The microphone stays open, the tutor's voice taken out of it: the child can
+                    // answer over the question.
+                    let mut mic = self.mic.lock();
+                    mic.speaking = true;
+                    mic.early.clear();
                 } else if self.options.always_listen {
                     // Otherwise the microphone closes while the tutor speaks, so the tutor never
                     // hears itself (and never answers its own words).
@@ -693,7 +735,7 @@ impl Inner {
             }
             let token = {
                 let mut mic = self.mic.lock();
-                if mic.speaking {
+                if mic.speaking && !speech_in.barge_in() {
                     self.mic_cv.wait_for(&mut mic, Duration::from_millis(200));
                     continue;
                 }
@@ -739,12 +781,29 @@ impl Inner {
     /// open (numbers, a count), otherwise it is speech the strategy hears as `Said`.
     fn route_utterance(&self, text: String) {
         let mut text = text.trim().to_string();
+        let mut barge = false;
         {
             let mut mic = self.mic.lock();
             if mic.speaking {
-                drop(mic);
-                self.log(&format!("ignored while the tutor speaks: {text}"));
-                return;
+                let line = mic.lines.iter().rev().find(|(_, ended)| ended.is_none()).map(|(l, _)| l.clone());
+                if !self.speech_in.as_ref().is_some_and(|s| s.barge_in()) {
+                    drop(mic);
+                    self.log(&format!("ignored while the tutor speaks: {text}"));
+                    return;
+                }
+                if line.is_some_and(|line| is_echo(&text, &line)) {
+                    drop(mic);
+                    self.log(&format!("the tutor's line leaked through, ignored: {text}"));
+                    return;
+                }
+                let numbers = counting_numbers(&text, self.config.language);
+                if !numbers.is_empty() {
+                    // "Один" said as the tutor ends "...Теперь ты.": the count has begun.
+                    self.log(&format!("heard over the tutor, kept for the answer: {text}"));
+                    mic.early.push(text);
+                    return;
+                }
+                barge = true;
             }
             let hears_tutor = self.speech_in.as_ref().is_none_or(|s| s.hears_tutor());
             let echo = hears_tutor
@@ -783,11 +842,11 @@ impl Inner {
             // A count with no answer window open (it ran out a moment before): still a count.
             self.log(&format!("child counted: {text}"));
             let last = *count.last().expect("two numbers at least");
-            self.dispatch(Event::Numbers(count));
-            self.dispatch(Event::Heard(last));
+            self.dispatch_from(Event::Numbers(count), barge);
+            self.dispatch_from(Event::Heard(last), barge);
         } else {
             self.log(&format!("child: {text}"));
-            self.dispatch(Event::Said(text));
+            self.dispatch_from(Event::Said(text), barge);
         }
     }
 
@@ -815,6 +874,9 @@ impl Inner {
     fn begin_listening(self: &Inner, mode: ListenMode, timeout: f64) {
         self.cancel_listening();
         while self.utterances.1.try_recv().is_ok() {}
+        for text in std::mem::take(&mut self.mic.lock().early) {
+            let _ = self.utterances.0.send(text);
+        }
         let token = Arc::new(CancelToken::new(self.listen_generation.fetch_add(1, Ordering::SeqCst) + 1));
         let speech_available = {
             let mut state = self.state.lock();

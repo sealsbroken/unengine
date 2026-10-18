@@ -48,7 +48,8 @@ final class LessonsTests: XCTestCase {
     func testTheListIsTheProductsLessonsOnly() {
         _ = LessonsTests.registered
         let ids = availableStrategies().map(\.id)
-        XCTAssertEqual(ids.first, "unmath-count-to-five")
+        // The course opens with counting (its exact id changes with the course: count-to-five, count-to-three).
+        XCTAssertTrue(ids.first?.hasPrefix("unmath-count-to-") == true, "\(ids)")
         XCTAssertTrue(ids.allSatisfy { $0.hasPrefix("unmath-") }, "\(ids)")
         XCTAssertFalse(ids.contains("demo"), "the engine's demo is not a product lesson")
         XCTAssertFalse(ids.contains("lesson-01"), "unmethod's lesson 1 is no longer in the app")

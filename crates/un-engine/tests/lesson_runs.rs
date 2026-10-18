@@ -500,3 +500,77 @@ fn the_child_repeating_the_tutors_modelled_count_is_heard_not_taken_for_an_echo(
     assert!(wait_for(|| events.lock().contains(&Event::Heard(2)), Duration::from_secs(5)));
     engine.close();
 }
+
+/// Asks where to go; any answer naming the forest is taken.
+struct Choice {
+    events: Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>,
+    mode: un_core::strategy::ListenMode,
+    line: &'static str,
+}
+
+impl un_core::strategy::Strategy for Choice {
+    fn handle(&mut self, event: un_core::strategy::Event) -> Vec<un_core::strategy::Effect> {
+        use un_core::strategy::{Effect, Event};
+        self.events.lock().push(event.clone());
+        match event {
+            Event::Start => vec![Effect::Say(self.line.into()), Effect::listen(self.mode, 10.0)],
+            Event::Said(words) if words.contains("forest") => vec![Effect::Say("Off to the forest!".into())],
+            _ => vec![],
+        }
+    }
+    fn snapshot(&self) -> un_core::strategy::StrategySnapshot {
+        un_core::strategy::StrategySnapshot {
+            phase: PhaseKind::Asking,
+            level: 0,
+            level_count: 1,
+            tasks_completed: 0,
+            correct: 0,
+            task: None,
+            target_count: None,
+            expected_answer: Some(2),
+        }
+    }
+}
+
+fn barging_engine(
+    line: &'static str,
+    mode: un_core::strategy::ListenMode,
+    said: Vec<&str>,
+) -> (Engine, Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>, Arc<SilentSpeechOutput>) {
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let speech_out = Arc::new(SilentSpeechOutput::paced(false));
+    let engine = Engine::new(
+        Box::new(Choice { events: Arc::clone(&events), mode, line }),
+        SessionConfig::default(),
+        Some(Arc::new(
+            ScriptedSpeechInput::saying(said.into_iter().map(String::from).collect(), Duration::from_millis(800)).barging_in(),
+        )),
+        speech_out.clone(),
+        EngineOptions { chime: false, log: Some(Arc::new(|_| {})), always_listen: true, ..Default::default() },
+    );
+    (engine, events, speech_out)
+}
+
+#[test]
+fn an_answer_over_the_question_cuts_the_question_short() {
+    let line = "Choose our adventure! The forest or the moon? Say forest or moon, and off we go.";
+    let (engine, _, speech_out) = barging_engine(line, un_core::strategy::ListenMode::Voice, vec!["forest"]);
+    let began = Instant::now();
+    engine.start();
+    assert!(wait_for(|| speech_out.spoken_joined().contains("Off to the forest!"), Duration::from_secs(5)));
+    // The question takes 3.6 s to say; the answer came at 0.8 s and the tutor went on at once.
+    assert!(began.elapsed() < Duration::from_millis(2500), "{:?}", began.elapsed());
+    engine.close();
+}
+
+#[test]
+fn a_count_begun_over_the_tutors_line_is_counted_in_full() {
+    use un_core::strategy::Event;
+    let line = "One, two! Now it is your turn to count them.";
+    let (engine, events, speech_out) = barging_engine(line, un_core::strategy::ListenMode::Counting, vec!["one", "two"]);
+    engine.start();
+    assert!(wait_for(|| events.lock().contains(&Event::Numbers(vec![1, 2])), Duration::from_secs(8)));
+    // Numbers do not cut the line: the count goes on into the listen after it.
+    assert_eq!(speech_out.spoken_texts(), vec![line.to_string()]);
+    engine.close();
+}

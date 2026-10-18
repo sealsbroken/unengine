@@ -50,6 +50,9 @@ class AndroidSpeechInput(private val context: Context) : SpeechInputCallback {
     private var recognizer: SpeechRecognizer? = null
     @Volatile private var cancelled = false
 
+    /** The recogniser is closed while the tutor speaks (no barge-in on Android yet). */
+    override fun bargeIn() = false
+
     override fun prepare(language: UnLanguage) {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) throw UnException.Failed("speech recognition unavailable")
     }

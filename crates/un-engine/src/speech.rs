@@ -105,6 +105,13 @@ pub trait SpeechInput: Send + Sync {
         true
     }
 
+    /// Whether the microphone stays open while the tutor speaks, the tutor's voice taken out of
+    /// it (echo cancellation): the child can answer over the tutor's question, and an answer the
+    /// strategy takes cuts the line short.
+    fn barge_in(&self) -> bool {
+        false
+    }
+
     /// Name of the microphone in use, for the HUD.
     fn device_name(&self) -> String {
         String::new()

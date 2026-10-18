@@ -1,17 +1,115 @@
 import AVFoundation
 import Speech
 
-/// The tutor's voice through AVSpeechSynthesizer. `speak` blocks the engine's effect thread until done.
-final class AppleSpeechOutput: NSObject, SpeechOutputCallback, AVSpeechSynthesizerDelegate {
-    private let synthesizer = AVSpeechSynthesizer()
-    private var finished = DispatchSemaphore(value: 0)
+/// One audio engine for the tutor's voice and the microphone, with Apple's voice processing
+/// (the echo cancellation FaceTime uses): the tutor's voice, played through this engine, is
+/// taken out of what the microphone hears, so the microphone stays open while the tutor speaks
+/// and the child can answer over a question (barge-in). Echo cancellation only knows what plays
+/// through its own engine, hence the synthesiser's audio is rendered here, not by the system.
+/// Without voice processing (the simulator) the microphone is closed while the tutor speaks.
+final class AudioIO: @unchecked Sendable {
+    static let shared = AudioIO()
 
-    override init() {
-        super.init()
-        synthesizer.delegate = self
+    let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    /// What the player plays; the synthesiser's buffers are converted to it.
+    let playerFormat = AVAudioFormat(standardFormatWithSampleRate: 22050, channels: 1)!
+    private let lock = NSLock()
+    private var built = false
+    private var tapInstalled = false
+    private var microphoneOn = false
+    /// The tutor's voice is taken out of the microphone's audio.
+    private(set) var echoCancelled = false
+    /// Receives the microphone's audio.
+    var onInput: ((AVAudioPCMBuffer) -> Void)?
+    /// The tutor starts a line.
+    var onLine: (() -> Void)?
+
+    /// Builds the engine once and starts it (again after an interruption stopped it). False when
+    /// it cannot run at all.
+    @discardableResult
+    func start() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if built && engine.isRunning { return true }
+        AudioSession.configure()
+        let input = engine.inputNode
+        if !built {
+            // Voice processing must be switched on before the engine starts; it fails where there
+            // is no voice-processing hardware path (the simulator), and then the old way stays.
+            do {
+                try input.setVoiceProcessingEnabled(true)
+                echoCancelled = true
+                // Nothing else plays: no need to turn other audio down.
+                input.voiceProcessingOtherAudioDuckingConfiguration =
+                    AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
+            } catch {
+                print("voice processing unavailable: \(error)")
+            }
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: playerFormat)
+            built = true
+        }
+        // The tap is set up again for the input's format as it is now (it changes with a
+        // reconfigured session).
+        if tapInstalled {
+            input.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        let format = input.outputFormat(forBus: 0)
+        // No microphone (the simulator, say): installing a tap would raise an Objective-C
+        // exception, which cannot pass through the engine's Rust frames.
+        microphoneOn = format.channelCount > 0 && format.sampleRate > 0
+        if microphoneOn {
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+                guard let self else { return }
+                if !self.echoCancelled && AudioSession.isTutorSpeaking { return }
+                self.onInput?(buffer)
+            }
+            tapInstalled = true
+        }
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            print("audio engine: \(error)")
+            return false
+        }
+        speechDebug("audio started (microphone \(microphoneOn ? "\(format.sampleRate) Hz" : "none"), echo cancellation \(echoCancelled ? "on" : "off"))")
+        return true
     }
 
-    func prepare(language: UnLanguage) throws { AudioSession.configure() }
+    var hasMicrophone: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return microphoneOn && engine.isRunning
+    }
+
+    /// Plays one synthesised buffer; `done` once it has been heard.
+    func play(_ buffer: AVAudioPCMBuffer, done: @escaping () -> Void) {
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in done() }
+        if !player.isPlaying { player.play() }
+    }
+
+    func stopPlaying() { player.stop() }
+}
+
+/// The tutor's voice through AVSpeechSynthesizer, rendered into the shared audio engine (see
+/// [`AudioIO`]). `speak` blocks the engine's effect thread until the line has been heard or stopped.
+final class AppleSpeechOutput: NSObject, SpeechOutputCallback, @unchecked Sendable {
+    private let synthesizer = AVSpeechSynthesizer()
+    private let lock = NSLock()
+    private var line: Line?
+    private var converters: [String: AVAudioConverter] = [:]
+
+    /// One line being said: done once the synthesiser has written it all and every buffer has
+    /// been played, or when stopped.
+    private final class Line {
+        let finished = DispatchSemaphore(value: 0)
+        var pending = 0
+        var written = false
+        var over = false
+    }
+
+    func prepare(language: UnLanguage) throws { AudioIO.shared.start() }
 
     func speak(text: String, language: UnLanguage) throws {
         let utterance = AVSpeechUtterance(string: text)
@@ -20,21 +118,80 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, AVSpeechSynthesiz
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         // A child's voice: the system has no child voice for Russian, so the pitch goes up.
         utterance.pitchMultiplier = 1.45
-        finished = DispatchSemaphore(value: 0)
+        let line = Line()
+        lock.lock(); self.line = line; lock.unlock()
+        AudioIO.shared.onLine?()
         AudioSession.tutorSpeaking(true)
-        DispatchQueue.main.async { self.synthesizer.speak(utterance) }
-        finished.wait()
-        AudioSession.tutorSpeaking(false)
+        defer { AudioSession.tutorSpeaking(false) }
+        guard AudioIO.shared.start() else { return }
+        DispatchQueue.main.async { [self] in
+            synthesizer.write(utterance) { [weak self] buffer in
+                guard let self else { return }
+                guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else {
+                    // The end of the line.
+                    self.lock.lock(); line.written = true; self.lock.unlock()
+                    self.check(line)
+                    return
+                }
+                guard let converted = self.convert(pcm) else { return }
+                self.lock.lock(); line.pending += 1; self.lock.unlock()
+                AudioIO.shared.play(converted) { [weak self] in
+                    guard let self else { return }
+                    self.lock.lock(); line.pending -= 1; self.lock.unlock()
+                    self.check(line)
+                }
+            }
+        }
+        line.finished.wait()
+    }
+
+    /// Ends `line` once it has been written and played in full.
+    private func check(_ line: Line) {
+        lock.lock()
+        let done = line.written && line.pending == 0 && !line.over
+        if done { line.over = true }
+        lock.unlock()
+        if done { line.finished.signal() }
+    }
+
+    /// The synthesiser's buffer in the player's format.
+    private func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let target = AudioIO.shared.playerFormat
+        if buffer.format == target { return buffer }
+        let key = buffer.format.description
+        lock.lock()
+        let converter = converters[key] ?? AVAudioConverter(from: buffer.format, to: target)
+        converters[key] = converter
+        lock.unlock()
+        guard let converter else { return nil }
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * target.sampleRate / buffer.format.sampleRate) + 64
+        guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return nil }
+        var given = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if given {
+                status.pointee = .noDataNow
+                return nil
+            }
+            given = true
+            status.pointee = .haveData
+            return buffer
+        }
+        return error == nil ? out : nil
     }
 
     func stopSpeaking() {
         DispatchQueue.main.async { self.synthesizer.stopSpeaking(at: .immediate) }
+        AudioIO.shared.stopPlaying()
+        lock.lock()
+        let line = self.line
+        let stop = line.map { !$0.over } ?? false
+        line?.over = true
+        lock.unlock()
+        if stop { line?.finished.signal() }
     }
 
     func playChime() { AudioServicesPlaySystemSound(1113) }
-
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) { finished.signal() }
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) { finished.signal() }
 }
 
 /// The child's words through SFSpeechRecognizer (on the device when the language allows).
@@ -45,13 +202,12 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, AVSpeechSynthesiz
 /// One recognition request runs continuously; each call hands over the words added since the
 /// last one, once the transcript has stood still for a moment. Cutting a request at every pause
 /// lost the word the child had already begun (a count finger by finger came out "один, три,
-/// пять"), and starting the next one over again heard words twice. The request is replaced only
-/// when the tutor speaks (its voice is not the child's), when the recogniser ends it, or after
+/// пять"), and starting the next one over again heard words twice. With echo cancellation the
+/// request runs on through the tutor's lines (the child may answer over them); without it, it is
+/// replaced when the tutor speaks. It is also replaced when the recogniser ends it, or after
 /// about fifty quiet seconds (a request has a limit).
 final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
-    private let audioEngine = AVAudioEngine()
     private let lock = NSLock()
-    private var tapInstalled = false
     /// Bumped by every cancel (the tutor is about to speak); the request is then dropped.
     private var cancelGeneration = 0
 
@@ -73,6 +229,26 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
     private let pause: TimeInterval = 1.2
     private let maxAge: TimeInterval = 50
 
+    init() {
+        AudioIO.shared.onInput = { [weak self] buffer in
+            guard let self else { return }
+            self.lock.lock(); let stream = self.stream; self.lock.unlock()
+            stream?.request.append(buffer)
+        }
+        // Every tutor line starts a fresh request (it hears the child over the line all the
+        // same): one request kept running through the lines, with what is left of the tutor's
+        // voice in it, stopped handing over the child's words.
+        AudioIO.shared.onLine = { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let old = self.stream
+            self.stream = nil
+            self.lock.unlock()
+            old?.request.endAudio()
+            old?.task?.cancel()
+        }
+    }
+
     func prepare(language: UnLanguage) throws {
         let status = SFSpeechRecognizer.authorizationStatus()
         guard status == .authorized || status == .notDetermined else {
@@ -80,8 +256,11 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
         }
         if status == .notDetermined { SFSpeechRecognizer.requestAuthorization { _ in } }
         AVAudioApplication.requestRecordPermission { _ in }
-        AudioSession.configure()
+        AudioIO.shared.start()
     }
+
+    /// The tutor's voice is taken out of the microphone: the child may answer over it.
+    func bargeIn() -> Bool { AudioIO.shared.echoCancelled }
 
     func listenForNumber(language: UnLanguage, timeoutSeconds: Double) -> UnHeard? {
         var heard: UnHeard?
@@ -95,33 +274,6 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
 
     func listenForText(language: UnLanguage, timeoutSeconds: Double) -> String? {
         listen(language: language, timeoutSeconds: timeoutSeconds) { _ in false }
-    }
-
-    /// Starts the microphone once (again after an interruption stopped it); false without one.
-    private func microphone() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if tapInstalled && audioEngine.isRunning { return true }
-        AudioSession.configure()
-        let input = audioEngine.inputNode
-        // The tutor's voice can reconfigure the audio session, which stops the engine; the tap is
-        // set up again for the input's format as it is now.
-        if tapInstalled {
-            input.removeTap(onBus: 0)
-            tapInstalled = false
-        }
-        let format = input.outputFormat(forBus: 0)
-        // No microphone (the simulator, say): installing a tap would raise an Objective-C
-        // exception, which cannot pass through the engine's Rust frames.
-        guard format.channelCount > 0, format.sampleRate > 0 else { return false }
-        debug("microphone started (\(format.sampleRate) Hz)")
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            guard let self, !AudioSession.isTutorSpeaking else { return }
-            self.lock.lock(); let stream = self.stream; self.lock.unlock()
-            stream?.request.append(buffer)
-        }
-        tapInstalled = true
-        audioEngine.prepare()
-        return (try? audioEngine.start()) != nil
     }
 
     /// The running stream, or a new one when there is none (or it ended, is too old and quiet, or
@@ -140,7 +292,7 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
         old?.task?.cancel()
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language == .russian ? "ru-RU" : "en-US")),
               recognizer.isAvailable else {
-            debug("the recogniser is not available")
+            speechDebug("the recogniser is not available")
             return nil
         }
         let fresh = Stream(language: language)
@@ -152,43 +304,50 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
             self.lock.lock(); defer { self.lock.unlock() }
             if let result {
                 let text = result.bestTranscription.formattedString
-                if text != fresh.transcript { fresh.transcript = text; fresh.changedAt = Date() }
+                if text != fresh.transcript {
+                    fresh.transcript = text
+                    fresh.changedAt = Date()
+                    speechDebug("partial: \(text.debugDescription)")
+                }
                 if result.isFinal { fresh.ended = true }
             }
             if let error {
                 fresh.ended = true
-                self.debug("recognition ended: \(error.localizedDescription)")
+                speechDebug("recognition ended: \(error.localizedDescription)")
             }
         }
         lock.lock(); stream = fresh; lock.unlock()
-        debug("listening")
+        speechDebug("listening")
         return fresh
     }
 
     /// Waits for new words: handed over once the transcript has stood still for `pause` (at once
-    /// when `done` accepts them); nil on timeout or when the tutor starts to speak.
+    /// when `done` accepts them); nil on timeout, or when cancelled.
     private func listen(language: UnLanguage, timeoutSeconds: Double, done: @escaping (String) -> Bool) -> String? {
         lock.lock(); let generation = cancelGeneration; lock.unlock()
         let deadline = Date().addingTimeInterval(timeoutSeconds)
-        // Never start recognising over the tutor's own voice.
-        while AudioSession.isTutorSpeaking {
+        let gated = !AudioIO.shared.echoCancelled
+        // Without echo cancellation, never start recognising over the tutor's own voice.
+        while gated && AudioSession.isTutorSpeaking {
             if Date() >= deadline { return nil }
             Thread.sleep(forTimeInterval: 0.05)
         }
-        guard microphone() else {
-            debug("the microphone did not start")
+        guard AudioIO.shared.start(), AudioIO.shared.hasMicrophone else {
+            speechDebug("the microphone did not start")
             Thread.sleep(forTimeInterval: 0.5)
             return nil
         }
         guard let stream = currentStream(language) else {
-            debug("no recogniser for \(language)")
+            speechDebug("no recogniser for \(language)")
             Thread.sleep(forTimeInterval: 0.5)
             return nil
         }
         while true {
             Thread.sleep(forTimeInterval: 0.1)
             lock.lock()
-            if cancelGeneration != generation || AudioSession.isTutorSpeaking {
+            // Cancelled, the tutor speaking (without echo cancellation), or a new line replaced
+            // the request: the next listen begins on the new one.
+            if cancelGeneration != generation || (gated && AudioSession.isTutorSpeaking) || self.stream !== stream {
                 lock.unlock()
                 return nil
             }
@@ -201,7 +360,7 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
             let over = stream.ended && fresh.isEmpty
             lock.unlock()
             if ready {
-                debug("heard \(text.debugDescription)")
+                speechDebug("heard \(text.debugDescription)")
                 return text
             }
             if over { return nil }
@@ -220,23 +379,24 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
         }
     }
 
-    private func debug(_ line: String) {
-        #if DEBUG
-        FileHandle.standardError.write(("speech: " + line + "\n").data(using: .utf8)!)
-        #endif
-    }
-
-    /// The tutor is about to speak: what is being recognised now is dropped, and a fresh request
-    /// starts after it. The microphone itself keeps running.
+    /// The listen in progress ends. Without echo cancellation the tutor is about to speak: what
+    /// is being recognised now is dropped and a fresh request starts after the line. With it,
+    /// the request runs on (the child may be answering over the line).
     func cancelListening() {
         lock.lock()
         cancelGeneration += 1
-        let old = stream
-        stream = nil
+        let old = AudioIO.shared.echoCancelled ? nil : stream
+        if old != nil { stream = nil }
         lock.unlock()
         old?.request.endAudio()
         old?.task?.cancel()
     }
+}
+
+func speechDebug(_ line: String) {
+    #if DEBUG
+    FileHandle.standardError.write(("speech: " + line + "\n").data(using: .utf8)!)
+    #endif
 }
 
 /// One audio session for the tutor's voice and the microphone: play and record at once, out of
@@ -247,8 +407,8 @@ enum AudioSession {
     nonisolated(unsafe) private static var speakingUntil: Date?
     nonisolated(unsafe) private static var speaking = false
 
-    /// The tutor's voice is playing (or ended a moment ago, while its echo dies away): the
-    /// microphone's audio is the tutor, not the child.
+    /// The tutor's voice is playing (or ended a moment ago, while its echo dies away). Without
+    /// echo cancellation the microphone's audio is then the tutor, not the child.
     static var isTutorSpeaking: Bool {
         lock.lock(); defer { lock.unlock() }
         return speaking || (speakingUntil.map { Date() < $0 } ?? false)

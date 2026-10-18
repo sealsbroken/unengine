@@ -35,6 +35,8 @@ final class ScriptedSpeech: SpeechInputCallback, @unchecked Sendable {
         return lines.removeFirst()
     }
 
+    func bargeIn() -> Bool { false }
+
     func cancelListening() {
         lock.lock()
         cancelled = true

@@ -339,6 +339,9 @@ pub trait SpeechInputCallback: Send + Sync {
     /// before the timeout or listening was cancelled.
     fn listen_for_text(&self, language: UnLanguage, timeout_seconds: f64) -> Option<String>;
     fn cancel_listening(&self);
+    /// The microphone stays open while the tutor speaks, the tutor's voice taken out of it
+    /// (echo cancellation): the child may answer over a question (iOS).
+    fn barge_in(&self) -> bool;
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -406,6 +409,10 @@ impl SpeechInput for CallbackInput {
     /// them for every line, and iOS drops the microphone's sound until just after it).
     fn hears_tutor(&self) -> bool {
         false
+    }
+
+    fn barge_in(&self) -> bool {
+        self.0.barge_in()
     }
 }
 

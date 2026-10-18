@@ -17,6 +17,7 @@ pub struct ScriptedSpeechInput {
     cancel: Mutex<Option<u64>>,
     fail_prepare: Option<String>,
     hears_tutor: bool,
+    barge_in: bool,
 }
 
 impl ScriptedSpeechInput {
@@ -33,6 +34,7 @@ impl ScriptedSpeechInput {
             cancel: Mutex::new(None),
             fail_prepare: None,
             hears_tutor: true,
+            barge_in: false,
         }
     }
 
@@ -45,6 +47,12 @@ impl ScriptedSpeechInput {
     /// Like the phone apps: nothing is recognised while the tutor speaks.
     pub fn deaf_to_the_tutor(self) -> Self {
         Self { hears_tutor: false, ..self }
+    }
+
+    /// Like the iPhone and iPad: the microphone stays open while the tutor speaks, the tutor's
+    /// voice taken out (the child can answer over a question).
+    pub fn barging_in(self) -> Self {
+        Self { barge_in: true, hears_tutor: false, ..self }
     }
 
     /// A double whose `prepare` fails, like a missing microphone.
@@ -133,6 +141,10 @@ impl SpeechInput for ScriptedSpeechInput {
     fn hears_tutor(&self) -> bool {
         self.hears_tutor
     }
+
+    fn barge_in(&self) -> bool {
+        self.barge_in
+    }
 }
 
 /// Records what the tutor says, optionally pacing it like real speech.
@@ -140,13 +152,14 @@ pub struct SilentSpeechOutput {
     pub spoken: Mutex<Vec<String>>,
     pub seconds_per_char: f64,
     echo: bool,
-    stop: CancelToken,
+    /// Bumped by every `stop`: the line being said ends (a later line is not affected).
+    stops: std::sync::atomic::AtomicU64,
 }
 
 impl SilentSpeechOutput {
     /// `echo` prints the lines to stderr.
     pub fn new(echo: bool) -> Self {
-        Self { spoken: Mutex::new(Vec::new()), seconds_per_char: 0.0, echo, stop: CancelToken::default() }
+        Self { spoken: Mutex::new(Vec::new()), seconds_per_char: 0.0, echo, stops: Default::default() }
     }
 
     /// Like [`SilentSpeechOutput::new`] but takes as long as speaking would (0.045 s per character).
@@ -173,12 +186,13 @@ impl SpeechOutput for SilentSpeechOutput {
         if self.echo {
             eprintln!("[tutor] {text}");
         }
+        let stops = self.stops.load(std::sync::atomic::Ordering::SeqCst);
         let pace = Duration::from_secs_f64(self.seconds_per_char * text.chars().count() as f64);
         if !pace.is_zero() {
             let started = Instant::now();
             let token = CancelToken::default();
             while started.elapsed() < pace {
-                if self.stop.is_cancelled() {
+                if self.stops.load(std::sync::atomic::Ordering::SeqCst) != stops {
                     break;
                 }
                 token.wait(Duration::from_millis(20).min(pace - started.elapsed()));
@@ -188,7 +202,7 @@ impl SpeechOutput for SilentSpeechOutput {
     }
 
     fn stop(&self) {
-        self.stop.cancel();
+        self.stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
