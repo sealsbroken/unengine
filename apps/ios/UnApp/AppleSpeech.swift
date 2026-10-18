@@ -139,7 +139,10 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
         old?.request.endAudio()
         old?.task?.cancel()
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language == .russian ? "ru-RU" : "en-US")),
-              recognizer.isAvailable else { return nil }
+              recognizer.isAvailable else {
+            debug("the recogniser is not available")
+            return nil
+        }
         let fresh = Stream(language: language)
         fresh.request.shouldReportPartialResults = true
         fresh.request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
@@ -154,7 +157,7 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
             }
             if let error {
                 fresh.ended = true
-                if fresh.transcript.isEmpty { self.debug("recognition ended: \(error.localizedDescription)") }
+                self.debug("recognition ended: \(error.localizedDescription)")
             }
         }
         lock.lock(); stream = fresh; lock.unlock()
@@ -172,7 +175,16 @@ final class AppleSpeechInput: SpeechInputCallback, @unchecked Sendable {
             if Date() >= deadline { return nil }
             Thread.sleep(forTimeInterval: 0.05)
         }
-        guard microphone(), let stream = currentStream(language) else { return nil }
+        guard microphone() else {
+            debug("the microphone did not start")
+            Thread.sleep(forTimeInterval: 0.5)
+            return nil
+        }
+        guard let stream = currentStream(language) else {
+            debug("no recogniser for \(language)")
+            Thread.sleep(forTimeInterval: 0.5)
+            return nil
+        }
         while true {
             Thread.sleep(forTimeInterval: 0.1)
             lock.lock()

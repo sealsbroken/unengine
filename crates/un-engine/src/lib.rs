@@ -714,7 +714,12 @@ impl Inner {
             match result {
                 Ok(text) => {
                     failures = 0;
-                    if !token.is_cancelled() {
+                    // A listen is cancelled when the tutor starts a line, so as not to take the
+                    // tutor's voice for the child's. A microphone that never hears the tutor (the
+                    // phones) returns only words said after the line, so they are the child's even
+                    // then: the cancel can land before the recogniser has begun, which then heard
+                    // the child's "Один" after the line and had it dropped.
+                    if !token.is_cancelled() || !speech_in.hears_tutor() {
                         self.route_utterance(text);
                     }
                 }
