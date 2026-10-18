@@ -58,6 +58,9 @@ jobs:
           TAG="${INPUT_TAG// /}"
           [ -n "$TAG" ] || TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::No tag $TAG"; exit 1; }
+          # The packaging (Info.plist, icon, entitlements) comes from this workflow's commit, so an
+          # older tag can be packaged too.
+          cp -R apps/un/macos "$RUNNER_TEMP/macos"
           git checkout -q "$TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
@@ -111,7 +114,7 @@ jobs:
           app=dist/Un-$VERSION-macos-arm64/Un.app
           build=unengine/apps/un/target/release
           models=unengine/models
-          mac=unengine/apps/un/macos
+          mac=$RUNNER_TEMP/macos
           # The executables find the libraries in ../Frameworks and the models in ../Resources/models
           # (apps/un/build.rs, un_app::ModelPaths).
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources/models/speech"
