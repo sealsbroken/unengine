@@ -119,7 +119,7 @@ final class LessonModel: ObservableObject {
     func answerNext(_ yes: Bool) {
         session?.answerNextLesson(yes: yes)
         if yes, let next = childId.flatMap({ profiles.nextLesson(id: $0) }) ?? nextLessonId {
-            close()
+            close(keepCamera: true)
             start(next)
         } else if !yes {
             declined = true
@@ -228,7 +228,51 @@ final class LessonModel: ObservableObject {
             return
         }
         preparePerception()
-        camera = CameraSource { [weak self] y, uv, w, h, ys, uvs, t in
+        // One camera for the whole visit: the next lesson keeps it. (A new capture session started
+        // while the old one was still stopping crashed AVFoundation as the preview moved over.)
+        if camera == nil { camera = makeCamera() }
+        camera?.start()
+        // After a completed lesson the tutor asks "Продолжим?"; a yes starts the next one.
+        session?.offerNextLesson(offer: nextLessonId != nil)
+        session?.start()
+        running = true
+        // The phone lies on the table for minutes with nobody touching it: no auto-lock while
+        // a lesson runs.
+        UIApplication.shared.isIdleTimerDisabled = true
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.snapshot = self.session?.snapshot()
+                // The lesson's end, recorded for the child once: progress, what it remembered.
+                if self.snapshot?.summary != nil, self.endedAt == nil { self.endedAt = Date() }
+                if let summary = self.snapshot?.summary, !self.recorded, let childId = self.childId {
+                    self.recorded = true
+                    self.profiles.record(id: childId, lessonId: self.lessonId, summary: summary)
+                    self.reloadChildren()
+                }
+                // Paused (the button, or "пауза" said aloud): back to the list once the goodbye
+                // has been said and the lesson recorded, at the latest after a few seconds.
+                if let s = self.snapshot, s.pauseRequested || self.leavingSince != nil {
+                    if self.leavingSince == nil { self.leavingSince = Date() }
+                    let said = s.status == .finished && (self.recorded || self.childId == nil)
+                    if said || Date().timeIntervalSince(self.leavingSince!) > 8 {
+                        self.end()
+                        return
+                    }
+                }
+                if self.snapshot?.nextLessonRequested == true,
+                   let next = self.childId.flatMap({ self.profiles.nextLesson(id: $0) }) ?? self.nextLessonId {
+                    self.timer?.invalidate()
+                    self.close(keepCamera: true)
+                    self.start(next)
+                }
+            }
+        }
+    }
+
+    /// The camera, its frames counted by the shared perception and handed to whichever lesson runs.
+    private func makeCamera() -> CameraSource {
+        CameraSource { [weak self] y, uv, w, h, ys, uvs, t in
             guard let self, let perception = self.perception else { return }
             let began = Date()
             let result = Result { try perception.processNv12(y: y, uv: uv, width: w, height: h, yStride: ys, uvStride: uvs, timestamp: t) }
@@ -264,43 +308,6 @@ final class LessonModel: ObservableObject {
                 #endif
             }
         }
-        camera?.start()
-        // After a completed lesson the tutor asks "Продолжим?"; a yes starts the next one.
-        session?.offerNextLesson(offer: nextLessonId != nil)
-        session?.start()
-        running = true
-        // The phone lies on the table for minutes with nobody touching it: no auto-lock while
-        // a lesson runs.
-        UIApplication.shared.isIdleTimerDisabled = true
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.snapshot = self.session?.snapshot()
-                // The lesson's end, recorded for the child once: progress, what it remembered.
-                if self.snapshot?.summary != nil, self.endedAt == nil { self.endedAt = Date() }
-                if let summary = self.snapshot?.summary, !self.recorded, let childId = self.childId {
-                    self.recorded = true
-                    self.profiles.record(id: childId, lessonId: self.lessonId, summary: summary)
-                    self.reloadChildren()
-                }
-                // Paused (the button, or "пауза" said aloud): back to the list once the goodbye
-                // has been said and the lesson recorded, at the latest after a few seconds.
-                if let s = self.snapshot, s.pauseRequested || self.leavingSince != nil {
-                    if self.leavingSince == nil { self.leavingSince = Date() }
-                    let said = s.status == .finished && (self.recorded || self.childId == nil)
-                    if said || Date().timeIntervalSince(self.leavingSince!) > 8 {
-                        self.end()
-                        return
-                    }
-                }
-                if self.snapshot?.nextLessonRequested == true,
-                   let next = self.childId.flatMap({ self.profiles.nextLesson(id: $0) }) ?? self.nextLessonId {
-                    self.timer?.invalidate()
-                    self.close()
-                    self.start(next)
-                }
-            }
-        }
     }
 
     /// The lesson after the current one in the list, if any.
@@ -314,7 +321,7 @@ final class LessonModel: ObservableObject {
         running = false
         UIApplication.shared.isIdleTimerDisabled = false
     }
-    func restart() { close(); start() }
+    func restart() { close(keepCamera: true); start() }
     /// When the grown-up (or the child, saying "пауза") asked to stop: the lesson ends as paused
     /// and the app goes back to the list once the tutor has said goodbye.
     private var leavingSince: Date?
@@ -338,12 +345,15 @@ final class LessonModel: ObservableObject {
     func repeatLine() { session?.`repeat`() }
     func skip() { session?.skip() }
 
-    func close() {
+    /// Ends the session; the camera too unless another lesson follows at once.
+    func close(keepCamera: Bool = false) {
         UIApplication.shared.isIdleTimerDisabled = false
         timer?.invalidate()
-        camera?.stop()
-        camera = nil
-        table = nil
+        if !keepCamera {
+            camera?.stop()
+            camera = nil
+            table = nil
+        }
         // Torn down off the main thread: shutting down waits for the engine's threads, which may
         // be finishing a line.
         let closing = session
