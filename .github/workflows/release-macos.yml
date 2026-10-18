@@ -1,0 +1,177 @@
+name: Release macOS
+
+# Builds Un for macOS (Apple silicon; alpha: built and smoke-tested on a GitHub runner, ad-hoc
+# signed, not notarised) and attaches the zip to the GitHub Release of a v* tag. Release Desktop
+# and Release iOS run it after tagging; run it by hand for an existing tag:
+#
+#   gh workflow run "Release macOS"                # the latest v* tag
+#   gh workflow run "Release macOS" -f tag=v0.1.8
+#
+# Same contents as the Windows build (apps/un with the unmath lessons, the toy detector, Whisper
+# small, Piper voices); see release-windows.yml for the licences.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The v* tag to build and attach to (blank: the latest)'
+        required: false
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: write   # upload the zip to the release
+
+concurrency:
+  group: release-macos
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: Build, smoke-test and attach
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unengine
+          fetch-depth: 0
+
+      - name: Resolve the tag
+        id: tag
+        working-directory: unengine
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG// /}"
+          [ -n "$TAG" ] || TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::No tag $TAG"; exit 1; }
+          git checkout -q "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: sealsbroken/unmath
+          path: unmath
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: unengine/apps/un
+
+      - name: Build
+        run: cargo build --release --manifest-path unengine/apps/un/Cargo.toml
+
+      - name: Models
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+          python3 unengine/tools/fetch_models.py --whisper small
+
+      - name: Assemble the folder
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          out=dist/Un-$VERSION-macos-arm64
+          build=unengine/apps/un/target/release
+          models=unengine/models
+          mkdir -p "$out/models/speech"
+          cp "$build/un" "$build/un-cli" "$out/"
+          # The shared libraries (onnxruntime, sherpa-onnx) the executables find next to themselves.
+          cp -a "$build"/*.dylib "$out/"
+          cp "$models/toys.onnx" "$models/toys.json" "$out/models/"
+          cp "$models/speech/silero_vad.onnx" "$out/models/speech/"
+          for voice in vits-piper-ru_RU-irina-medium vits-piper-en_US-lessac-medium; do
+            cp -R "$models/speech/$voice" "$out/models/speech/"
+          done
+          whisper=sherpa-onnx-whisper-small
+          mkdir -p "$out/models/speech/$whisper"
+          cp "$models/speech/$whisper"/*int8* "$models/speech/$whisper"/*tokens* "$out/models/speech/$whisper/"
+          # Ad-hoc signatures: Apple silicon runs nothing unsigned.
+          for f in "$out"/un "$out"/un-cli "$out"/*.dylib; do codesign --force --sign - "$f"; done
+          ls -la "$out"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Smoke tests (no camera, no microphone, no speakers)
+        run: |
+          set -euo pipefail
+          cd "$OUT"
+          ./un-cli strategies | tee strategies.txt
+          grep -q '^unmath-count-to-three' strategies.txt && ! grep -q '^demo' strategies.txt
+          ./un-cli --models models lesson --sim 1 --strategy unmath-count-to-three --language ru \
+            --voice console --mic off --answers "лес,один" --frames 120 | tee lesson.txt
+          grep -q 'tutor: ' lesson.txt
+          ./un-cli --models models check-speech --language ru
+          ./un-cli --models models check-speech --language en
+          python3 - <<'PY'
+          # A wooden table with one yellow toy, as a binary PPM; sips makes it a JPEG.
+          w, h = 640, 480
+          px = bytearray()
+          for y in range(h):
+              for x in range(w):
+                  px += bytes((240, 190, 40)) if (x - 320) ** 2 + (y - 240) ** 2 < 60 ** 2 else bytes((196, 138, 82))
+          open("table.ppm", "wb").write(b"P6 %d %d 255\n" % (w, h) + bytes(px))
+          PY
+          sips -s format jpeg table.ppm --out table.jpg >/dev/null
+          ./un-cli --models models run --source table.jpg --frames 3 | tee detector.txt
+          grep -q '"raw"' detector.txt
+          rm -f strategies.txt lesson.txt detector.txt table.ppm table.jpg
+
+      - name: README and zip
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          UNMATH=$(git -C unmath rev-parse HEAD)
+          cat > "$OUT/README.txt" <<README
+          Un ${VERSION} for macOS (Apple silicon, alpha)
+
+          Un teaches children to count with real toys on a table: the camera counts the toys, a voice
+          tutor leads the lesson, the child answers by voice.
+
+          ALPHA: built and smoke-tested automatically, ad-hoc signed, not notarised. macOS blocks a
+          downloaded app it can't verify; after unzipping, clear the quarantine once:
+
+            xattr -dr com.apple.quarantine Un-${VERSION}-macos-arm64
+            ./un          the app (allow the camera and microphone when asked)
+            ./un-cli      the command line: ./un-cli lesson --strategy unmath-count-to-three --language ru
+
+          Keep the .dylib files and the models folder next to the executables. Settings and the
+          children's progress are kept in ~/Library/Application Support/un.
+
+          Source: https://github.com/sealsbroken/unengine (${TAG}) and
+          https://github.com/sealsbroken/unmath (${UNMATH}). The engine and lessons are LGPL-3.0;
+          the bundled Piper voices use espeak-ng (GPL-3.0), so this bundle as a whole is GPL-3.0.
+          README
+          (cd dist && ditto -c -k --keepParent "Un-${VERSION}-macos-arm64" "Un-${VERSION}-macos-arm64-alpha.zip")
+          ls -la dist
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        working-directory: unengine
+        run: |
+          set -euo pipefail
+          zip="../dist/Un-${VERSION}-macos-arm64-alpha.zip"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "Un ${VERSION}" --notes "Un ${VERSION}."
+          fi
+          gh release upload "$TAG" "$zip" --clobber
+          body=$(gh release view "$TAG" --json body --jq .body)
+          if ! grep -q 'macOS (alpha)' <<<"$body"; then
+            printf '%s\n\n**macOS (alpha)**: Un-%s-macos-arm64-alpha.zip, Apple silicon, built and smoke-tested on a GitHub runner, ad-hoc signed (see its README).\n' "$body" "$VERSION" > notes.md
+            gh release edit "$TAG" --notes-file notes.md
+          fi

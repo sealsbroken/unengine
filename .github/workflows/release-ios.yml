@@ -2,8 +2,8 @@ name: Release iOS
 
 # Cuts an iOS release of Un: the version from the tag → lesson tests → signed App Store build →
 # TestFlight → tag + GitHub Release → once processed, the External group (public beta), which
-# submits Beta App Review (testflight-external.yml); the Windows x64 alpha of the same tag is built
-# and attached alongside (release-windows.yml). Versioned and tagged as onym-ios is.
+# submits Beta App Review (testflight-external.yml); the Windows x64 and macOS alphas of the same
+# tag are built and attached alongside (release-windows.yml, release-macos.yml). Versioned and tagged as onym-ios is.
 #
 # Trigger (Actions tab → "Release iOS" → Run workflow), or:
 #   gh workflow run "Release iOS"                 # next patch of the latest v* tag
@@ -229,6 +229,15 @@ jobs:
     name: Windows alpha
     needs: [version, release]
     uses: ./.github/workflows/release-windows.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    permissions:
+      contents: write
+
+  macos:
+    name: macOS alpha
+    needs: [version, release]
+    uses: ./.github/workflows/release-macos.yml
     with:
       tag: ${{ needs.version.outputs.tag }}
     permissions:
