@@ -25,6 +25,10 @@ pub struct Saved {
     /// A microphone name; `None` for the system default.
     pub mic_device: Option<String>,
     pub chime: Option<bool>,
+    /// A drawn table instead of the camera (Settings).
+    pub simulated: Option<bool>,
+    pub sim_count: Option<u32>,
+    pub reduce_motion: Option<bool>,
     /// What the lessons asked to remember between sessions (names, where a lesson stopped);
     /// handed back as `SessionConfig::extra`.
     pub extra: HashMap<String, String>,
