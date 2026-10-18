@@ -1,0 +1,74 @@
+# The iOS app to TestFlight, from CI (.github/workflows/release-ios.yml). The Xcode project
+# (apps/ios) is prepared first by `tools/ios.sh prepare`: the engine with the unmath lessons.
+#
+# Signing needs no certificate repository: Xcode signs automatically with an App Store Connect
+# API key (cloud-managed distribution certificate, profiles created on demand), so the
+# sealsbroken repositories and the key are all a release needs.
+#
+# Environment:
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_CONTENT  an App Store Connect API key with the Admin role
+#                                               (cloud-managed certificates need it);
+#                                               ASC_KEY_CONTENT is the .p8 file's text
+#   MARKETING_VERSION, CURRENT_PROJECT_VERSION  from scripts/resolve-release-version.sh
+
+default_platform(:ios)
+
+PROJECT = File.expand_path("../apps/ios/UnApp.xcodeproj", __dir__)
+TEAM_ID = "7C7LXXWRMG"
+
+platform :ios do
+  desc "Archive, sign (automatic, with the API key) and upload to TestFlight"
+  lane :testflight_release do
+    setup_ci(force: true)
+
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_CONTENT"),
+      in_house: false
+    )
+
+    # xcodebuild reads the key from a file for -allowProvisioningUpdates.
+    key_path = File.join(Dir.tmpdir, "AuthKey_#{ENV.fetch('ASC_KEY_ID')}.p8")
+    File.write(key_path, ENV.fetch("ASC_KEY_CONTENT"))
+    File.chmod(0o600, key_path)
+    auth = [
+      "-allowProvisioningUpdates",
+      "-authenticationKeyPath #{key_path}",
+      "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')}",
+      "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
+    ].join(" ")
+
+    begin
+      gym(
+        project: PROJECT,
+        scheme: "UnApp",
+        configuration: "Release",
+        destination: "generic/platform=iOS",
+        export_method: "app-store",
+        archive_path: "build/ios/Un.xcarchive",
+        export_options: { signingStyle: "automatic", teamID: TEAM_ID },
+        xcargs: [
+          auth,
+          "MARKETING_VERSION=#{ENV.fetch('MARKETING_VERSION')}",
+          "CURRENT_PROJECT_VERSION=#{ENV.fetch('CURRENT_PROJECT_VERSION')}",
+          "DEVELOPMENT_TEAM=#{TEAM_ID}",
+          "CODE_SIGN_STYLE=Automatic",
+          "COMPILER_INDEX_STORE_ENABLE=NO"
+        ].join(" "),
+        export_xcargs: auth,
+        output_directory: "build/ios",
+        output_name: "Un.ipa"
+      )
+    ensure
+      File.delete(key_path) if File.exist?(key_path)
+    end
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: "build/ios/Un.ipa",
+      # The build appears in TestFlight once Apple has processed it; no need to hold the runner.
+      skip_waiting_for_build_processing: true
+    )
+  end
+end

@@ -1,6 +1,6 @@
 # XcodeGen project: `xcodegen generate` after building the Rust library (see README.md).
-# The library is unmethod-mobile (the engine plus the Unmethod lessons); for the engine alone
-# with the demo strategy, build un-ffi and link -lun_ffi instead.
+# The library is un-mobile (apps/mobile: the engine plus the unmath lessons), built by
+# tools/ios.sh; for the engine alone with the demo strategy, build un-ffi and link -lun_ffi instead.
 name: UnApp
 options:
   bundleIdPrefix: app.onym.undigit
@@ -34,8 +34,8 @@ targets:
         "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(PROJECT_DIR)/Frameworks/iphoneos
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(PROJECT_DIR)/Frameworks/iphonesimulator
         # No -all_load: the prebuilt ONNX Runtime carries some objects twice, which would then
-        # collide. Strategies are registered explicitly (unmethod_mobile_init) instead.
-        OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]
+        # collide. Strategies are registered explicitly (un_mobile_init) instead.
+        OTHER_LDFLAGS: ["-lun_mobile", "-lc++"]
         TARGETED_DEVICE_FAMILY: "1,2"  # iPhone and iPad, portrait, full screen
   # Synthetic lesson tests: the engine and the lessons through the Swift bindings, with a
   # scripted child and a simulated table, no host app (tools/ios.sh test).
@@ -53,7 +53,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: UnApp/Bridging.h
         "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(PROJECT_DIR)/Frameworks/iphoneos
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(PROJECT_DIR)/Frameworks/iphonesimulator
-        OTHER_LDFLAGS: ["-lunmethod_mobile", "-lc++"]
+        OTHER_LDFLAGS: ["-lun_mobile", "-lc++"]
 schemes:
   UnApp:
     build:

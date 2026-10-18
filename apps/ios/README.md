@@ -8,9 +8,26 @@ by implementing the same interfaces.
 
 ## Build
 
-The product build (engine plus the Unmethod lessons) is one command in the unmethod checkout:
-`tools/ios.sh sim` builds, installs and launches on a simulator, `tools/ios.sh device` builds
-for an iPhone and opens the Xcode project. By hand, for the engine alone with the demo strategy:
+The app (the engine plus the unmath lessons, `apps/mobile`) is one command in this repository,
+with [unmath](https://github.com/sealsbroken/unmath) cloned next to it (`../unmath`) and the toy
+detector in `models/` (`gh release download models-v1 -R sealsbroken/unengine -D models`):
+
+```sh
+tools/ios.sh sim            # build, install and launch on a simulator ("iPhone 17"; tools/ios.sh sim "iPhone 17 Pro")
+tools/ios.sh run [name]     # build, install and launch on a connected iPhone/iPad (default: the first iPad)
+UN_CONSOLE=1 tools/ios.sh run   # the same, with the app's console
+tools/ios.sh test           # the lesson tests (Tests/) on a simulator: a scripted child, a simulated table
+tools/ios.sh device         # build, then open the Xcode project
+```
+
+TestFlight: the **Release iOS** workflow (Actions tab → Run workflow, or `gh workflow run "Release iOS"`)
+builds on a GitHub macOS runner with unmath's main next to this repository, signs automatically with an App Store Connect API key (no certificate repository),
+uploads to TestFlight, then tags the commit and creates a GitHub Release (no IPA attached: the
+repository is public). As in onym-ios the tag is the version: leave it blank for the next patch of the
+latest `v*` tag; `v0.1.7` gives version 0.1.7, build 107 (`scripts/resolve-release-version.sh`). Secrets
+and the first-run setup are listed at the top of `.github/workflows/release-ios.yml`.
+
+By hand, for the engine alone with the demo strategy:
 
 ```sh
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim && brew install xcodegen
@@ -22,14 +39,14 @@ cp ../../models/toys.{onnx,json} Resources/models/
 xcodegen generate && open UnApp.xcodeproj
 ```
 
-With un-ffi alone, link `-lun_ffi` in `project.yml` and drop the `unmethod_mobile_init()` call
-in `UnApp.swift` (it is the product library's registration of its lessons).
+With un-ffi alone, link `-lun_ffi` in `project.yml` and drop the `un_mobile_init()` call
+in `UnApp.swift` (it is un-mobile's registration of the unmath lessons).
 
 Notes:
 
 * `--no-format`: swift-format spins for a very long time on the generated file.
 * No `-all_load`: the prebuilt ONNX Runtime carries some objects twice and the link would
-  fail; strategies are therefore registered explicitly through `unmethod_mobile_init()`.
+  fail; strategies are therefore registered explicitly through `un_mobile_init()`.
 * `Resources/models` is bundled as a folder reference, so the app finds `models/toys.onnx`.
 * The simulator has no camera and no microphone: the tutor speaks, sees an empty table and hears
   nothing, which exercises the no-reaction dialogue. For the real lesson run on a phone:
@@ -49,7 +66,7 @@ Notes:
 bindings with a scripted child (`ScriptedSpeech`, lines queued by the test), a simulated table
 (`UnSession.observe`) and the tutor's lines written down (`RecordedVoice`). No camera, no
 microphone, no host app; the engine's own timers run, so a count takes the beat and a half the
-tutor waits after the last number. `tools/ios.sh test` in the unmethod checkout runs them on the
+tutor waits after the last number. `tools/ios.sh test` runs them on the
 simulator (`xcodebuild test -scheme UnApp -only-testing:UnAppTests`).
 
 Generated files: `Generated/un_ffi.swift`, `Generated/un_ffiFFI.h`, `Generated/un_ffiFFI.modulemap`.

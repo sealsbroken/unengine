@@ -1,0 +1,35 @@
+# The library the iOS app links: the Un FFI with the unmath lessons (../unmath, checked out next
+# to this repository) and nothing else. Its own workspace, so the engine's builds and tests never
+# need the unmath checkout.
+[workspace]
+
+[package]
+name = "un-mobile"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+license = "LGPL-3.0-or-later"
+publish = false
+description = "The library the iOS app links: the Un FFI with the unmath lessons. Bindings are generated from it in UniFFI library mode."
+
+[lib]
+name = "un_mobile"
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+un-core = { path = "../../crates/un-core" }
+un-ffi = { path = "../../crates/un-ffi" }
+unmath = { path = "../../../unmath" }
+uniffi = { version = "0.32", features = ["cli"] }
+
+# iPhone and iPad: the detector on the Neural Engine / GPU (CoreML).
+[target.'cfg(target_os = "ios")'.dependencies]
+un-ffi = { path = "../../crates/un-ffi", features = ["coreml"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

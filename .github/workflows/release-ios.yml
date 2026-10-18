@@ -1,0 +1,215 @@
+name: Release iOS
+
+# Cuts an iOS release of Un: the version from the tag → lesson tests → signed App Store build →
+# TestFlight → tag + GitHub Release. Versioned and tagged as onym-ios is.
+#
+# Trigger (Actions tab → "Release iOS" → Run workflow), or:
+#   gh workflow run "Release iOS"                 # next patch of the latest v* tag
+#   gh workflow run "Release iOS" -f tag=v0.2.0   # a chosen version
+#
+# Version: the tag is the single source of truth (scripts/resolve-release-version.sh):
+# v0.1.7 → CFBundleShortVersionString 0.1.7, CFBundleVersion 107 (MAJOR*10000 + MINOR*100 + PATCH).
+# Nothing is committed for a release; the tag is created on the built commit only once the build
+# reached TestFlight.
+#
+# The app is this repository (the engine, apps/mobile, the Xcode project) with the unmath lessons
+# (sealsbroken/unmath at its main branch, checked out next to it; the release notes record its
+# commit) and nothing else. The toy detector comes from this repository's `models-v1` release.
+# The repository is public, so neither the IPA nor build artifacts are published: the build goes
+# to TestFlight only.
+#
+# Everything comes from the sealsbroken repositories: no certificate vault. Xcode signs
+# automatically with the App Store Connect API key (cloud-managed distribution certificate).
+#
+# Required secrets (sealsbroken organisation secrets granted to this repository, or repository
+# secrets):
+#   ASC_KEY_ID        — the App Store Connect API key's Key ID
+#   ASC_ISSUER_ID     — the API keys' Issuer ID
+#   ASC_KEY_CONTENT   — the key's .p8 file, its full text. Admin role: cloud-managed signing
+#                       creates the distribution certificate and profiles with it.
+# The app record app.onym.undigit must exist in App Store Connect (team 7C7LXXWRMG).
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.7); leave blank for the next patch of the latest v* tag'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write   # tag + GitHub Release
+
+concurrency:
+  group: release-ios
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Resolve the version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      marketing: ${{ steps.version.outputs.MARKETING_VERSION }}
+      build: ${{ steps.version.outputs.CURRENT_PROJECT_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The v* tag history: `fetch-tags: true` alone (with the default depth 1) does not
+          # populate refs/tags.
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG// /}"
+          if [ -z "$TAG" ]; then
+            # Next patch of the latest reachable v-tag (vMAJOR.MINOR.PATCH only).
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+            if [ -z "$LATEST" ]; then
+              REMOTE_LATEST=$(git ls-remote --tags origin 'refs/tags/v*' | sed 's|.*refs/tags/||' | grep -v '\^{}' \
+                                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+              if [ -n "$REMOTE_LATEST" ]; then
+                echo "::error::No v* tags here but the remote has $REMOTE_LATEST: the tag fetch failed. Refusing to start over at v0.0.1."
+                exit 1
+              fi
+              TAG="v0.0.1"
+              echo "::notice::No v* tags yet; starting at $TAG"
+            else
+              IFS='.' read -r MAJ MIN PAT <<< "${LATEST#v}"
+              TAG="v${MAJ}.${MIN}.$((PAT + 1))"
+              echo "::notice::No tag given; ${LATEST} → ${TAG}"
+            fi
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' is not vMAJOR.MINOR.PATCH (App Store versions are numeric)."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists. Pick a higher version or leave the tag blank."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve version and build number
+        id: version
+        env:
+          RELEASE_VERSION: ${{ steps.tag.outputs.tag }}
+        run: |
+          scripts/resolve-release-version.sh | tee -a "$GITHUB_OUTPUT"
+          echo "### ${RELEASE_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          scripts/resolve-release-version.sh | sed 's/^/- /' >> "$GITHUB_STEP_SUMMARY"
+
+  testflight:
+    name: Build and upload to TestFlight
+    needs: version
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.tag }}
+      MARKETING_VERSION: ${{ needs.version.outputs.marketing }}
+      CURRENT_PROJECT_VERSION: ${{ needs.version.outputs.build }}
+    outputs:
+      unmath: ${{ steps.revs.outputs.unmath }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unengine
+      - uses: actions/checkout@v4
+        with:
+          repository: sealsbroken/unmath
+          path: unmath
+
+      - name: Record the lessons commit
+        id: revs
+        run: echo "unmath=$(git -C unmath rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Select the latest Xcode
+        # The app uses iOS 26 APIs (Liquid Glass) behind availability checks: it needs the iOS 26 SDK.
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: unengine/apps/mobile
+
+      - name: Install xcodegen
+        run: command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Fetch the toy detector
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+
+      - name: Lesson tests
+        run: |
+          cargo test --manifest-path unmath/Cargo.toml
+          cargo test --manifest-path unengine/apps/mobile/Cargo.toml
+
+      - name: Prepare the Xcode project (library, bindings, models)
+        run: zsh unengine/tools/ios.sh prepare
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: unengine
+
+      - name: Archive, sign and upload to TestFlight
+        working-directory: unengine
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: bundle exec fastlane ios testflight_release
+
+
+
+  release:
+    name: Tag and GitHub Release
+    needs: [version, testflight]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Release notes
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.marketing }}
+          BUILD: ${{ needs.version.outputs.build }}
+          UNMATH: ${{ needs.testflight.outputs.unmath }}
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${TAG}$" | head -1 || true)
+          RANGE=${PREV_TAG:+${PREV_TAG}..}HEAD
+          {
+            echo "iOS ${VERSION} (build ${BUILD}), uploaded to TestFlight."
+            echo ""
+            echo "With the lessons of sealsbroken/unmath@${UNMATH}."
+            echo ""
+            echo "## What's Changed"
+            echo ""
+            git log "$RANGE" --pretty=format:"- %s" --no-merges
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              echo ""
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+            fi
+          } > release_notes.md
+
+      - name: Create the tag and GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: iOS ${{ needs.version.outputs.marketing }}
+          body_path: release_notes.md

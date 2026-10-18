@@ -4,7 +4,7 @@ import XCTest
 /// simulated table, the tutor's lines written down. No camera, no microphone; the engine's own
 /// timers run, so a count takes the beat and a half the tutor waits after the last number.
 final class LessonsTests: XCTestCase {
-    private static let registered: Void = unmethod_mobile_init()
+    private static let registered: Void = un_mobile_init()
 
     /// One lesson with its doubles and the helpers that play the child.
     final class Lesson {
@@ -52,7 +52,6 @@ final class LessonsTests: XCTestCase {
         XCTAssertTrue(ids.first?.hasPrefix("unmath-count-to-") == true, "\(ids)")
         XCTAssertTrue(ids.allSatisfy { $0.hasPrefix("unmath-") }, "\(ids)")
         XCTAssertFalse(ids.contains("demo"), "the engine's demo is not a product lesson")
-        XCTAssertFalse(ids.contains("lesson-01"), "unmethod's lesson 1 is no longer in the app")
     }
 
     /// Every lesson in the list starts and speaks, in both languages. What each lesson says next

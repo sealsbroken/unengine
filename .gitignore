@@ -18,3 +18,9 @@ __pycache__/
 /weights/
 /apps/ios/Resources/
 /apps/ios/build/
+/apps/mobile/target/
+/vendor/
+/build/
+/.bundle/
+/fastlane/report.xml
+/fastlane/README.md
