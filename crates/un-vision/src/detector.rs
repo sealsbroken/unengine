@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use un_core::{Box2, Detection};
 
 use crate::frame::RgbFrame;
-use crate::runtime::{load_session, Provider, VisionError};
+use crate::runtime::{load_session_with, CoreMlFormat, Provider, VisionError};
 
 pub const PAD_VALUE: u8 = 114;
 
@@ -67,6 +67,9 @@ pub struct Sidecar {
     pub prompts: Vec<String>,
     #[serde(default)]
     pub source: String,
+    /// The CoreML format the model needs (`"mlprogram"` for DETR-style detectors).
+    #[serde(default)]
+    pub coreml: CoreMlFormat,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +117,31 @@ pub fn non_max_suppression(boxes: &[[f32; 4]], scores: &[f32], iou: f32, limit: 
         }
     }
     kept
+}
+
+/// Cleans the NMS survivors `kept` (in score order) of boxes that are not objects of their own:
+/// first a "group", a box holding two or more other boxes (each at least 85% inside it and clearly
+/// smaller), which open-vocabulary teachers sometimes label as one ("toys"); then a "part", a box at
+/// least 85% inside a higher-scoring one (the head of an animal already boxed whole). Decoys
+/// (`decoy[i]`, a hand) take no part: a toy under a hand is not a part of the hand.
+pub fn drop_groups(boxes: &[[f32; 4]], decoy: &[bool], kept: Vec<usize>) -> Vec<usize> {
+    let area = |b: &[f32; 4]| (b[2] - b[0]).max(0.0) * (b[3] - b[1]).max(0.0);
+    let inside = |inner: &[f32; 4], outer: &[f32; 4]| {
+        let inter = (inner[2].min(outer[2]) - inner[0].max(outer[0])).max(0.0)
+            * (inner[3].min(outer[3]) - inner[1].max(outer[1])).max(0.0);
+        area(inner) > 0.0 && inter / area(inner) >= 0.85 && area(inner) < 0.7 * area(outer)
+    };
+    let toys: Vec<usize> = kept.iter().copied().filter(|&i| !decoy[i]).collect();
+    let objects: Vec<usize> =
+        toys.iter().copied().filter(|&i| toys.iter().filter(|&&j| j != i && inside(&boxes[j], &boxes[i])).count() < 2).collect();
+    let mut out: Vec<usize> = Vec::new();
+    for &i in &objects {
+        if !out.iter().any(|&o| inside(&boxes[i], &boxes[o])) {
+            out.push(i);
+        }
+    }
+    out.extend(kept.iter().copied().filter(|&i| decoy[i]));
+    out
 }
 
 /// Decodes raw detector heads into normalized, NMS-filtered detections.
@@ -212,7 +240,9 @@ impl RawDecoder {
                 [x1.clamp(0.0, 1.0), y1.clamp(0.0, 1.0), x2.clamp(0.0, 1.0), y2.clamp(0.0, 1.0)]
             })
             .collect();
-        non_max_suppression(&normalized, &scores, self.iou, self.max_detections)
+        let kept = non_max_suppression(&normalized, &scores, self.iou, self.max_detections);
+        let decoy: Vec<bool> = classes.iter().map(|&c| self.labels.get(c).is_some_and(|l| l.starts_with('_'))).collect();
+        drop_groups(&normalized, &decoy, kept)
             .into_iter()
             .map(|i| {
                 let b = normalized[i];
@@ -245,9 +275,16 @@ impl Detector {
             Ok(text) => {
                 serde_json::from_str(&text).map_err(|e| VisionError::Layout(format!("{}: {e}", sidecar_path.display())))?
             }
-            Err(_) => Sidecar { labels: vec![], imgsz: vec![], head: Head::Auto, prompts: vec![], source: String::new() },
+            Err(_) => Sidecar {
+                labels: vec![],
+                imgsz: vec![],
+                head: Head::Auto,
+                prompts: vec![],
+                source: String::new(),
+                coreml: CoreMlFormat::default(),
+            },
         };
-        let session = load_session(path, config.provider, config.threads)?;
+        let session = load_session_with(path, config.provider, config.threads, sidecar.coreml)?;
         let input = session.inputs().first().ok_or_else(|| VisionError::Layout("model has no inputs".into()))?;
         let input_name = input.name().to_string();
         let dims: Vec<i64> = match input.dtype().tensor_shape() {
@@ -320,6 +357,22 @@ impl Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_box_around_several_objects_is_dropped() {
+        let boxes = [
+            [0.1, 0.1, 0.2, 0.2],
+            [0.3, 0.1, 0.4, 0.2],
+            [0.08, 0.08, 0.42, 0.22], // around both
+            [0.6, 0.6, 0.8, 0.8],
+            [0.6, 0.6, 0.66, 0.66], // a part of the box before it, scoring lower
+        ];
+        // `kept` is in score order: 4 scores below 3.
+        assert_eq!(drop_groups(&boxes, &[false; 5], vec![0, 1, 2, 3, 4]), vec![0, 1, 3]);
+        // A toy under a hand stays a toy.
+        let hand = [[0.0, 0.0, 0.5, 0.5], [0.1, 0.1, 0.2, 0.2]];
+        assert_eq!(drop_groups(&hand, &[true, false], vec![0, 1]), vec![1, 0]);
+    }
 
     #[test]
     fn letterbox_maps_back() {

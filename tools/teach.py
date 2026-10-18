@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Fine-tune a detector on frames recorded with `un collect`, then export it for the app.
+"""NOTE: Ultralytics training makes an AGPL-3.0 model. The shipped detector is built with
+tools/label.py and tools/train_detector.py (Apache-2.0); use this script for experiments only.
+
+Fine-tune a detector on frames recorded with `un collect`, then export it for the app.
 
     un collect --camera 0 --model toys --out datasets/toys --seconds 90
     uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset datasets/toys --name my-toys

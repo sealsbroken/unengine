@@ -44,42 +44,48 @@ The Zipformers are small and quick but mishear short answers ("ten cars" can bec
 the engine then prefers for every language; it decodes an answer in about half a second on an
 Apple laptop. `un listen` prints what the microphone hears, for checking a setup.
 
-The toy detector is not downloaded: it is exported from Ultralytics' zero-shot YOLOE, whose
-text prompts are baked into the model. `tools/export_detector.py` with no arguments writes
-`models/toys.onnx` plus its `.json` sidecar; it is the detector every app and the CLI load by
-default. The model input is a 960×960 square: phones and tablets send portrait frames, desktop
-cameras landscape, and toys a tenth of the frame wide score about 0.8 at 960 against 0.3 at
-640. On iPhone and iPad the detector runs on CoreML. The kinds of toy and their prompts:
-
-| Label | Prompts | Said as |
-|---|---|---|
-| `cube` | toy block, wooden toy block, toy cube, lego brick, building block | cube / кубик |
-| `car` | toy car, toy truck, toy bus, toy train | car / машинка |
-| `ball` | toy ball, small ball, rubber ball | ball / мячик |
-| `bear` | teddy bear, plush bear | bear / мишка |
-| `doll` | doll, toy doll | doll / кукла |
-| `animal` | toy animal, toy dinosaur, animal figurine, stuffed animal, plush toy | animal / зверюшка |
-| `toy` | toy, small toy, plastic toy (a toy none of the kinds above names) | toy / игрушка |
-
-Detection is class-agnostic after the head (one box per toy, whichever kind scores best), so
-"how many toys?" counts every kind together and "how many cars?" counts one. Add or narrow
-kinds with `--class label=prompt,prompt` (repeat per kind) and `--name`.
-
-Labels starting with `_` are decoys: `_keyboard`, `_hand` and `_finger` are recognised so that a
-keyboard, a hand or a finger never becomes a toy, then dropped. The engine has no hand or finger
-tracking: the child answers by voice (or the number pad), and the camera only counts toys.
-
-For a detector that is sure of *your* toys on *your* table, teach it: record auto-labelled
-frames with the CLI (the zero-shot model labels them), then fine-tune a small model and export:
+The toy detector, `models/toys.onnx`, is an RF-DETR model (Roboflow, Apache-2.0) trained here on
+photos labelled by OWLv2 (Google, Apache-2.0). Nothing in that pipeline is Ultralytics, so the
+model ships under Apache-2.0 terms and an app built on it can stay closed or go to the App Store.
+It is not downloaded: build it with the two tools below. It has two classes: `toy` (every kind of
+toy) and `_hand`, a decoy for hands and fingers. Its input is a 576×576 square (phones send
+portrait frames, desktop cameras landscape; both are letterboxed).
 
 ```sh
-python3 tools/export_detector.py
-cargo run --release -p un-cli -- collect --camera 0 --model toys --conf 0.15 --out datasets/toys
-uv run --with ultralytics,onnx,onnxslim python3 tools/teach.py --dataset datasets/toys --name my-toys
+# Photos: your own table (un collect, below) and any other toy photos, e.g. Open Images.
+uv run --with torch,transformers,pillow python tools/label.py \
+    --images datasets/openimages --images datasets/table/images:8 --out datasets/toys --preview 40
+uv run --with "rfdetr[train]",onnx,onnxruntime python tools/train_detector.py --dataset datasets/toys --name toys
 ```
 
-Move the toys between grabs, add and remove some, cover a few with a hand. The desktop app
-picks the most recently exported or trained detector, so `models/my-toys.onnx` takes over.
+`label.py` asks OWLv2 for every toy and every hand in each photo (prompts per class with
+`--class label=prompt,prompt`) and writes a COCO dataset; `DIR:N` repeats a directory N times in
+training, so a few dozen frames of your own table weigh as much as thousands of photos from
+elsewhere; `--preview` draws the labels for checking by eye. `train_detector.py` fine-tunes RF-DETR
+nano from its COCO weights (Apache-2.0; the larger RF-DETR sizes have another licence) and exports
+`models/<name>.onnx` with its sidecar: RGB in 0...1, normalisation inside the graph, and one output
+of normalised boxes with a sigmoid score per class (the engine's `rtdetr` head).
+
+On iPhone and iPad the detector runs on CoreML in the MLProgram format (`"coreml": "mlprogram"` in
+the sidecar), the only one that keeps RF-DETR's attention (GridSample) on the GPU. The first launch
+compiles it, about a minute; the compiled model is cached (`UN_CACHE_DIR`, else the temporary
+directory) and loads in seconds after that.
+
+For more photos of *your* toys on *your* table, record frames with the CLI and label them as above:
+
+```sh
+cargo run --release -p un-cli -- collect --camera 0 --model toys --conf 0.15 --out datasets/table
+```
+
+Move the toys between grabs, add and remove some, cover a few with a hand. The desktop app picks
+the most recently exported or trained detector, so a new `models/<name>.onnx` takes over.
+
+Labels starting with `_` are decoys (`_hand`, and for older detectors `_keyboard`, `_finger`):
+recognised so that a hand never becomes a toy, then dropped. The engine has no hand or finger
+tracking: the child answers by voice (or the number pad), and the camera only counts toys.
+
+The previous detector, Ultralytics' zero-shot YOLOE (`tools/export_detector.py`, `tools/teach.py`),
+still works with the engine but is AGPL-3.0 (see [Licence](#licence)); use it for experiments only.
 
 ## Lessons and the lesson list
 
@@ -169,13 +175,13 @@ components: ONNX Runtime, `ort`, egui, nokhwa, cpal (MIT/Apache-2.0); sherpa-onn
 Zipformer models (Apache-2.0); Whisper and Silero VAD (MIT); the Piper voices' training data has its own terms (Irina's, from
 RHVoice, is marked "Unknown" in its model card; check before shipping it);
 
-The toy detector is not part of this repository and is under a different licence: YOLOE and
-everything exported or trained with Ultralytics (`models/toys.onnx`, models from `tools/teach.py`)
-is AGPL-3.0. The engine's own code stays LGPL, but a program shipped *with* that model is a
-combined work under the AGPL: its complete source, lessons included, must be offered to its
-users (also over a network). A product that keeps its lessons closed needs either an Ultralytics
-Enterprise licence or a detector under a permissive licence (OmDet-Turbo, OWLv2, RF-DETR,
-D-FINE: Apache-2.0) exported to one of the supported heads.
+The toy detector (`models/toys.onnx`) is not in this repository. Built with `tools/label.py` and
+`tools/train_detector.py` it is Apache-2.0 work: RF-DETR (Roboflow; code and the nano weights
+Apache-2.0), labelled by OWLv2 (Google, Apache-2.0) via Hugging Face Transformers (Apache-2.0).
+Photos from Open Images carry CC BY 2.0 (images) and CC BY 4.0 (annotations): credit them where the
+model is distributed. Models exported or trained with Ultralytics (`tools/export_detector.py`,
+`tools/teach.py`, YOLOE) are AGPL-3.0 instead, and a program shipped with one is a combined work
+under the AGPL; do not ship them in a closed or App Store product.
 
 The desktop voice is not LGPL-compatible for closed products. The prebuilt sherpa-onnx library
 (`sherpa-onnx-c-api`, used by `un-speech` for Piper voices) contains espeak-ng, which is GPL-3.0:

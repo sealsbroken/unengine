@@ -95,7 +95,11 @@ final class LessonModel: ObservableObject {
     @Published var snapshot: UnSnapshot?
     @Published var running = false
     private var session: UnSession?
-    private var perception: UnPerception?
+    /// Set from a background thread once the detector is loaded (its first CoreML compile takes
+    /// about a minute; later launches load the cached one in seconds). Frames wait until then.
+    nonisolated(unsafe) private var perception: UnPerception?
+    /// The detector is still loading.
+    @Published private(set) var preparingCamera = false
     #if DEBUG
     nonisolated(unsafe) static var debugFrames = 0
     nonisolated(unsafe) static var debugWritten = 0.0
@@ -131,7 +135,8 @@ final class LessonModel: ObservableObject {
     }
 
     var statusLine: String {
-        let title = lessons.first { $0.id == lessonId }?.title ?? lessonId
+        var title = lessons.first { $0.id == lessonId }?.title ?? lessonId
+        if preparingCamera { title += language == .russian ? "  (камера готовится…)" : "  (preparing the camera…)" }
         guard let s = snapshot else { return title }
         return "\(title)  \(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
     }
@@ -152,8 +157,6 @@ final class LessonModel: ObservableObject {
         config.childName = language == .russian ? "Вася" : "Mia"
         #endif
         do {
-            perception = try UnPerception(config: UnPerceptionConfig(
-                modelsDir: modelsDir, detector: "toys", confidence: 0.25, countLabel: nil, roi: nil))
             // The microphone stays open for the whole lesson, so the child can answer at any time.
             session = try UnSession(
                 strategyId: lesson.id, config: config,
@@ -162,6 +165,20 @@ final class LessonModel: ObservableObject {
         } catch {
             print("start failed: \(error)")
             return
+        }
+        // The compiled CoreML model is kept in Caches, which survives between launches.
+        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            setenv("UN_CACHE_DIR", caches.path, 1)
+        }
+        if perception == nil {
+            preparingCamera = true
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let loaded = try? UnPerception(config: UnPerceptionConfig(
+                    modelsDir: modelsDir, detector: "toys", confidence: 0.25, countLabel: nil, roi: nil))
+                if loaded == nil { print("the toy detector failed to load") }
+                self?.perception = loaded
+                Task { @MainActor in self?.preparingCamera = false }
+            }
         }
         camera = CameraSource { [weak self] y, uv, w, h, ys, uvs, t in
             guard let self, let perception = self.perception else { return }

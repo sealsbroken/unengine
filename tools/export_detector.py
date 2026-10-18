@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Export an object detector to models/<name>.onnx with the .json sidecar Un's detector reads.
+"""NOTE: Ultralytics models are AGPL-3.0. The shipped detector is built with tools/label.py and
+tools/train_detector.py (Apache-2.0); use this script for experiments only.
+
+Export an object detector to models/<name>.onnx with the .json sidecar Un's detector reads.
 
 Needs a Python environment with ultralytics (uv: `uv run --with ultralytics,onnx,onnxslim python tools/export_detector.py`).
 

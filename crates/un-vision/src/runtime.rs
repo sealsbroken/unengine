@@ -88,8 +88,44 @@ fn environment() -> Result<&'static ort::environment::Environment, VisionError> 
     }
 }
 
+/// Which CoreML model format ONNX Runtime builds for a model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CoreMlFormat {
+    /// The older NeuralNetwork format: compiles quickly; enough for convolutional detectors.
+    #[default]
+    NeuralNetwork,
+    /// MLProgram: more operators (GridSample, the attention of DETR-style detectors), so the whole
+    /// model runs on the GPU / Neural Engine; compiled once and cached (see [`coreml_cache_dir`]).
+    MlProgram,
+}
+
+/// Where compiled CoreML models are kept between launches: `UN_CACHE_DIR`, else the system's
+/// temporary directory (an app's own on iOS). A first compile of a DETR-style model takes about a
+/// minute; a cached one loads in seconds.
+pub fn coreml_cache_dir(model: &Path) -> std::path::PathBuf {
+    let base = std::env::var_os("UN_CACHE_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    // A new export of the same name gets a fresh cache.
+    let stamp = std::fs::metadata(model)
+        .map(|m| {
+            format!(
+                "{}-{}",
+                m.len(),
+                m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0)
+            )
+        })
+        .unwrap_or_default();
+    let stem = model.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    base.join("un-coreml").join(format!("{stem}-{stamp}"))
+}
+
 /// Loads a session with graph optimisation and the requested provider.
 pub fn load_session(path: &Path, provider: Provider, threads: usize) -> Result<Session, VisionError> {
+    load_session_with(path, provider, threads, CoreMlFormat::default())
+}
+
+/// [`load_session`] with the CoreML format the model needs.
+pub fn load_session_with(path: &Path, provider: Provider, threads: usize, coreml: CoreMlFormat) -> Result<Session, VisionError> {
     if !path.exists() {
         return Err(VisionError::ModelNotFound(path.display().to_string()));
     }
@@ -99,7 +135,7 @@ pub fn load_session(path: &Path, provider: Provider, threads: usize) -> Result<S
         .map_err(runtime_error)?
         .with_intra_threads(threads.max(1))
         .map_err(runtime_error)?;
-    builder = register_provider(builder, provider)?;
+    builder = register_provider(builder, provider, path, coreml)?;
     Ok(builder.commit_from_file(path)?)
 }
 
@@ -111,6 +147,8 @@ fn runtime_error<T>(error: ort::Error<T>) -> VisionError {
 fn register_provider(
     mut builder: ort::session::builder::SessionBuilder,
     provider: Provider,
+    model: &Path,
+    format: CoreMlFormat,
 ) -> Result<ort::session::builder::SessionBuilder, VisionError> {
     use ort::ep;
     let wanted: Vec<Provider> = match provider {
@@ -122,7 +160,17 @@ fn register_provider(
         match p {
             #[cfg(feature = "coreml")]
             Provider::CoreMl => {
-                builder = builder.with_execution_providers([ep::CoreML::default().build()]).map_err(runtime_error)?
+                let coreml = match format {
+                    CoreMlFormat::NeuralNetwork => ep::CoreML::default(),
+                    CoreMlFormat::MlProgram => {
+                        let cache = coreml_cache_dir(model);
+                        let _ = std::fs::create_dir_all(&cache);
+                        ep::CoreML::default()
+                            .with_model_format(ep::coreml::ModelFormat::MLProgram)
+                            .with_model_cache_dir(cache.display())
+                    }
+                };
+                builder = builder.with_execution_providers([coreml.build()]).map_err(runtime_error)?
             }
             #[cfg(feature = "cuda")]
             Provider::Cuda => builder = builder.with_execution_providers([ep::CUDA::default().build()]).map_err(runtime_error)?,

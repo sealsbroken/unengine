@@ -11,4 +11,4 @@ pub mod runtime;
 
 pub use detector::{Detector, DetectorConfig, Letterbox, RawDecoder};
 pub use frame::RgbFrame;
-pub use runtime::{Provider, VisionError};
+pub use runtime::{CoreMlFormat, Provider, VisionError};

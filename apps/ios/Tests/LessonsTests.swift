@@ -49,39 +49,24 @@ final class LessonsTests: XCTestCase {
         _ = LessonsTests.registered
         let ids = availableStrategies().map(\.id)
         XCTAssertEqual(ids.first, "unmath-count-to-five")
-        XCTAssertTrue(ids.contains("unmath-add-to-five"), "\(ids)")
+        XCTAssertTrue(ids.allSatisfy { $0.hasPrefix("unmath-") }, "\(ids)")
         XCTAssertFalse(ids.contains("demo"), "the engine's demo is not a product lesson")
         XCTAssertFalse(ids.contains("lesson-01"), "unmethod's lesson 1 is no longer in the app")
     }
 
-    func testCountToFiveRunsThroughInRussian() throws {
-        let lesson = try Lesson("unmath-count-to-five", language: .russian)
-        defer { lesson.shutdown() }
-        lesson.session.start()
-        lesson.wait(for: "Можешь посчитать от одного до пяти?")
-        lesson.child.say("один два три четыре пять")
-        lesson.wait(for: "Положи на стол 5")
-        lesson.settled(5)
-        lesson.wait(for: "Посчитай эти игрушки вслух.")
-        lesson.child.say("один два три четыре пять")
-        lesson.wait(for: "Сколько всего игрушек?")
-        lesson.child.say("пять")
-        lesson.wait(for: "Можешь снова посчитать от одного до пяти самостоятельно?")
-        lesson.child.say("один два три четыре пять")
-
-        let deadline = Date().addingTimeInterval(10)
-        while lesson.session.snapshot().summary == nil && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
-        let snapshot = lesson.session.snapshot()
-        XCTAssertEqual(snapshot.phase, .finished)
-        XCTAssertEqual(snapshot.summary?.paused, false)
-    }
-
-    func testAddToFiveStartsInEnglish() throws {
-        let lesson = try Lesson("unmath-add-to-five", language: .english)
-        defer { lesson.shutdown() }
-        lesson.session.start()
-        let deadline = Date().addingTimeInterval(5)
-        while lesson.voice.spoken.isEmpty && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
-        XCTAssertFalse(lesson.voice.spoken.isEmpty, "the lesson says something at start")
+    /// Every lesson in the list starts and speaks, in both languages. What each lesson says next
+    /// is the lesson repository's own business (its tests); here the list and the bindings are.
+    func testEveryLessonStartsSpeaking() throws {
+        _ = LessonsTests.registered
+        for info in availableStrategies() {
+            for language in [UnLanguage.russian, .english] {
+                let lesson = try Lesson(info.id, language: language)
+                lesson.session.start()
+                let deadline = Date().addingTimeInterval(5)
+                while lesson.voice.spoken.isEmpty && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+                XCTAssertFalse(lesson.voice.spoken.isEmpty, "\(info.id) says nothing at start in \(language)")
+                lesson.shutdown()
+            }
+        }
     }
 }
