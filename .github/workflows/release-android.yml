@@ -97,7 +97,7 @@ jobs:
         id: revs
         run: echo "unmath=$(git -C unmath rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -109,7 +109,9 @@ jobs:
       - name: Install the NDK, cargo-ndk and zsh
         run: |
           set -euo pipefail
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" > /dev/null
+          # `yes` dies of a broken pipe once the licences are accepted: not a failure.
+          (yes || true) | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" > /dev/null
+          [ -d "$ANDROID_HOME/ndk/${NDK_VERSION}" ] || { echo "::error::NDK ${NDK_VERSION} did not install"; exit 1; }
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           cargo install cargo-ndk --locked
           sudo apt-get install -y -qq zsh
