@@ -103,6 +103,8 @@ platform :ios do
       api_key: api_key,
       distribute_only: true,
       app_identifier: "app.onym.undigit",
+      # Without an .ipa to read it from, pilot would ask (and fail in CI).
+      app_platform: "ios",
       app_version: version,
       build_number: build_number,
       distribute_external: true,
