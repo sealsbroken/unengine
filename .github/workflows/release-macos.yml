@@ -1,7 +1,7 @@
 name: Release macOS
 
-# Builds Un for macOS (Apple silicon; alpha: built and smoke-tested on a GitHub runner, ad-hoc
-# signed, not notarised) and attaches the zip to the GitHub Release of a v* tag. Release Desktop
+# Builds Un for macOS (Apple silicon; alpha: built and smoke-tested on a GitHub runner, signed
+# with Developer ID and notarised) and attaches the zip to the GitHub Release of a v* tag. Release Desktop
 # and Release iOS run it after tagging; run it by hand for an existing tag:
 #
 #   gh workflow run "Release macOS"                # the latest v* tag
@@ -9,6 +9,12 @@ name: Release macOS
 #
 # Same contents as the Windows build (apps/un with the unmath lessons, the toy detector, Whisper
 # small, Piper voices); see release-windows.yml for the licences.
+#
+# Secrets (sealsbroken org, granted to this repo):
+#   MACOS_CERT_P12        the "Developer ID Application: Onym OU (7C7LXXWRMG)" certificate and its
+#                         key, a .p12 in base64
+#   MACOS_CERT_PASSWORD   the .p12's password
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_CONTENT   the App Store Connect API key, for notarytool
 
 on:
   workflow_dispatch:
@@ -66,6 +72,27 @@ jobs:
       - name: Build
         run: cargo build --release --manifest-path unengine/apps/un/Cargo.toml
 
+      - name: Import the Developer ID certificate
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pass=$(uuidgen)
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          identity=$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+          [ -n "$identity" ] || { echo "::error::No Developer ID Application identity in MACOS_CERT_P12"; exit 1; }
+          echo "IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
       - name: Models
         env:
           GH_TOKEN: ${{ github.token }}
@@ -94,8 +121,16 @@ jobs:
           whisper=sherpa-onnx-whisper-small
           mkdir -p "$out/models/speech/$whisper"
           cp "$models/speech/$whisper"/*int8* "$models/speech/$whisper"/*tokens* "$out/models/speech/$whisper/"
-          # Ad-hoc signatures: Apple silicon runs nothing unsigned.
-          for f in "$out"/un "$out"/un-cli "$out"/*.dylib; do codesign --force --sign - "$f"; done
+          # Developer ID with the hardened runtime and a timestamp, as notarisation requires: the
+          # libraries first, then the executables with the camera and microphone entitlements.
+          for f in "$out"/*.dylib; do
+            [ -L "$f" ] || codesign --force --options runtime --timestamp --sign "$IDENTITY" "$f"
+          done
+          for f in "$out"/un "$out"/un-cli; do
+            codesign --force --options runtime --timestamp \
+              --entitlements unengine/apps/un/macos/un.entitlements --sign "$IDENTITY" "$f"
+          done
+          for f in "$out"/un "$out"/un-cli "$out"/*.dylib; do codesign --verify --strict "$f"; done
           ls -la "$out"
           echo "OUT=$out" >> "$GITHUB_ENV"
 
@@ -137,10 +172,9 @@ jobs:
           Un teaches children to count with real toys on a table: the camera counts the toys, a voice
           tutor leads the lesson, the child answers by voice.
 
-          ALPHA: built and smoke-tested automatically, ad-hoc signed, not notarised. macOS blocks a
-          downloaded app it can't verify; after unzipping, clear the quarantine once:
+          ALPHA: built and smoke-tested automatically; signed with Developer ID and notarised by
+          Apple. Unzip, then from the folder:
 
-            xattr -dr com.apple.quarantine Un-${VERSION}-macos-arm64
             ./un          the app (allow the camera and microphone when asked)
             ./un-cli      the command line: ./un-cli lesson --strategy unmath-count-to-three --language ru
 
@@ -153,6 +187,29 @@ jobs:
           README
           (cd dist && ditto -c -k --keepParent "Un-${VERSION}-macos-arm64" "Un-${VERSION}-macos-arm64-alpha.zip")
           ls -la dist
+
+      - name: Notarise
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          printf '%s' "$ASC_KEY_CONTENT" > "$key"
+          zip="dist/Un-${VERSION}-macos-arm64-alpha.zip"
+          xcrun notarytool submit "$zip" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
+            --wait --timeout 60m --output-format json | tee notary.json
+          id=$(python3 -c 'import json; print(json.load(open("notary.json"))["id"])')
+          status=$(python3 -c 'import json; print(json.load(open("notary.json"))["status"])')
+          if [ "$status" != "Accepted" ]; then
+            xcrun notarytool log "$id" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" || true
+            echo "::error::Notarisation: $status"; exit 1
+          fi
+          # Bare executables can't carry a stapled ticket; Gatekeeper looks it up online on first run.
+          spctl --assess --type execute -vv "$OUT/un" || true
+          rm -f "$key" notary.json
 
       - name: Attach to the release
         env:
@@ -167,8 +224,11 @@ jobs:
             gh release create "$TAG" --verify-tag --title "Un ${VERSION}" --notes "Un ${VERSION}."
           fi
           gh release upload "$TAG" "$zip" --clobber
-          body=$(gh release view "$TAG" --json body --jq .body)
-          if ! grep -q 'macOS (alpha)' <<<"$body"; then
-            printf '%s\n\n**macOS (alpha)**: Un-%s-macos-arm64-alpha.zip, Apple silicon, built and smoke-tested on a GitHub runner, ad-hoc signed (see its README).\n' "$body" "$VERSION" > notes.md
-            gh release edit "$TAG" --notes-file notes.md
-          fi
+          # The macOS line of the notes, replacing an older one (a re-run).
+          gh release view "$TAG" --json body --jq .body | grep -v '^\*\*macOS (alpha)\*\*' > notes.md || true
+          printf '\n**macOS (alpha)**: Un-%s-macos-arm64-alpha.zip, Apple silicon, built and smoke-tested on a GitHub runner, signed with Developer ID and notarised (see its README).\n' "$VERSION" >> notes.md
+          gh release edit "$TAG" --notes-file notes.md
+
+      - name: Remove the signing keychain
+        if: always()
+        run: '[ -z "${KEYCHAIN:-}" ] || security delete-keychain "$KEYCHAIN"'

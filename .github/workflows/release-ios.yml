@@ -240,5 +240,6 @@ jobs:
     uses: ./.github/workflows/release-macos.yml
     with:
       tag: ${{ needs.version.outputs.tag }}
+    secrets: inherit   # the Developer ID certificate and the notarisation key
     permissions:
       contents: write
