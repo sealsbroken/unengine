@@ -291,17 +291,33 @@ struct Confetti: View {
                 let p = min(1, context.date.timeIntervalSince(start) / 2.4)
                 ZStack {
                     ForEach(0..<16, id: \.self) { i in
-                        let angle = Angle.degrees(Double(i) * 22.5 + Double(i % 2) * 7)
-                        RoundedRectangle(cornerRadius: 2).fill(colors[i % colors.count])
-                            .frame(width: 8, height: i % 3 == 0 ? 24 : 14)
-                            .rotationEffect(.degrees(p * 160))
-                            .offset(x: cos(angle.radians) * 210 * p, y: sin(angle.radians) * 210 * p)
-                            .opacity(p < 0.7 ? 1 : (1 - p) / 0.3)
+                        ConfettiPiece(index: i, color: colors[i % colors.count], progress: p)
                     }
                 }
             }
             .allowsHitTesting(false)
         }
+    }
+}
+
+/// One piece flying out along its own angle (split out: in one expression the type checker of
+/// the release build gave up on it).
+private struct ConfettiPiece: View {
+    let index: Int
+    let color: Color
+    /// 0...1 over the flight.
+    let progress: Double
+
+    var body: some View {
+        let radians: Double = (Double(index) * 22.5 + Double(index % 2) * 7) * .pi / 180
+        let distance: Double = 210 * progress
+        let height: CGFloat = index % 3 == 0 ? 24 : 14
+        let opacity: Double = progress < 0.7 ? 1 : (1 - progress) / 0.3
+        RoundedRectangle(cornerRadius: 2).fill(color)
+            .frame(width: 8, height: height)
+            .rotationEffect(.degrees(progress * 160))
+            .offset(x: CGFloat(cos(radians) * distance), y: CGFloat(sin(radians) * distance))
+            .opacity(opacity)
     }
 }
 
