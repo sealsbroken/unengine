@@ -130,6 +130,9 @@ platform :android do
     skip_images = options[:images].to_s == "false"
     upload_to_play_store(
       package_name: "app.onym.un",
+      # supply ties a listing edit to a track with a release: internal has one from the first
+      # bundle on (production may not yet).
+      track: options[:track] || "internal",
       metadata_path: "./fastlane/metadata/android",
       skip_upload_apk: true,
       skip_upload_aab: true,
