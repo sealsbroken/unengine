@@ -1,9 +1,10 @@
 name: Release Android
 
-# Releases Un for Android on its own, as onym-android's Play Publish does: the tag
-# (release-tag.yml) → lesson tests → the Rust library for arm64 and the bundle → the AAB signed
-# with the upload key (jarsigner; Play App Signing re-signs it) → attached to the tag's GitHub
-# Release → uploaded to a Google Play track.
+# Releases Un for Android on its own, as onym-android's Release and Play Publish do: the tag
+# (release-tag.yml) → lesson tests → the Rust library for arm64, the bundle and the APK → the AAB
+# signed with the upload key (jarsigner; Play App Signing re-signs it) and the APK zipaligned and
+# signed with it too (apksigner, for installing without Play) → both attached to the tag's GitHub
+# Release → the AAB uploaded to a Google Play track.
 #
 #   gh workflow run "Release Android"                                 # the next patch, from main
 #   gh workflow run "Release Android" -f tag=v0.2.0 -f track=beta     # a chosen version and track
@@ -126,12 +127,15 @@ jobs:
           cargo test --manifest-path unmath/Cargo.toml
           cargo test --manifest-path unengine/apps/mobile/Cargo.toml
 
-      - name: Build the bundle
-        # Produces apps/android/app/build/outputs/bundle/release/app-release.aab, unsigned (no
-        # signingConfig on the release build type).
+      - name: Build the bundle and the APK
+        # Produces app/build/outputs/bundle/release/app-release.aab and
+        # app/build/outputs/apk/release/app-release-unsigned.apk, both unsigned (no signingConfig
+        # on the release build type).
         env:
           RELEASE_VERSION: ${{ steps.tag.outputs.tag }}
-        run: zsh unengine/tools/android.sh bundle
+        run: |
+          zsh unengine/tools/android.sh bundle
+          cd unengine/apps/android && ./gradlew --no-daemon -q :app:assembleRelease
 
       - name: Sign the bundle with the upload key
         # Bundles are JAR-signed with jarsigner (apksigner does not sign them); -verify fails the
@@ -156,6 +160,28 @@ jobs:
           jarsigner -verify "$aab"
           echo "AAB=$aab" >> "$GITHUB_ENV"
 
+      - name: Zipalign and sign the APK
+        # The same upload key, with apksigner (v2/v3 signatures). zipalign -p page-aligns the
+        # native libraries (16 KB pages, Android 15+). A Play install is signed with Play's key
+        # instead: the two do not update each other.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          apk="dist/Un-${VERSION}-android.apk"
+          "$tools/zipalign" -f -p 4 unengine/apps/android/app/build/outputs/apk/release/app-release-unsigned.apk "$apk"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          "$tools/apksigner" sign --ks "$RUNNER_TEMP/upload.jks" --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" --key-pass "pass:$KEY_PASSWORD" "$apk"
+          rm "$RUNNER_TEMP/upload.jks"
+          "$tools/apksigner" verify "$apk"
+          echo "APK=$apk" >> "$GITHUB_ENV"
+
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -169,11 +195,11 @@ jobs:
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --title "Un ${VERSION}" --notes "Un ${VERSION}."
           fi
-          gh release upload "$TAG" "../$AAB" --clobber
+          gh release upload "$TAG" "../$AAB" "../$APK" --clobber
           # The Android line of the notes, replacing an older one (a re-run).
           gh release view "$TAG" --json body --jq .body | grep -v '^\*\*Android\*\*' > notes.md || true
-          printf '\n**Android**: Un-%s-android.aab (versionCode %s), arm64, signed with the upload key for Google Play, with the lessons of sealsbroken/unmath@%s.\n' \
-            "$VERSION" "$(scripts/resolve-release-version.sh | sed -n 's/^CURRENT_PROJECT_VERSION=//p')" "$UNMATH" >> notes.md
+          printf '\n**Android**: Un-%s-android.aab (versionCode %s, for Google Play) and Un-%s-android.apk (to install directly), arm64, with the lessons of sealsbroken/unmath@%s.\n' \
+            "$VERSION" "$(scripts/resolve-release-version.sh | sed -n 's/^CURRENT_PROJECT_VERSION=//p')" "$VERSION" "$UNMATH" >> notes.md
           gh release edit "$TAG" --notes-file notes.md
 
       - name: Skip Google Play (not set up yet)
