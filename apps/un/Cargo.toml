@@ -1,0 +1,39 @@
+# Un on the desktop (Windows, macOS, Linux): the engine's window and CLI with the unmath lessons
+# (../unmath, next to this repository) and nothing else, the desktop twin of apps/mobile. Its own
+# workspace, so the engine's builds never need the unmath checkout.
+[workspace]
+
+[package]
+name = "un-product"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+license = "LGPL-3.0-or-later"
+publish = false
+description = "Un on the desktop: the Un window and CLI with the unmath lessons."
+
+[[bin]]
+name = "un"
+path = "src/main.rs"
+
+[[bin]]
+name = "un-cli"
+path = "src/bin/un-cli.rs"
+
+[features]
+default = []
+directml = ["un-desktop/directml", "un-cli/directml"]
+
+[dependencies]
+un-app = { path = "../../crates/un-app" }
+un-cli = { path = "../../crates/un-cli" }
+un-desktop = { path = "../desktop" }
+# The unmath lessons with the settings they need: the same list as the iOS app.
+un-mobile = { path = "../mobile" }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+env_logger = "0.11"
+anyhow = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

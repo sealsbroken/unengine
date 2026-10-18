@@ -1,0 +1,176 @@
+name: Release Windows
+
+# Builds Un for Windows x64 (alpha: built and smoke-tested on a GitHub runner, never run on a real
+# PC with a camera) and attaches the zip to the GitHub Release of a v* tag, next to the iOS build
+# of the same version. Release iOS runs it after tagging; run it by hand for an existing tag:
+#
+#   gh workflow run "Release Windows"                # the latest v* tag
+#   gh workflow run "Release Windows" -f tag=v0.1.6
+#
+# The app is this repository at the tag (apps/un: the desktop window and CLI) with the unmath
+# lessons (sealsbroken/unmath at main; the zip's README records its commit). Speech is sherpa-onnx:
+# Whisper small for recognition, Piper voices for the tutor (their espeak-ng is GPL-3.0, so the
+# bundle as a whole is GPL-3.0; all of it is open source). The toy detector is the models-v1
+# release and runs on the CPU.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'The v* tag to build and attach to (blank: the latest)'
+        required: false
+        type: string
+        default: ''
+  # Release iOS calls this once it has tagged, so every release has both.
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+
+permissions:
+  contents: write   # upload the zip to the release
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build, smoke-test and attach
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unengine
+          fetch-depth: 0
+
+      - name: Resolve the tag
+        id: tag
+        working-directory: unengine
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG// /}"
+          [ -n "$TAG" ] || TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::No tag $TAG"; exit 1; }
+          git checkout -q "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: sealsbroken/unmath
+          path: unmath
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: unengine/apps/un
+
+      - name: Build
+        run: cargo build --release --manifest-path unengine/apps/un/Cargo.toml
+
+      - name: Models
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+          python unengine/tools/fetch_models.py --whisper small
+
+      - name: Assemble the folder
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          out=dist/Un-$VERSION-windows-x64
+          build=unengine/apps/un/target/release
+          models=unengine/models
+          mkdir -p "$out/models/speech"
+          cp "$build/un.exe" "$build/un-cli.exe" "$out/"
+          # The shared libraries the executables load (onnxruntime, sherpa-onnx's C API, cargs).
+          cp "$build"/*.dll "$out/"
+          cp "$models/toys.onnx" "$models/toys.json" "$out/models/"
+          cp "$models/speech/silero_vad.onnx" "$out/models/speech/"
+          for voice in vits-piper-ru_RU-irina-medium vits-piper-en_US-lessac-medium; do
+            cp -R "$models/speech/$voice" "$out/models/speech/"
+          done
+          whisper=sherpa-onnx-whisper-small
+          mkdir -p "$out/models/speech/$whisper"
+          cp "$models/speech/$whisper"/*int8* "$models/speech/$whisper"/*tokens* "$out/models/speech/$whisper/"
+          ls -la "$out"
+          echo "OUT=$out" >> "$GITHUB_ENV"
+
+      - name: Smoke tests (no camera, no microphone, no speakers)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -euo pipefail
+          cd "$OUT"
+          ./un-cli.exe strategies | tee strategies.txt
+          grep -q '^unmath-count-to-three' strategies.txt && ! grep -q '^demo' strategies.txt
+          # A scripted lesson on a drawn table: the lessons load and the tutor speaks.
+          ./un-cli.exe --models models lesson --sim 1 --strategy unmath-count-to-three --language ru \
+            --voice console --mic off --answers "лес,один" --frames 120 | tee lesson.txt
+          grep -q 'tutor: ' lesson.txt
+          # The tutor's voice says a number and the recogniser hears it, in both languages.
+          ./un-cli.exe --models models check-speech --language ru
+          ./un-cli.exe --models models check-speech --language en
+          # The toy detector loads and runs on a picture.
+          powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; \$b = New-Object System.Drawing.Bitmap 640,480; \$g = [System.Drawing.Graphics]::FromImage(\$b); \$g.Clear([System.Drawing.Color]::BurlyWood); \$g.FillEllipse([System.Drawing.Brushes]::Gold, 250, 180, 120, 120); \$b.Save('table.jpg', [System.Drawing.Imaging.ImageFormat]::Jpeg)"
+          ./un-cli.exe --models models run --source table.jpg --frames 3 | tee detector.txt
+          grep -q '"raw"' detector.txt
+          rm -f strategies.txt lesson.txt detector.txt table.jpg
+
+      - name: README and zip
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          UNMATH=$(git -C unmath rev-parse HEAD)
+          cat > "$OUT/README.txt" <<README
+          Un ${VERSION} for Windows x64 (alpha)
+
+          Un teaches children to count with real toys on a table: the camera counts the toys, a voice
+          tutor leads the lesson, the child answers by voice.
+
+          ALPHA: built and smoke-tested automatically, never tried on a real PC with a camera. The toy
+          detector runs on the CPU and is slow; counts may take several seconds to settle.
+
+            un.exe       the app: choose a child, a camera and a lesson, then start
+            un-cli.exe   the command line: un-cli.exe lesson --strategy unmath-count-to-three --language ru
+
+          Keep the .dll files and the models folder next to the executables. Nothing is installed;
+          settings and the children's progress are kept in %APPDATA%\un.
+
+          Source: https://github.com/sealsbroken/unengine (${{ steps.tag.outputs.tag }}) and
+          https://github.com/sealsbroken/unmath (${UNMATH}). The engine and lessons are LGPL-3.0;
+          the bundled Piper voices use espeak-ng (GPL-3.0), so this bundle as a whole is GPL-3.0.
+          README
+          (cd dist && 7z a -tzip "Un-${VERSION}-windows-x64-alpha.zip" "Un-${VERSION}-windows-x64" > /dev/null)
+          ls -la dist
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        working-directory: unengine
+        run: |
+          set -euo pipefail
+          zip="../dist/Un-${VERSION}-windows-x64-alpha.zip"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "Un ${VERSION}" --notes "Un ${VERSION}."
+          fi
+          gh release upload "$TAG" "$zip" --clobber
+          body=$(gh release view "$TAG" --json body --jq .body)
+          if ! grep -q 'Windows x64 (alpha)' <<<"$body"; then
+            printf '%s\n\n**Windows x64 (alpha)**: Un-%s-windows-x64-alpha.zip, built and smoke-tested on a GitHub runner, not yet tried on a real PC.\n' "$body" "$VERSION" > notes.md
+            gh release edit "$TAG" --notes-file notes.md
+          fi

@@ -24,3 +24,4 @@ __pycache__/
 /.bundle/
 /fastlane/report.xml
 /fastlane/README.md
+/apps/un/target/
