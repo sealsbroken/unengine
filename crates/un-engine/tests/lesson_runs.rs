@@ -394,3 +394,64 @@ fn a_table_observed_before_start_is_replayed_to_the_active_strategy() {
     assert_eq!(events.lock().iter().filter(|e| matches!(e, Event::Table(_))).count(), 1);
     engine.close();
 }
+
+/// Asks once; the answer ends the question.
+struct AsksOnce {
+    events: Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>,
+    phase: PhaseKind,
+}
+
+impl un_core::strategy::Strategy for AsksOnce {
+    fn handle(&mut self, event: un_core::strategy::Event) -> Vec<un_core::strategy::Effect> {
+        use un_core::strategy::{Effect, Event, ListenMode};
+        self.events.lock().push(event.clone());
+        match event {
+            Event::Start => {
+                self.phase = PhaseKind::Asking;
+                vec![Effect::listen(ListenMode::NumberPad, 30.0)]
+            }
+            Event::Heard(_) => {
+                self.phase = PhaseKind::Performing;
+                vec![Effect::StopListening]
+            }
+            _ => vec![],
+        }
+    }
+    fn snapshot(&self) -> un_core::strategy::StrategySnapshot {
+        un_core::strategy::StrategySnapshot {
+            phase: self.phase,
+            level: 0,
+            level_count: 1,
+            tasks_completed: 0,
+            correct: 0,
+            task: None,
+            target_count: None,
+            expected_answer: None,
+        }
+    }
+}
+
+#[test]
+fn the_table_is_held_while_the_child_answers_and_follows_after() {
+    use un_core::strategy::{Event, TableObservation};
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let engine = Engine::new(
+        Box::new(AsksOnce { events: Arc::clone(&events), phase: PhaseKind::Idle }),
+        SessionConfig::default(),
+        None,
+        Arc::new(SilentSpeechOutput::new(false)),
+        EngineOptions { chime: false, log: Some(Arc::new(|_| {})), ..Default::default() },
+    );
+    engine.start();
+    let tables = || events.lock().iter().filter(|e| matches!(e, Event::Table(_))).count();
+    // A hand pointing at the toys while the child counts: the table moves, the question stays.
+    for count in [Some(5), None, Some(4), Some(5)] {
+        engine.observe_table(TableObservation { count, is_stable: count == Some(4), groups: 1 });
+    }
+    assert_eq!(tables(), 0);
+    engine.tap(5);
+    // The answer is in: the latest table follows.
+    let seen: Vec<Event> = events.lock().iter().filter(|e| matches!(e, Event::Table(_))).cloned().collect();
+    assert_eq!(seen, vec![Event::Table(TableObservation { count: Some(5), is_stable: false, groups: 1 })]);
+    engine.close();
+}

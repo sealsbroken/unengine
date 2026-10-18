@@ -238,6 +238,10 @@ struct State {
     show_number_pad: bool,
     always_show_number_pad: bool,
     last_observation: Option<TableObservation>,
+    /// The table as the strategy last saw it. While it asks (the child counts or answers) the
+    /// table is held back: the child points at the toys while counting, and a hand moving over
+    /// them must not cancel the question. The latest table follows once the question is over.
+    table_seen: Option<TableObservation>,
     /// When the tutor last finished a line: a count's quiet window starts after it.
     tutor_silent_at: Option<Instant>,
     /// Whether the microphone currently picks up sound, as last told to the strategy.
@@ -314,6 +318,7 @@ impl Engine {
                 show_number_pad: false,
                 always_show_number_pad: always,
                 last_observation: None,
+                table_seen: None,
                 tutor_silent_at: None,
                 sound: None,
                 sound_heard_at: None,
@@ -511,11 +516,25 @@ impl Inner {
                 return;
             }
             let starting = event == Event::Start;
+            if let Event::Table(observation) = event {
+                if state.strategy.snapshot().phase == PhaseKind::Asking {
+                    return;
+                }
+                state.table_seen = Some(observation);
+            }
             let mut effects = state.strategy.handle(event);
             // Replay pre-start perception under the same strategy lock, so a
             // concurrent newer table cannot be overwritten by an older replay.
             if starting {
                 if let Some(observation) = state.last_observation {
+                    state.table_seen = Some(observation);
+                    effects.extend(state.strategy.handle(Event::Table(observation)));
+                }
+            }
+            // A table held back during a question reaches the strategy once the question is over.
+            if state.strategy.snapshot().phase != PhaseKind::Asking && state.last_observation != state.table_seen {
+                if let Some(observation) = state.last_observation {
+                    state.table_seen = Some(observation);
                     effects.extend(state.strategy.handle(Event::Table(observation)));
                 }
             }
