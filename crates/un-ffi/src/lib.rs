@@ -401,6 +401,12 @@ impl SpeechInput for CallbackInput {
     fn stop(&self) {
         self.0.cancel_listening();
     }
+
+    /// The iOS and Android inputs recognise nothing while the tutor speaks (the engine stops
+    /// them for every line, and iOS drops the microphone's sound until just after it).
+    fn hears_tutor(&self) -> bool {
+        false
+    }
 }
 
 struct CallbackOutput(Arc<dyn SpeechOutputCallback>);

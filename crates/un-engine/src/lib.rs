@@ -741,11 +741,13 @@ impl Inner {
                 self.log(&format!("ignored while the tutor speaks: {text}"));
                 return;
             }
-            let echo = mic
-                .lines
-                .iter()
-                .filter(|(_, ended)| ended.is_none_or(|t| t.elapsed() < ECHO_WINDOW))
-                .any(|(line, _)| is_echo(&text, line));
+            let hears_tutor = self.speech_in.as_ref().is_none_or(|s| s.hears_tutor());
+            let echo = hears_tutor
+                && mic
+                    .lines
+                    .iter()
+                    .filter(|(_, ended)| ended.is_none_or(|t| t.elapsed() < ECHO_WINDOW))
+                    .any(|(line, _)| is_echo(&text, line));
             if echo {
                 drop(mic);
                 self.log(&format!("the tutor's own line came back, ignored: {text}"));

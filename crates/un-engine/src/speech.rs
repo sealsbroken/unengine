@@ -98,6 +98,13 @@ pub trait SpeechInput: Send + Sync {
     /// The tutor has finished its utterance.
     fn tutor_silent(&self) {}
 
+    /// Whether the microphone can pick up the tutor's own voice. The phone apps recognise
+    /// nothing while the tutor speaks, so whatever they hear afterwards is the child, even the
+    /// tutor's words: "Один, два!" repeated after "...Один, два! Теперь ты." is the child's count.
+    fn hears_tutor(&self) -> bool {
+        true
+    }
+
     /// Name of the microphone in use, for the HUD.
     fn device_name(&self) -> String {
         String::new()

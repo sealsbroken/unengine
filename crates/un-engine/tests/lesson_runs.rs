@@ -455,3 +455,48 @@ fn the_table_is_held_while_the_child_answers_and_follows_after() {
     assert_eq!(seen, vec![Event::Table(TableObservation { count: Some(5), is_stable: false, groups: 1 })]);
     engine.close();
 }
+
+/// Models a count, then lets the child count.
+struct Models {
+    events: Arc<parking_lot::Mutex<Vec<un_core::strategy::Event>>>,
+}
+
+impl un_core::strategy::Strategy for Models {
+    fn handle(&mut self, event: un_core::strategy::Event) -> Vec<un_core::strategy::Effect> {
+        use un_core::strategy::{Effect, Event};
+        self.events.lock().push(event.clone());
+        match event {
+            Event::Start => vec![Effect::Say("One more friend! One, two! Now you.".into())],
+            _ => vec![],
+        }
+    }
+    fn snapshot(&self) -> un_core::strategy::StrategySnapshot {
+        un_core::strategy::StrategySnapshot {
+            phase: PhaseKind::Asking,
+            level: 0,
+            level_count: 1,
+            tasks_completed: 0,
+            correct: 0,
+            task: None,
+            target_count: None,
+            expected_answer: Some(2),
+        }
+    }
+}
+
+#[test]
+fn the_child_repeating_the_tutors_modelled_count_is_heard_not_taken_for_an_echo() {
+    use un_core::strategy::Event;
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let engine = Engine::new(
+        Box::new(Models { events: Arc::clone(&events) }),
+        SessionConfig::default(),
+        Some(Arc::new(ScriptedSpeechInput::saying(vec!["one two".into()], Duration::from_millis(300)).deaf_to_the_tutor())),
+        Arc::new(SilentSpeechOutput::new(false)),
+        EngineOptions { log: Some(Arc::new(|_| {})), always_listen: true, ..Default::default() },
+    );
+    engine.start();
+    // The child spoke after the line had ended: their count, though the tutor said the same.
+    assert!(wait_for(|| events.lock().contains(&Event::Heard(2)), Duration::from_secs(5)));
+    engine.close();
+}

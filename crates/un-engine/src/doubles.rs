@@ -16,6 +16,7 @@ pub struct ScriptedSpeechInput {
     prepared: Mutex<Vec<Language>>,
     cancel: Mutex<Option<u64>>,
     fail_prepare: Option<String>,
+    hears_tutor: bool,
 }
 
 impl ScriptedSpeechInput {
@@ -31,6 +32,7 @@ impl ScriptedSpeechInput {
             prepared: Mutex::new(Vec::new()),
             cancel: Mutex::new(None),
             fail_prepare: None,
+            hears_tutor: true,
         }
     }
 
@@ -38,6 +40,11 @@ impl ScriptedSpeechInput {
     pub fn with_script(script: Vec<Result<u32, SpeechError>>, delay: Duration) -> Self {
         let script = script.into_iter().map(|r| r.map(|n| n.to_string())).collect();
         Self { answers: Mutex::new(script), ..Self::new(vec![], delay) }
+    }
+
+    /// Like the phone apps: nothing is recognised while the tutor speaks.
+    pub fn deaf_to_the_tutor(self) -> Self {
+        Self { hears_tutor: false, ..self }
     }
 
     /// A double whose `prepare` fails, like a missing microphone.
@@ -122,6 +129,10 @@ impl SpeechInput for ScriptedSpeechInput {
     }
 
     fn stop(&self) {}
+
+    fn hears_tutor(&self) -> bool {
+        self.hears_tutor
+    }
 }
 
 /// Records what the tutor says, optionally pacing it like real speech.
