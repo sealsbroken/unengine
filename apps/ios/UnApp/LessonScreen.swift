@@ -14,7 +14,7 @@ struct LessonScreen: View {
                 LessonList(model: model)
             }
         }
-        .onAppear { model.reloadLessons(); Permissions.request {} }
+        .onAppear { model.reloadLessons(); model.preparePerception(); Permissions.request {} }
         .onDisappear { model.close() }
     }
 
@@ -126,6 +126,26 @@ final class LessonModel: ObservableObject {
         lessons = availableStrategies()
     }
 
+    /// Loads the detector in the background, from the lesson list on: by the time a lesson
+    /// starts the camera already counts the toys that are out (loaded at the start, the first
+    /// question was asked before the camera saw anything).
+    func preparePerception() {
+        guard perception == nil, !preparingCamera else { return }
+        // The compiled CoreML model is kept in Caches, which survives between launches.
+        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            setenv("UN_CACHE_DIR", caches.path, 1)
+        }
+        let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
+        preparingCamera = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let loaded = try? UnPerception(config: UnPerceptionConfig(
+                modelsDir: modelsDir, detector: "toys", confidence: 0.25, countLabel: nil, roi: nil))
+            if loaded == nil { print("the toy detector failed to load") }
+            self?.perception = loaded
+            Task { @MainActor in self?.preparingCamera = false }
+        }
+    }
+
     private static func savedLanguage() -> UnLanguage {
         switch UserDefaults.standard.string(forKey: "language") {
         case "ru": return .russian
@@ -148,7 +168,6 @@ final class LessonModel: ObservableObject {
         guard let lesson = lessons.first(where: { $0.id == lessonId }) ?? lessons.first else { return }
         lessonId = lesson.id
         UserDefaults.standard.set(lesson.id, forKey: "lesson")
-        let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
         var config = defaultSessionConfig()
         config.language = language
         #if DEBUG
@@ -166,20 +185,7 @@ final class LessonModel: ObservableObject {
             print("start failed: \(error)")
             return
         }
-        // The compiled CoreML model is kept in Caches, which survives between launches.
-        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
-            setenv("UN_CACHE_DIR", caches.path, 1)
-        }
-        if perception == nil {
-            preparingCamera = true
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                let loaded = try? UnPerception(config: UnPerceptionConfig(
-                    modelsDir: modelsDir, detector: "toys", confidence: 0.25, countLabel: nil, roi: nil))
-                if loaded == nil { print("the toy detector failed to load") }
-                self?.perception = loaded
-                Task { @MainActor in self?.preparingCamera = false }
-            }
-        }
+        preparePerception()
         camera = CameraSource { [weak self] y, uv, w, h, ys, uvs, t in
             guard let self, let perception = self.perception else { return }
             let began = Date()
