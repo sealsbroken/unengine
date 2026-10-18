@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         permissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
         model.reloadLessons()
+        model.reloadChildren()
         model.preparePerception()
         setContent { MaterialTheme { Screen(model) } }
     }
@@ -53,20 +54,92 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun Screen(model: LessonModel) {
     val running by model.running.collectAsState()
-    if (running) LessonScreen(model) else LessonList(model)
+    val childId by model.childId.collectAsState()
+    when {
+        running -> LessonScreen(model)
+        childId == null -> ChildrenList(model)
+        else -> LessonList(model)
+    }
 }
 
-/** Every lesson the library offers, in its order; a tap starts one. The last lesson played is ticked. */
+/** As on iOS: the children, each with their progress; a tap opens that child's lessons. */
+@Composable
+fun ChildrenList(model: LessonModel) {
+    val children by model.children.collectAsState()
+    val lessons by model.lessons.collectAsState()
+    val ru = model.language.collectAsState().value == UnLanguage.RUSSIAN
+    var adding by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    var removing by remember { mutableStateOf<UnProfile?>(null) }
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(if (ru) "Дети" else "Children", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+            LanguageChips(model, model.language.collectAsState().value)
+            TextButton(onClick = { adding = true }) { Text(if (ru) "+ Добавить" else "+ Add") }
+        }
+        if (children.isEmpty()) {
+            Text(if (ru) "Добавьте ребёнка: у каждого свой прогресс по урокам." else "Add a child: each goes through the lessons at their own pace.",
+                Modifier.padding(top = 24.dp))
+        }
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp)) {
+            items(children, key = { it.id }) { child ->
+                val done = lessons.count { child.completed.contains(it.id) }
+                val next = model.nextLesson(child)?.title
+                ListItem(
+                    headlineContent = { Text(child.name, style = MaterialTheme.typography.titleLarge) },
+                    supportingContent = {
+                        Text((if (ru) "Пройдено уроков: $done из ${lessons.size}" else "$done of ${lessons.size} lessons done") +
+                            (next?.let { if (ru) " · дальше: $it" else " · next: $it" } ?: ""))
+                    },
+                    trailingContent = { TextButton(onClick = { removing = child }) { Text(if (ru) "Удалить" else "Remove") } },
+                    modifier = Modifier.clickable { model.chooseChild(child.id) },
+                )
+                HorizontalDivider()
+            }
+        }
+        CameraStatus(model, Modifier.fillMaxWidth())
+    }
+    if (adding) {
+        AlertDialog(
+            onDismissRequest = { adding = false; name = "" },
+            title = { Text(if (ru) "Новый ребёнок" else "New child") },
+            text = { OutlinedTextField(name, { name = it }, label = { Text(if (ru) "Имя" else "Name") }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { model.addChild(name); name = ""; adding = false }) { Text(if (ru) "Добавить" else "Add") } },
+            dismissButton = { TextButton(onClick = { adding = false; name = "" }) { Text(if (ru) "Отмена" else "Cancel") } },
+        )
+    }
+    removing?.let { child ->
+        AlertDialog(
+            onDismissRequest = { removing = null },
+            title = { Text(if (ru) "Удалить ${child.name}?" else "Remove ${child.name}?") },
+            text = { Text(if (ru) "Прогресс ребёнка будет удалён." else "The child's progress is deleted.") },
+            confirmButton = { TextButton(onClick = { model.removeChild(child.id); removing = null }) { Text(if (ru) "Удалить" else "Remove") } },
+            dismissButton = { TextButton(onClick = { removing = null }) { Text(if (ru) "Отмена" else "Cancel") } },
+        )
+    }
+}
+
+/** As on iOS: the chosen child's lessons; completed ones are ticked, the next is marked; a tap starts one. */
 @Composable
 fun LessonList(model: LessonModel) {
     val lessons by model.lessons.collectAsState()
-    val lessonId by model.lessonId.collectAsState()
     val language by model.language.collectAsState()
+    val children by model.children.collectAsState()
+    val childId by model.childId.collectAsState()
+    val child = children.firstOrNull { it.id == childId }
+    val next = child?.let { model.nextLesson(it) }
+    val ru = language == UnLanguage.RUSSIAN
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(if (language == UnLanguage.RUSSIAN) "Уроки" else "Lessons", style = MaterialTheme.typography.headlineMedium,
+            TextButton(onClick = { model.chooseChild(null) }) { Text(if (ru) "‹ Дети" else "‹ Children") }
+            Text(child?.name ?: (if (ru) "Уроки" else "Lessons"), style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.weight(1f))
             LanguageChips(model, language)
+        }
+        if (next != null) {
+            Button(onClick = { model.start(next.id) }, Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text((if (ru) "Продолжить: " else "Continue: ") + next.title)
+            }
         }
         if (lessons.isEmpty()) {
             Text(if (language == UnLanguage.RUSSIAN) "Уроков нет" else "No lessons", Modifier.padding(top = 24.dp))
@@ -76,7 +149,12 @@ fun LessonList(model: LessonModel) {
                 ListItem(
                     headlineContent = { Text(lesson.title) },
                     supportingContent = { Text(lesson.description) },
-                    trailingContent = { if (lesson.id == lessonId) Text("✓", style = MaterialTheme.typography.titleLarge) },
+                    trailingContent = {
+                        when {
+                            child?.completed?.contains(lesson.id) == true -> Text("✓", style = MaterialTheme.typography.titleLarge)
+                            lesson.id == next?.id -> Text("→", style = MaterialTheme.typography.titleLarge)
+                        }
+                    },
                     modifier = Modifier.clickable { model.start(lesson.id) },
                 )
                 HorizontalDivider()
@@ -148,7 +226,7 @@ fun LessonScreen(model: LessonModel) {
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { model.end() }) { Text("End lesson") }
+            Button(onClick = { model.pause() }) { Text(if (language == UnLanguage.RUSSIAN) "Пауза" else "Pause") }
             TextButton(onClick = { model.repeat() }) { Text("Repeat") }
             TextButton(onClick = { model.skip() }) { Text("Skip") }
             LanguageChips(model, language)

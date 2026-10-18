@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The lesson list, then the lesson: the tutor's line, status, the camera's picture, and the
-/// number pad. Perception runs through the shared Rust models (`UnPerception`); speech through
-/// Apple's APIs. The list is whatever lessons the linked library offers (`availableStrategies`).
+/// The children, a child's lessons, then the lesson: the tutor's line, status, the camera's
+/// picture, and the number pad. Perception runs through the shared Rust models (`UnPerception`);
+/// speech through Apple's APIs. The lessons are whatever the linked library offers
+/// (`availableStrategies`); each child's progress through them is kept (`UnProfiles`).
 struct LessonScreen: View {
     @StateObject private var model = LessonModel()
 
@@ -10,11 +11,13 @@ struct LessonScreen: View {
         Group {
             if model.running {
                 lesson
+            } else if model.child == nil {
+                ChildrenList(model: model)
             } else {
                 LessonList(model: model)
             }
         }
-        .onAppear { model.reloadLessons(); model.preparePerception(); Permissions.request {} }
+        .onAppear { model.reloadLessons(); model.reloadChildren(); model.preparePerception(); Permissions.request {} }
         .onDisappear { model.close() }
     }
 
@@ -41,7 +44,7 @@ struct LessonScreen: View {
                 }.padding()
             }
             HStack {
-                Button("End lesson") { model.end() }
+                Button(model.language == .russian ? "Пауза" : "Pause") { model.pause() }
                 Button("Repeat") { model.repeatLine() }
                 Button("Skip") { model.skip() }
                 // The tutor's language; a running lesson starts over in the new one.
@@ -85,39 +88,145 @@ struct CameraStatus: View {
     }
 }
 
-/// Every lesson the app offers, in the library's order; a tap starts one. The last lesson
-/// played is ticked.
+/// The children who use the app, each with their progress; a tap goes to that child's lessons.
+/// A grown-up adds a child by name and can remove one.
+struct ChildrenList: View {
+    @ObservedObject var model: LessonModel
+    @State private var adding = false
+    @State private var name = ""
+    @State private var removing: UnProfile?
+
+    var body: some View {
+        let ru = model.language == .russian
+        NavigationStack {
+            List {
+                ForEach(model.children, id: \.id) { child in
+                    Button { model.childId = child.id } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(child.name).font(.title3.weight(.semibold))
+                            Text(progress(child, ru: ru)).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                    .swipeActions {
+                        Button(ru ? "Удалить" : "Remove", role: .destructive) { removing = child }
+                    }
+                }
+            }
+            .overlay {
+                if model.children.isEmpty {
+                    ContentUnavailableView {
+                        Label(ru ? "Добавьте ребёнка" : "Add a child", systemImage: "person.crop.circle.badge.plus")
+                    } description: {
+                        Text(ru ? "У каждого ребёнка свой прогресс по урокам." : "Each child goes through the lessons at their own pace.")
+                    } actions: {
+                        Button(ru ? "Добавить" : "Add") { adding = true }.buttonStyle(.borderedProminent)
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) { CameraStatus(model: model) }
+            .navigationTitle(ru ? "Дети" : "Children")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Picker("Language", selection: $model.language) {
+                        Text("EN").tag(UnLanguage.english)
+                        Text("RU").tag(UnLanguage.russian)
+                    }.pickerStyle(.segmented).frame(width: 100)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { adding = true } label: { Image(systemName: "plus") }
+                        .accessibilityLabel(ru ? "Добавить ребёнка" : "Add a child")
+                }
+            }
+            .alert(ru ? "Новый ребёнок" : "New child", isPresented: $adding) {
+                TextField(ru ? "Имя" : "Name", text: $name)
+                Button(ru ? "Добавить" : "Add") { model.addChild(name); name = "" }
+                Button(ru ? "Отмена" : "Cancel", role: .cancel) { name = "" }
+            } message: {
+                Text(ru ? "Тьютор будет обращаться к ребёнку по имени." : "The tutor calls the child by this name.")
+            }
+            .alert(ru ? "Удалить \(removing?.name ?? "")?" : "Remove \(removing?.name ?? "")?", isPresented: Binding(
+                get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+                Button(ru ? "Удалить" : "Remove", role: .destructive) {
+                    if let id = removing?.id { model.removeChild(id) }
+                    removing = nil
+                }
+                Button(ru ? "Отмена" : "Cancel", role: .cancel) { removing = nil }
+            } message: {
+                Text(ru ? "Прогресс ребёнка будет удалён." : "The child's progress is deleted.")
+            }
+        }
+    }
+
+    private func progress(_ child: UnProfile, ru: Bool) -> String {
+        let done = model.lessons.filter { child.completed.contains($0.id) }.count
+        let total = model.lessons.count
+        var text = ru ? "Пройдено уроков: \(done) из \(total)" : "\(done) of \(total) lessons done"
+        if let next = model.nextLesson(for: child) {
+            text += ru ? " · дальше: \(next.title)" : " · next: \(next.title)"
+        }
+        return text
+    }
+}
+
+/// The chosen child's lessons, in the library's order: the ones they completed are ticked and
+/// the one they go on with is marked; a tap starts any of them.
 struct LessonList: View {
     @ObservedObject var model: LessonModel
 
     var body: some View {
+        let ru = model.language == .russian
+        let child = model.child
+        let next = child.flatMap { model.nextLesson(for: $0) }
         NavigationStack {
-            List(model.lessons, id: \.id) { lesson in
-                Button { model.start(lesson.id) } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(lesson.title).font(.headline)
-                            Text(lesson.description).font(.subheadline).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if lesson.id == model.lessonId {
-                            Image(systemName: "checkmark").foregroundStyle(.tint)
+            List {
+                if let next {
+                    Section {
+                        Button { model.start(next.id) } label: {
+                            Label((ru ? "Продолжить: " : "Continue: ") + next.title, systemImage: "play.fill")
+                                .font(.headline)
                         }
                     }
                 }
-                .foregroundStyle(.primary)
+                Section {
+                    ForEach(model.lessons, id: \.id) { lesson in
+                        Button { model.start(lesson.id) } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(lesson.title).font(.headline)
+                                    Text(lesson.description).font(.subheadline).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if child?.completed.contains(lesson.id) == true {
+                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                                        .accessibilityLabel(ru ? "пройден" : "done")
+                                } else if lesson.id == next?.id {
+                                    Image(systemName: "arrow.right.circle").foregroundStyle(.tint)
+                                        .accessibilityLabel(ru ? "дальше" : "next")
+                                }
+                            }
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                }
             }
             .overlay {
-                if model.lessons.isEmpty { Text(model.language == .russian ? "Уроков нет" : "No lessons").foregroundStyle(.secondary) }
+                if model.lessons.isEmpty { Text(ru ? "Уроков нет" : "No lessons").foregroundStyle(.secondary) }
             }
             .safeAreaInset(edge: .bottom) { CameraStatus(model: model) }
-            .navigationTitle(model.language == .russian ? "Уроки" : "Lessons")
+            .navigationTitle(child?.name ?? (ru ? "Уроки" : "Lessons"))
             .toolbar {
-                // The tutor's language for the next lesson.
-                Picker("Language", selection: $model.language) {
-                    Text("EN").tag(UnLanguage.english)
-                    Text("RU").tag(UnLanguage.russian)
-                }.pickerStyle(.segmented).frame(width: 100)
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { model.childId = nil } label: { Label(ru ? "Дети" : "Children", systemImage: "chevron.left") }
+                        .labelStyle(.titleAndIcon)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    // The tutor's language for the next lesson.
+                    Picker("Language", selection: $model.language) {
+                        Text("EN").tag(UnLanguage.english)
+                        Text("RU").tag(UnLanguage.russian)
+                    }.pickerStyle(.segmented).frame(width: 100)
+                }
             }
         }
     }
@@ -162,6 +271,46 @@ final class LessonModel: ObservableObject {
         lessons = availableStrategies()
     }
 
+    /// The children and their progress, in Application Support (kept with the app's data).
+    let profiles = UnProfiles(path: LessonModel.profilesPath())
+    @Published private(set) var children: [UnProfile] = []
+    /// The child the lessons are for, remembered between runs; nil shows the children.
+    @Published var childId: String? = UserDefaults.standard.string(forKey: "child") {
+        didSet { UserDefaults.standard.set(childId, forKey: "child") }
+    }
+    var child: UnProfile? { children.first { $0.id == childId } }
+    /// The running lesson's end has been recorded for the child.
+    private var recorded = false
+
+    private static func profilesPath() -> String {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return dir.appendingPathComponent("profiles.json").path
+    }
+
+    func reloadChildren() {
+        children = profiles.list()
+        if child == nil { childId = nil }
+    }
+
+    func addChild(_ name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let added = profiles.add(name: name)
+        reloadChildren()
+        childId = added.id
+    }
+
+    func removeChild(_ id: String) {
+        profiles.remove(id: id)
+        reloadChildren()
+    }
+
+    /// The lesson `child` goes on with.
+    func nextLesson(for child: UnProfile) -> UnStrategyInfo? {
+        let id = profiles.nextLesson(id: child.id)
+        return lessons.first { $0.id == id }
+    }
+
     /// Loads the detector in the background, from the lesson list on: by the time a lesson
     /// starts the camera already counts the toys that are out (loaded at the start, the first
     /// question was asked before the camera saw anything).
@@ -203,20 +352,23 @@ final class LessonModel: ObservableObject {
         return "\(title)  \(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
     }
 
-    /// Starts lesson `id` (the last one when `nil`, else the first in the list).
+    /// Starts lesson `id` for the chosen child (the one they go on with when `nil`).
     func start(_ id: String? = nil) {
         if lessons.isEmpty { reloadLessons() }
-        if let id { lessonId = id }
+        if let id {
+            lessonId = id
+        } else if let childId, let next = profiles.nextLesson(id: childId) {
+            lessonId = next
+        }
         guard let lesson = lessons.first(where: { $0.id == lessonId }) ?? lessons.first else { return }
         lessonId = lesson.id
         UserDefaults.standard.set(lesson.id, forKey: "lesson")
         var config = defaultSessionConfig()
         config.language = language
-        #if DEBUG
-        // A debug build skips the introductions (the child's name, the tutor's) and goes straight
-        // to the lesson: a known child is greeted by name and asked only whether they are ready.
-        config.childName = language == .russian ? "Вася" : "Mia"
-        #endif
+        // The child's name (the tutor greets them and does not ask it) and what their lessons
+        // remembered: each child goes on where they stopped.
+        if let childId { config = profiles.sessionConfig(id: childId, base: config) }
+        recorded = false
         do {
             // The microphone stays open for the whole lesson, so the child can answer at any time.
             session = try UnSession(
@@ -265,14 +417,47 @@ final class LessonModel: ObservableObject {
             }
         }
         camera?.start()
+        // After a completed lesson the tutor asks "Продолжим?"; a yes starts the next one.
+        session?.offerNextLesson(offer: nextLessonId != nil)
         session?.start()
         running = true
         // The phone lies on the table for minutes with nobody touching it: no auto-lock while
         // a lesson runs.
         UIApplication.shared.isIdleTimerDisabled = true
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.snapshot = self?.session?.snapshot() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.snapshot = self.session?.snapshot()
+                // The lesson's end, recorded for the child once: progress, what it remembered.
+                if let summary = self.snapshot?.summary, !self.recorded, let childId = self.childId {
+                    self.recorded = true
+                    self.profiles.record(id: childId, lessonId: self.lessonId, summary: summary)
+                    self.reloadChildren()
+                }
+                // Paused (the button, or "пауза" said aloud): back to the list once the goodbye
+                // has been said and the lesson recorded, at the latest after a few seconds.
+                if let s = self.snapshot, s.pauseRequested || self.leavingSince != nil {
+                    if self.leavingSince == nil { self.leavingSince = Date() }
+                    let said = s.status == .finished && (self.recorded || self.childId == nil)
+                    if said || Date().timeIntervalSince(self.leavingSince!) > 8 {
+                        self.end()
+                        return
+                    }
+                }
+                if self.snapshot?.nextLessonRequested == true,
+                   let next = self.childId.flatMap({ self.profiles.nextLesson(id: $0) }) ?? self.nextLessonId {
+                    self.timer?.invalidate()
+                    self.close()
+                    self.start(next)
+                }
+            }
         }
+    }
+
+    /// The lesson after the current one in the list, if any.
+    var nextLessonId: String? {
+        guard let i = lessons.firstIndex(where: { $0.id == lessonId }), i + 1 < lessons.count else { return nil }
+        return lessons[i + 1].id
     }
 
     func stop() {
@@ -281,9 +466,21 @@ final class LessonModel: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
     }
     func restart() { close(); start() }
-    /// Ends the lesson and goes back to the list.
-    func end() {
+    /// When the grown-up (or the child, saying "пауза") asked to stop: the lesson ends as paused
+    /// and the app goes back to the list once the tutor has said goodbye.
+    private var leavingSince: Date?
+
+    /// Stops the lesson as paused (the child goes on with it next time) and goes back to the
+    /// list after the tutor's goodbye, as "пауза" said aloud does.
+    func pause() {
+        guard leavingSince == nil else { return end() }
+        leavingSince = Date()
         session?.stop()
+    }
+
+    /// Ends the lesson at once and goes back to the list.
+    func end() {
+        leavingSince = nil
         close()
         running = false
         snapshot = nil
@@ -298,7 +495,10 @@ final class LessonModel: ObservableObject {
         camera?.stop()
         camera = nil
         table = nil
-        session?.shutdown()
+        // Torn down off the main thread: shutting down waits for the engine's threads, which may
+        // be finishing a line.
+        let closing = session
         session = nil
+        DispatchQueue.global(qos: .userInitiated).async { closing?.shutdown() }
     }
 }

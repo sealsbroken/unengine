@@ -574,3 +574,89 @@ fn a_count_begun_over_the_tutors_line_is_counted_in_full() {
     assert_eq!(speech_out.spoken_texts(), vec![line.to_string()]);
     engine.close();
 }
+
+/// Says one line and ends, completed or paused for a rest.
+struct EndsAtOnce {
+    paused: bool,
+    done: bool,
+}
+
+impl un_core::strategy::Strategy for EndsAtOnce {
+    fn handle(&mut self, event: un_core::strategy::Event) -> Vec<un_core::strategy::Effect> {
+        use un_core::strategy::{Effect, Event, SessionSummary};
+        match event {
+            Event::Start => {
+                self.done = true;
+                vec![
+                    Effect::Say("Well done!".into()),
+                    Effect::SessionEnded(SessionSummary { paused: self.paused, ..Default::default() }),
+                ]
+            }
+            _ => vec![],
+        }
+    }
+    fn snapshot(&self) -> un_core::strategy::StrategySnapshot {
+        un_core::strategy::StrategySnapshot {
+            phase: if self.done { PhaseKind::Finished } else { PhaseKind::Idle },
+            level: 0,
+            level_count: 1,
+            tasks_completed: 0,
+            correct: 0,
+            task: None,
+            target_count: None,
+            expected_answer: None,
+        }
+    }
+}
+
+fn ending_engine(paused: bool, said: &str) -> (Engine, Arc<SilentSpeechOutput>) {
+    let speech_out = Arc::new(SilentSpeechOutput::new(false));
+    let engine = Engine::new(
+        Box::new(EndsAtOnce { paused, done: false }),
+        SessionConfig::default(),
+        Some(Arc::new(ScriptedSpeechInput::saying(vec![said.into()], Duration::from_millis(400)))),
+        speech_out.clone(),
+        EngineOptions { chime: false, log: Some(Arc::new(|_| {})), always_listen: true, ..Default::default() },
+    );
+    engine.offer_next_lesson(true);
+    (engine, speech_out)
+}
+
+#[test]
+fn a_yes_to_shall_we_go_on_asks_for_the_next_lesson() {
+    let (engine, speech_out) = ending_engine(false, "yes");
+    engine.start();
+    assert!(wait_for(|| engine.snapshot().next_lesson_requested, Duration::from_secs(5)));
+    assert!(speech_out.spoken_texts().contains(&"Shall we go on?".to_string()));
+    engine.close();
+}
+
+#[test]
+fn a_no_to_shall_we_go_on_says_goodbye() {
+    let (engine, speech_out) = ending_engine(false, "no, not now");
+    engine.start();
+    assert!(wait_for(|| speech_out.spoken_joined().contains("See you next time"), Duration::from_secs(5)));
+    assert!(!engine.snapshot().next_lesson_requested);
+    engine.close();
+}
+
+#[test]
+fn a_lesson_paused_for_a_rest_does_not_offer_the_next_one() {
+    let (engine, speech_out) = ending_engine(true, "yes");
+    engine.start();
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(!speech_out.spoken_joined().contains("Shall we go on?"));
+    assert!(!engine.snapshot().next_lesson_requested);
+    engine.close();
+}
+
+#[test]
+fn saying_enough_pauses_the_lesson_over_the_tutor() {
+    use un_core::strategy::Event;
+    let line = "Choose our adventure! The forest or the moon? Say forest or moon, and off we go.";
+    let (engine, events, _) = barging_engine(line, un_core::strategy::ListenMode::Voice, vec!["enough"]);
+    engine.start();
+    assert!(wait_for(|| engine.snapshot().pause_requested, Duration::from_secs(5)));
+    assert!(wait_for(|| events.lock().contains(&Event::Stop), Duration::from_secs(2)));
+    engine.close();
+}

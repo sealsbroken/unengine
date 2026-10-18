@@ -50,6 +50,38 @@ class LessonModel(private val context: Context) {
 
     fun reloadLessons() { lessons.value = availableStrategies() }
 
+    /** As on iOS: the children and their progress through the lessons. */
+    val profiles = UnProfiles(File(context.filesDir, "profiles.json").path)
+    val children = MutableStateFlow<List<UnProfile>>(emptyList())
+    /** The child the lessons are for, remembered between runs; null shows the children. */
+    val childId = MutableStateFlow(prefs.getString("child", null))
+    @Volatile private var recorded = false
+
+    fun reloadChildren() {
+        children.value = profiles.list()
+        if (children.value.none { it.id == childId.value }) chooseChild(null)
+    }
+
+    fun chooseChild(id: String?) {
+        childId.value = id
+        prefs.edit().putString("child", id).apply()
+    }
+
+    fun addChild(name: String) {
+        if (name.isBlank()) return
+        val added = profiles.add(name.trim())
+        reloadChildren()
+        chooseChild(added.id)
+    }
+
+    fun removeChild(id: String) { profiles.remove(id); reloadChildren() }
+
+    /** The lesson `child` goes on with. */
+    fun nextLesson(child: UnProfile): UnStrategyInfo? {
+        val id = profiles.nextLesson(child.id)
+        return lessons.value.firstOrNull { it.id == id }
+    }
+
     /** Loads the detector in the background from the lesson list on, so a lesson starts with the camera counting. */
     fun preparePerception() {
         if (perception != null || preparingCamera.value) return
@@ -79,24 +111,60 @@ class LessonModel(private val context: Context) {
         if (running.value) { close(); start() }
     }
 
-    /** Starts lesson `id` (the last one when null, else the first in the list). */
+    /** Starts lesson `id` for the chosen child (the one they go on with when null). */
     fun start(id: String? = null) {
         if (lessons.value.isEmpty()) reloadLessons()
+        val child = childId.value
         if (id != null) lessonId.value = id
+        else if (child != null) profiles.nextLesson(child)?.let { lessonId.value = it }
         val lesson = lessons.value.firstOrNull { it.id == lessonId.value } ?: lessons.value.firstOrNull() ?: return
         lessonId.value = lesson.id
         prefs.edit().putString("lesson", lesson.id).apply()
         var config = defaultSessionConfig().copy(language = language.value)
-        if (BuildConfig.DEBUG) {
-            // As on iOS: a debug build skips the introductions and goes straight to the lesson.
-            config = config.copy(childName = if (language.value == UnLanguage.RUSSIAN) "Вася" else "Mia")
-        }
+        // The child's name and what their lessons remembered: each child goes on where they stopped.
+        if (child != null) config = profiles.sessionConfig(child, config)
+        recorded = false
         preparePerception()
         session = UnSession(lesson.id, config, AndroidSpeechInput(context), AndroidSpeechOutput(context), true, true)
         startCamera()
+        // As on iOS: after a completed lesson the tutor asks "Продолжим?"; a yes starts the next one.
+        session?.offerNextLesson(nextLessonId() != null)
         session?.start()
         running.value = true
-        timer = Timer().apply { schedule(object : TimerTask() { override fun run() { snapshot.value = session?.snapshot() } }, 0, 100) }
+        timer = Timer().apply { schedule(object : TimerTask() { override fun run() {
+            snapshot.value = session?.snapshot()
+            // The lesson's end, recorded for the child once.
+            val summary = snapshot.value?.summary
+            val child = childId.value
+            if (summary != null && !recorded && child != null) {
+                recorded = true
+                profiles.record(child, lessonId.value, summary)
+                children.value = profiles.list()
+            }
+            // Paused: back to the list once the goodbye is said and the lesson recorded (at the latest after 8 s).
+            val s = snapshot.value
+            if (s != null && (s.pauseRequested || leavingSince != null)) {
+                val since = leavingSince ?: System.nanoTime().also { leavingSince = it }
+                val said = s.status == UnStatus.FINISHED && (recorded || child == null)
+                if (said || System.nanoTime() - since > 8_000_000_000L) {
+                    cancel()
+                    android.os.Handler(android.os.Looper.getMainLooper()).post { end() }
+                    return
+                }
+            }
+            val next = child?.let { profiles.nextLesson(it) } ?: nextLessonId()
+            if (snapshot.value?.nextLessonRequested == true && next != null) {
+                cancel()
+                android.os.Handler(android.os.Looper.getMainLooper()).post { close(); start(next) }
+            }
+        } }, 0, 100) }
+    }
+
+    /** The lesson after the current one in the list, if any. */
+    private fun nextLessonId(): String? {
+        val list = lessons.value
+        val i = list.indexOfFirst { it.id == lessonId.value }
+        return if (i >= 0 && i + 1 < list.size) list[i + 1].id else null
     }
 
     private fun startCamera() {
@@ -135,15 +203,28 @@ class LessonModel(private val context: Context) {
 
     fun stop() { session?.stop(); running.value = false }
     /** Ends the lesson and goes back to the list. */
-    fun end() { session?.stop(); close(); running.value = false; snapshot.value = null }
+    /** As on iOS: when a pause was asked for (the button or "пауза" said aloud). */
+    @Volatile private var leavingSince: Long? = null
+
+    /** Stops the lesson as paused and goes back to the list after the tutor's goodbye. */
+    fun pause() {
+        if (leavingSince != null) return end()
+        leavingSince = System.nanoTime()
+        session?.stop()
+    }
+
+    /** Ends the lesson at once and goes back to the list. */
+    fun end() { leavingSince = null; close(); running.value = false; snapshot.value = null }
     fun tap(n: UInt) { session?.tap(n) }
     fun repeat() { session?.repeat() }
     fun skip() { session?.skip() }
 
     fun close() {
         timer?.cancel()
-        session?.shutdown()
+        // Torn down off the main thread: shutting down waits for the engine's threads.
+        val closing = session
         session = null
+        Thread { closing?.shutdown() }.start()
         table.value = null
     }
 }

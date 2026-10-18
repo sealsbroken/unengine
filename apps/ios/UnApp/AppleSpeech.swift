@@ -124,7 +124,9 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, @unchecked Sendab
         AudioSession.tutorSpeaking(true)
         defer { AudioSession.tutorSpeaking(false) }
         guard AudioIO.shared.start() else { return }
-        DispatchQueue.main.async { [self] in
+        // Not on the main thread: the app may be waiting there for the lesson to close, and this
+        // line (a goodbye) would then never be said (it froze the lesson screen).
+        do {
             synthesizer.write(utterance) { [weak self] buffer in
                 guard let self else { return }
                 guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else {
@@ -181,7 +183,7 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, @unchecked Sendab
     }
 
     func stopSpeaking() {
-        DispatchQueue.main.async { self.synthesizer.stopSpeaking(at: .immediate) }
+        synthesizer.stopSpeaking(at: .immediate)
         AudioIO.shared.stopPlaying()
         lock.lock()
         let line = self.line

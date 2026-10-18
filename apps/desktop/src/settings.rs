@@ -15,6 +15,8 @@ pub struct Saved {
     pub strategy: Option<String>,
     pub language: Option<Language>,
     pub child_name: Option<String>,
+    /// The chosen child's profile (see `profiles_path`).
+    pub child: Option<String>,
     pub total: Option<u32>,
     pub tasks: Option<u32>,
     /// auto | piper | console | off
@@ -30,6 +32,11 @@ pub struct Saved {
 
 /// `~/Library/Application Support/un/desktop.json` on macOS, `$XDG_CONFIG_HOME/un/desktop.json`
 /// on Linux, `%APPDATA%\un\desktop.json` on Windows; `UN_CONFIG` overrides the directory.
+/// The children's profiles, next to the settings (as on the phones).
+pub fn profiles_path() -> PathBuf {
+    path().and_then(|p| p.parent().map(|d| d.join("profiles.json"))).unwrap_or_else(|| PathBuf::from("profiles.json"))
+}
+
 pub fn path() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("UN_CONFIG") {
         return Some(PathBuf::from(dir).join("desktop.json"));

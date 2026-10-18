@@ -259,6 +259,11 @@ pub struct UnSnapshot {
     pub show_number_pad: bool,
     pub speech_available: bool,
     pub mic_level: f32,
+    /// The lesson is over and the child said yes to "Продолжим?": start the next lesson.
+    pub next_lesson_requested: bool,
+    /// The child said "пауза" (or "хватит", "enough"...): go back to the lessons once the
+    /// tutor has said goodbye (`status` finished).
+    pub pause_requested: bool,
 }
 
 impl From<un_engine::EngineSnapshot> for UnSnapshot {
@@ -319,6 +324,8 @@ impl From<un_engine::EngineSnapshot> for UnSnapshot {
             show_number_pad: s.show_number_pad,
             speech_available: s.speech_available,
             mic_level: s.mic_level,
+            next_lesson_requested: s.next_lesson_requested,
+            pause_requested: s.pause_requested,
         }
     }
 }
@@ -511,6 +518,12 @@ impl UnSession {
         self.engine.observe_table(TableObservation { count, is_stable, groups });
     }
 
+    /// There is a lesson after this one: once this one is completed the tutor asks
+    /// "Продолжим?", and a yes sets `next_lesson_requested` in the snapshot.
+    pub fn offer_next_lesson(&self, offer: bool) {
+        self.engine.offer_next_lesson(offer);
+    }
+
     pub fn snapshot(&self) -> UnSnapshot {
         self.engine.snapshot().into()
     }
@@ -641,5 +654,76 @@ impl UnPerception {
                 .collect(),
             timestamp: out.state.timestamp,
         })
+    }
+}
+
+// ------------------------------------------------------------------ children's profiles
+
+/// One child: their name and where they are in the lessons.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct UnProfile {
+    pub id: String,
+    pub name: String,
+    /// Lessons the child completed, by id.
+    pub completed: Vec<String>,
+    /// The lesson they go on with next.
+    pub current: Option<String>,
+}
+
+impl From<&un_app::Profile> for UnProfile {
+    fn from(p: &un_app::Profile) -> Self {
+        Self { id: p.id.clone(), name: p.name.clone(), completed: p.completed.clone(), current: p.current.clone() }
+    }
+}
+
+/// The children who use the app and their progress, kept in one JSON file (`path`), shared by
+/// the iOS and Android apps.
+#[derive(uniffi::Object)]
+pub struct UnProfiles {
+    inner: Mutex<un_app::Profiles>,
+}
+
+fn lesson_ids() -> Vec<String> {
+    registry().infos().into_iter().map(|i| i.id).collect()
+}
+
+#[uniffi::export]
+impl UnProfiles {
+    #[uniffi::constructor]
+    pub fn new(path: String) -> Arc<Self> {
+        Arc::new(Self { inner: Mutex::new(un_app::Profiles::open(path)) })
+    }
+
+    pub fn list(&self) -> Vec<UnProfile> {
+        self.inner.lock().list().iter().map(UnProfile::from).collect()
+    }
+
+    pub fn add(&self, name: String) -> UnProfile {
+        UnProfile::from(&self.inner.lock().add(&name))
+    }
+
+    pub fn rename(&self, id: String, name: String) {
+        self.inner.lock().rename(&id, &name);
+    }
+
+    pub fn remove(&self, id: String) {
+        self.inner.lock().remove(&id);
+    }
+
+    /// `base` for this child: their name and what their lessons remembered.
+    pub fn session_config(&self, id: String, base: UnSessionConfig) -> UnSessionConfig {
+        self.inner.lock().config(&id, base.into()).into()
+    }
+
+    /// A lesson ended for this child (`snapshot.summary`); recording it twice changes nothing.
+    pub fn record(&self, id: String, lesson_id: String, summary: UnSummary) {
+        let summary =
+            un_core::strategy::SessionSummary { paused: summary.paused, remember: summary.remember, ..Default::default() };
+        self.inner.lock().record(&id, &lesson_id, &summary, &lesson_ids());
+    }
+
+    /// The lesson this child goes on with.
+    pub fn next_lesson(&self, id: String) -> Option<String> {
+        self.inner.lock().next_lesson(&id, &lesson_ids())
     }
 }

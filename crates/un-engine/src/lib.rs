@@ -77,6 +77,11 @@ pub struct EngineSnapshot {
     pub mic_level: f32,
     /// The latest transcript from the microphone, empty after a few seconds.
     pub heard_text: String,
+    /// The lesson is over and the child said yes to "Продолжим?": the app starts the next one.
+    pub next_lesson_requested: bool,
+    /// The child said "пауза" (or "хватит", "enough"...): the lesson stopped; the app goes back
+    /// to the lessons once the tutor has said goodbye.
+    pub pause_requested: bool,
 }
 
 /// Receives one line per thing the engine does.
@@ -132,6 +137,64 @@ fn is_echo(heard: &str, tutor: &str) -> bool {
 /// How long after the tutor's line its words may still turn up in a transcript: a recogniser
 /// hands an utterance over a second or so after it ends.
 const ECHO_TAIL: Duration = Duration::from_secs(3);
+
+/// How long the tutor waits for an answer to "Продолжим?" before asking again.
+const CONTINUE_WAIT: Duration = Duration::from_secs(10);
+
+/// The child asks to stop the lesson: "пауза", "хватит", "стоп", "я устал", "enough", "pause",
+/// "stop", "I'm tired"; a count ("стоп" in "один, два, стоп") is not a request.
+fn wants_pause(text: &str) -> bool {
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase().replace('ё', "е"))
+        .collect();
+    let any = |set: &[&str]| words.iter().any(|w| set.contains(&w.as_str()));
+    let tired = words
+        .windows(2)
+        .any(|w| matches!((w[0].as_str(), w[1].as_str()), ("я", "устал") | ("я", "устала") | ("i'm", "tired") | ("am", "tired")));
+    let counting = words.iter().any(|w| w.chars().all(|c| c.is_ascii_digit()))
+        || !counting_numbers(text, un_core::Language::Russian).is_empty()
+        || !counting_numbers(text, un_core::Language::English).is_empty();
+    !counting && (tired || any(&["пауза", "паузу", "хватит", "стоп", "перерыв", "enough", "pause", "stop", "break"]))
+}
+
+/// Yes or no to "Продолжим?" / "Shall we go on?"; `None` for anything else. A no word wins
+/// ("не хочу", "no, stop").
+fn yes_or_no(text: &str) -> Option<bool> {
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase().replace('ё', "е"))
+        .collect();
+    let any = |set: &[&str]| words.iter().any(|w| set.contains(&w.as_str()));
+    if any(&["нет", "не", "неа", "хватит", "стоп", "потом", "no", "nope", "stop", "later", "don't"]) {
+        Some(false)
+    } else if any(&[
+        "да",
+        "давай",
+        "давайте",
+        "ага",
+        "угу",
+        "конечно",
+        "хочу",
+        "продолжим",
+        "продолжаем",
+        "поехали",
+        "yes",
+        "yeah",
+        "yep",
+        "sure",
+        "ok",
+        "okay",
+        "go",
+        "let's",
+    ]) {
+        Some(true)
+    } else {
+        None
+    }
+}
 
 /// The line as the voice should read it: without quotation marks, backslashes and markup, which
 /// a synthesiser reads out as symbols ("скажи «два»" came out as "скажи бэкслеш два бэкслеш").
@@ -231,6 +294,12 @@ fn without_echo(heard: &str, tutor: &str) -> String {
 
 struct State {
     strategy: Box<dyn Strategy>,
+    /// Ask "Продолжим?" when the lesson is completed (the app has a next lesson).
+    offer_next: bool,
+    /// Times "Продолжим?" has been asked for the answer now awaited; 0 when not asking.
+    continue_asked: u32,
+    next_requested: bool,
+    pause_requested: bool,
     status: Status,
     last_spoken: String,
     highlight: Option<u32>,
@@ -338,6 +407,10 @@ impl Engine {
                 cancelled_early: Vec::new(),
                 listen: None,
                 closed: false,
+                offer_next: false,
+                continue_asked: 0,
+                next_requested: false,
+                pause_requested: false,
             }),
             effects: tx,
             batch: AtomicU64::new(0),
@@ -405,6 +478,12 @@ impl Engine {
     /// Ends the lesson politely: the tutor says goodbye, then the summary appears.
     pub fn stop(&self) {
         self.inner.dispatch(Event::Stop);
+    }
+
+    /// There is a lesson after this one: once this one is completed, the tutor asks
+    /// "Продолжим?" and a yes sets [`EngineSnapshot::next_lesson_requested`].
+    pub fn offer_next_lesson(&self, offer: bool) {
+        self.inner.state.lock().offer_next = offer;
     }
 
     /// Tears everything down immediately (quitting the app).
@@ -494,6 +573,8 @@ impl Engine {
             mic_name: self.inner.speech_in.as_ref().map(|s| s.device_name()).unwrap_or_default(),
             mic_level: self.inner.speech_in.as_ref().map(|s| s.level()).unwrap_or(0.0),
             heard_text: self.inner.speech_in.as_ref().map(|s| s.last_transcript()).unwrap_or_default(),
+            next_lesson_requested: state.next_requested,
+            pause_requested: state.pause_requested,
         }
     }
 
@@ -705,6 +786,12 @@ impl Inner {
                     summary.tasks_completed,
                     summary.final_level + 1
                 ));
+                // A completed lesson (not one paused for a rest) offers the next one, by voice.
+                let offer =
+                    self.state.lock().offer_next && !summary.paused && self.options.always_listen && self.speech_in.is_some();
+                if offer {
+                    self.ask_to_continue();
+                }
             }
             Effect::StartTimer { token, seconds } => {
                 let mut state = self.state.lock();
@@ -830,6 +917,18 @@ impl Inner {
             }
         }
         if text.is_empty() {
+            return;
+        }
+        if self.answer_to_continue(&text) {
+            return;
+        }
+        if wants_pause(&text) {
+            // The child wants to stop: the lesson ends as paused (it is gone on with next time),
+            // over the tutor's line if need be, and the app goes back to the lessons.
+            self.log(&format!("child: {text} -> pause"));
+            self.state.lock().pause_requested = true;
+            self.cancel_listening();
+            self.dispatch_from(Event::Stop, true);
             return;
         }
         let listening = {
@@ -1045,6 +1144,73 @@ impl Inner {
         self.finish_listening(None, true);
     }
 
+    // ------------------------------------------------------------------ the next lesson
+
+    /// Asks "Продолжим?" after a completed lesson; asked once more if nothing is said, then the
+    /// tutor waits no longer.
+    fn ask_to_continue(&self) {
+        let asked = {
+            let mut state = self.state.lock();
+            if state.closed || state.next_requested {
+                return;
+            }
+            state.continue_asked += 1;
+            state.continue_asked
+        };
+        let question = match self.config.language {
+            un_core::Language::Russian => "Продолжим?",
+            un_core::Language::English => "Shall we go on?",
+        };
+        self.run(Effect::Say(question.into()));
+        self.state.lock().status = Status::new(StatusKind::Finished);
+        let this = self.arc();
+        thread::Builder::new()
+            .name("un-continue".into())
+            .spawn(move || {
+                thread::sleep(CONTINUE_WAIT);
+                let again = {
+                    let mut state = this.state.lock();
+                    let waiting = state.continue_asked == asked && !state.closed;
+                    if waiting && asked >= 2 {
+                        state.continue_asked = 0;
+                    }
+                    waiting && asked < 2
+                };
+                if again {
+                    this.ask_to_continue();
+                }
+            })
+            .expect("spawn");
+    }
+
+    /// The child's answer to "Продолжим?"; false when none is awaited.
+    fn answer_to_continue(&self, text: &str) -> bool {
+        if self.state.lock().continue_asked == 0 {
+            return false;
+        }
+        match yes_or_no(text) {
+            Some(true) => {
+                {
+                    let mut state = self.state.lock();
+                    state.continue_asked = 0;
+                    state.next_requested = true;
+                }
+                self.log(&format!("child: {text} -> the next lesson"));
+            }
+            Some(false) => {
+                self.state.lock().continue_asked = 0;
+                self.log(&format!("child: {text} -> no more today"));
+                let goodbye = match self.config.language {
+                    un_core::Language::Russian => "Хорошо! До встречи!",
+                    un_core::Language::English => "All right! See you next time!",
+                };
+                let _ = self.effects.send(Some((self.batch.fetch_add(1, Ordering::SeqCst) + 1, Effect::Say(goodbye.into()))));
+            }
+            None => self.log(&format!("child: {text} (not a yes or a no)")),
+        }
+        true
+    }
+
     // ------------------------------------------------------------------ timers
 
     fn start_timer(&self, state: &mut State, token: u64, seconds: f64) {
@@ -1089,7 +1255,7 @@ impl Inner {
 
 #[cfg(test)]
 mod echo_tests {
-    use super::without_echo;
+    use super::{without_echo, yes_or_no};
 
     #[test]
     fn a_fast_count_written_as_one_number_is_spread() {
@@ -1134,6 +1300,27 @@ mod echo_tests {
         assert_eq!(without_echo("Хорошо два", "Хорошо."), "два");
         assert_eq!(without_echo("хорошо", "Хорошо."), "");
         assert_eq!(without_echo("три четыре", "Так."), "три четыре");
+    }
+
+    #[test]
+    fn yes_and_no_to_shall_we_go_on() {
+        for yes in ["Да", "да!", "Давай", "ага", "конечно хочу", "Yes", "okay let's go"] {
+            assert_eq!(yes_or_no(yes), Some(true), "{yes}");
+        }
+        for no in ["нет", "Не хочу", "хватит", "no", "not now, later"] {
+            assert_eq!(yes_or_no(no), Some(false), "{no}");
+        }
+        assert_eq!(yes_or_no("собака"), None);
+    }
+
+    #[test]
+    fn a_pause_is_asked_for_in_words_not_in_a_count() {
+        for pause in ["Пауза", "хватит!", "стоп", "я устала", "enough", "pause please", "I'm tired"] {
+            assert!(super::wants_pause(pause), "{pause}");
+        }
+        for not in ["один два стоп", "лес", "да", "three"] {
+            assert!(!super::wants_pause(not), "{not}");
+        }
     }
 }
 

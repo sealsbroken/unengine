@@ -17,6 +17,7 @@ use un_vision::RgbFrame;
 use crate::overlay::{self, Mapper};
 use crate::settings::{self, Saved};
 use crate::worker::{SourceSpec, Worker};
+use un_app::Profiles;
 
 /// What a product wants preselected when the window opens, whatever was chosen last time.
 #[derive(Debug, Clone, Default)]
@@ -56,6 +57,11 @@ struct Setup {
     strategy: String,
     language: Language,
     child_name: String,
+    /// The chosen child's profile; their name and progress are used instead of `child_name`
+    /// and `extra`.
+    child: Option<String>,
+    /// A name typed to add a child.
+    new_child: String,
     total: u32,
     tasks: u32,
     voice: VoiceChoice,
@@ -82,10 +88,15 @@ struct Live {
     pad_deadline: Option<Instant>,
     /// The finished session's `remember` map has been saved.
     remembered: bool,
+    /// A pause was asked for (the button, or "пауза" said aloud): back to the setup once the
+    /// tutor's goodbye has been said.
+    leaving: bool,
 }
 
 pub struct UnApp {
     registry: StrategyRegistry,
+    /// The children and their progress through the lessons (shared format with the phones).
+    profiles: Profiles,
     paths: ModelPaths,
     setup: Setup,
     live: Option<Live>,
@@ -110,6 +121,21 @@ impl UnApp {
             (_, Some(id)) if registry.get(&id).is_some() => id,
             _ => first,
         };
+        let mut profiles = Profiles::open(settings::profiles_path());
+        // The child of earlier versions (one name, one progress) becomes the first profile.
+        let mut child = saved.child.clone().filter(|id| profiles.get(id).is_some());
+        if profiles.list().is_empty() {
+            if let Some(name) = saved.child_name.clone().filter(|n| !n.trim().is_empty()) {
+                let id = profiles.add(&name).id;
+                profiles.record(
+                    &id,
+                    "",
+                    &un_core::strategy::SessionSummary { paused: true, remember: saved.extra.clone(), ..Default::default() },
+                    &[],
+                );
+                child = Some(id);
+            }
+        }
         let mics = list_microphones();
         // A remembered microphone that is plugged in wins; otherwise the best one present.
         let mic_device = match saved.mic_device.clone() {
@@ -119,6 +145,7 @@ impl UnApp {
         Self {
             paths,
             registry,
+            profiles,
             setup: Setup {
                 source: SourceKind::Camera,
                 camera: saved.camera.filter(|c| (*c as usize) < cameras.len()).unwrap_or(0),
@@ -128,6 +155,8 @@ impl UnApp {
                 strategy,
                 language: saved.language.unwrap_or(Language::English),
                 child_name: saved.child_name.unwrap_or_default(),
+                child,
+                new_child: String::new(),
                 total: saved.total.unwrap_or(10),
                 tasks: saved.tasks.unwrap_or(10),
                 voice: saved.voice.as_deref().and_then(VoiceChoice::parse).unwrap_or(VoiceChoice::Auto),
@@ -152,6 +181,7 @@ impl UnApp {
             strategy: Some(s.strategy.clone()),
             language: Some(s.language),
             child_name: Some(s.child_name.clone()),
+            child: s.child.clone(),
             total: Some(s.total),
             tasks: Some(s.tasks),
             voice: Some(
@@ -195,17 +225,19 @@ impl UnApp {
             pad_buffer: String::new(),
             pad_deadline: None,
             remembered: false,
+            leaving: false,
         });
         self.error = None;
     }
 
     fn start_lesson(&mut self) {
+        let has_next = self.next_lesson().is_some();
         let Some(live) = &mut self.live else { return };
         let s = &self.setup;
         let labels = live.worker.latest.lock().labels.clone();
         // One kind of toy on the detector: its name ("машинки"); several: "игрушки".
         let noun = if live.sim.is_none() && labels.len() == 1 { labels[0].clone() } else { "toy".to_string() };
-        let config = SessionConfig {
+        let mut config = SessionConfig {
             language: s.language,
             child_name: (!s.child_name.trim().is_empty()).then(|| s.child_name.trim().to_string()),
             total_objects: s.total,
@@ -215,6 +247,10 @@ impl UnApp {
             extra: s.extra.clone(),
             ..Default::default()
         };
+        // A chosen child: their name and what their lessons remembered.
+        if let Some(id) = &s.child {
+            config = self.profiles.config(id, SessionConfig { child_name: None, extra: Default::default(), ..config });
+        }
         let options = SessionOptions {
             strategy: s.strategy.clone(),
             config,
@@ -226,12 +262,22 @@ impl UnApp {
         };
         match build_session(&self.paths, options, lesson_logger()) {
             Ok(session) => {
+                // As on the phone: after a completed lesson the tutor asks "Продолжим?"; a yes
+                // starts the next one in the list.
+                session.engine.offer_next_lesson(has_next);
                 session.engine.start();
                 live.session = Some(session);
                 live.remembered = false;
             }
             Err(error) => self.error = Some(error.to_string()),
         }
+    }
+
+    /// The lesson after the selected one in the list, if any.
+    fn next_lesson(&self) -> Option<String> {
+        let ids: Vec<String> = self.registry.infos().into_iter().map(|i| i.id).collect();
+        let i = ids.iter().position(|id| *id == self.setup.strategy)?;
+        ids.get(i + 1).cloned()
     }
 
     /// Keeps what a finished lesson asked to remember (the child's name, where it stopped).
@@ -242,6 +288,11 @@ impl UnApp {
         }
         let Some(summary) = live.session.as_ref().and_then(|s| s.engine.snapshot().summary) else { return };
         live.remembered = true;
+        if let Some(id) = self.setup.child.clone() {
+            let ids: Vec<String> = self.registry.infos().into_iter().map(|i| i.id).collect();
+            self.profiles.record(&id, &self.setup.strategy, &summary, &ids);
+            return;
+        }
         summary.apply_remembered(&mut self.setup.extra);
         if let Some(name) = self.setup.extra.get("child_name") {
             self.setup.child_name = name.clone();
@@ -303,10 +354,47 @@ impl UnApp {
             ui.radio_value(&mut s.language, Language::English, "English");
             ui.radio_value(&mut s.language, Language::Russian, "Русский");
         });
+        // As on the phones: a profile per child, each with their own progress.
+        let chosen = s.child.as_ref().and_then(|id| self.profiles.get(id)).map(|p| p.name.clone());
         ui.horizontal(|ui| {
-            ui.label("Child's name");
-            ui.text_edit_singleline(&mut s.child_name);
+            egui::ComboBox::from_label("Child").selected_text(chosen.clone().unwrap_or_else(|| "—".into())).show_ui(ui, |ui| {
+                ui.selectable_value(&mut s.child, None, "—");
+                for p in self.profiles.list() {
+                    let done = p.completed.len();
+                    ui.selectable_value(&mut s.child, Some(p.id.clone()), format!("{} ({done} done)", p.name));
+                }
+            });
+            if let Some(id) = s.child.clone() {
+                if ui.button("Remove").on_hover_text("Deletes the child's progress").clicked() {
+                    self.profiles.remove(&id);
+                    s.child = None;
+                }
+            }
         });
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut s.new_child).on_hover_text("A new child's name");
+            if ui.button("Add child").clicked() && !s.new_child.trim().is_empty() {
+                s.child = Some(self.profiles.add(&s.new_child).id);
+                s.new_child.clear();
+            }
+        });
+        if let Some(id) = s.child.clone() {
+            // The chosen child goes on with their next lesson.
+            let ids: Vec<String> = self.registry.infos().into_iter().map(|i| i.id).collect();
+            if let Some(next) = self.profiles.next_lesson(&id, &ids) {
+                if ui
+                    .button(format!("Go on with: {}", self.registry.get(&next).map(|f| f.info().title).unwrap_or(next.clone())))
+                    .clicked()
+                {
+                    s.strategy = next;
+                }
+            }
+        } else {
+            ui.horizontal(|ui| {
+                ui.label("Child's name");
+                ui.text_edit_singleline(&mut s.child_name);
+            });
+        }
         ui.add(egui::Slider::new(&mut s.total, 1..=20).text("objects the family owns"));
         ui.add(egui::Slider::new(&mut s.tasks, 1..=30).text("tasks per session"));
         ui.horizontal(|ui| {
@@ -367,6 +455,28 @@ impl UnApp {
         if snapshot.as_ref().is_some_and(|s| s.summary.is_some()) {
             self.remember_session();
         }
+        let paused = snapshot.as_ref().is_some_and(|s| {
+            (s.pause_requested || self.live.as_ref().is_some_and(|l| l.leaving)) && s.status.kind == StatusKind::Finished
+        });
+        if paused {
+            self.stop_lesson();
+            self.live = None;
+            return;
+        }
+        if snapshot.as_ref().is_some_and(|s| s.next_lesson_requested) {
+            let ids: Vec<String> = self.registry.infos().into_iter().map(|i| i.id).collect();
+            let next = match &self.setup.child {
+                Some(id) => self.profiles.next_lesson(id, &ids),
+                None => self.next_lesson(),
+            };
+            if let Some(next) = next {
+                self.setup.strategy = next;
+                self.remember();
+                self.stop_lesson();
+                self.start_lesson();
+                return;
+            }
+        }
 
         // Top bar.
         ui.horizontal(|ui| {
@@ -384,10 +494,13 @@ impl UnApp {
                     }
                 }
                 Some(_) => {
-                    if ui.button("End lesson").clicked() {
+                    // As on the phone: the lesson is paused (gone on with next time) and, after the
+                    // tutor's goodbye, the lessons are shown again; "пауза" said aloud does the same.
+                    if ui.button("Pause").clicked() {
                         if let Some(s) = &live.session {
                             s.engine.stop();
                         }
+                        live.leaving = true;
                     }
                 }
             }
