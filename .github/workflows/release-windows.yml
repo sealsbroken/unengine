@@ -69,10 +69,7 @@ jobs:
           path: unmath
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: unengine/apps/un
-
+      # No build cache: a restored target dir once left ort-sys linking a missing cargs.lib.
       - name: Build
         run: cargo build --release --manifest-path unengine/apps/un/Cargo.toml
 
