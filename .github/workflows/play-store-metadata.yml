@@ -1,0 +1,80 @@
+name: Play Store Metadata
+
+# Uploads the Google Play listing of Un for Android: title, short and full description, icon,
+# feature graphic and phone screenshots for each locale in fastlane/metadata/android (en-US,
+# ru-RU), with fastlane supply (the `android play_metadata` lane). No binary: Release Android
+# uploads the builds.
+#
+#   gh workflow run "Play Store Metadata"                   # texts and images
+#   gh workflow run "Play Store Metadata" -f images=false   # texts only
+#
+# Play accepts listing changes only once the app has a build and the console's required forms
+# are done (the first bundle is uploaded by hand). Secret: PLAY_SERVICE_ACCOUNT_JSON, as in
+# Release Android.
+
+on:
+  workflow_dispatch:
+    inputs:
+      images:
+        description: 'Upload the icon, feature graphic and screenshots too'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-store-metadata
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Upload the listing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate the listing
+        # Play's limits: title 30 characters, short description 80, full 4000; icon 512x512,
+        # feature graphic 1024x500, 2 to 8 phone screenshots no longer than twice their width.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, os, struct, sys
+          def size(p):
+              with open(p, 'rb') as f:
+                  head = f.read(24)
+              return struct.unpack('>II', head[16:24])
+          bad = []
+          for loc in ('en-US', 'ru-RU'):
+              d = f'fastlane/metadata/android/{loc}'
+              for name, limit in (('title', 30), ('short_description', 80), ('full_description', 4000)):
+                  text = open(f'{d}/{name}.txt', encoding='utf-8').read().strip()
+                  if not text or len(text) > limit:
+                      bad.append(f'{loc}/{name}.txt: {len(text)} characters (1..{limit})')
+              if size(f'{d}/images/icon.png') != (512, 512): bad.append(f'{loc}: icon is not 512x512')
+              if size(f'{d}/images/featureGraphic.png') != (1024, 500): bad.append(f'{loc}: feature graphic is not 1024x500')
+              shots = sorted(glob.glob(f'{d}/images/phoneScreenshots/*.png'))
+              if not 2 <= len(shots) <= 8: bad.append(f'{loc}: {len(shots)} phone screenshots (2..8)')
+              for s in shots:
+                  w, h = size(s)
+                  if max(w, h) > 2 * min(w, h): bad.append(f'{s}: {w}x{h} is longer than 2:1')
+          for b in bad: print(f'::error::{b}')
+          sys.exit(1 if bad else 0)
+          PY
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Upload to Google Play
+        env:
+          SUPPLY_JSON_KEY_DATA: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          IMAGES: ${{ inputs.images }}
+        run: |
+          set -euo pipefail
+          [ -n "$SUPPLY_JSON_KEY_DATA" ] || { echo "::error::secret PLAY_SERVICE_ACCOUNT_JSON unset"; exit 1; }
+          bundle exec fastlane android play_metadata images:"$IMAGES"

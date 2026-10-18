@@ -115,3 +115,29 @@ platform :ios do
     )
   end
 end
+
+# The Google Play listing (supply), from CI (.github/workflows/play-store-metadata.yml): the
+# texts, icon, feature graphic and phone screenshots in fastlane/metadata/android/<locale>, no
+# binary (Release Android uploads those). Play takes listing changes only once a build exists, so
+# the first bundle and the console's required forms (content rating, data safety, target audience,
+# pricing) come first, by hand.
+#
+# Environment: SUPPLY_JSON_KEY_DATA, the service account's JSON key (PLAY_SERVICE_ACCOUNT_JSON).
+platform :android do
+  desc "Upload the Play listing (texts, images and screenshots) from fastlane/metadata/android"
+  lane :play_metadata do |options|
+    # images:false (from the command line, a string) leaves the graphics as they are.
+    skip_images = options[:images].to_s == "false"
+    upload_to_play_store(
+      package_name: "app.onym.un",
+      metadata_path: "./fastlane/metadata/android",
+      skip_upload_apk: true,
+      skip_upload_aab: true,
+      skip_upload_changelogs: true,
+      skip_upload_images: skip_images,
+      skip_upload_screenshots: skip_images,
+      # Play's image endpoint can fail when several locales' graphics upload at once.
+      sync_image_upload: true
+    )
+  end
+end

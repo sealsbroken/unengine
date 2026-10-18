@@ -34,4 +34,4 @@ UniFFI bindings, which are found by reflection.
 signs both with the upload key, attaches them to the tag's GitHub Release and uploads the bundle
 to a Google Play track. The APK is for installing without Play; a Play install is signed with
 Play's key, so one does not update the other. The first bundle is uploaded by hand in the Play Console (it enrols Play App Signing);
-`play/icon-512.png` is the store icon.
+the listing (text, icon, feature graphic, screenshots) is in `fastlane/metadata/android`.
