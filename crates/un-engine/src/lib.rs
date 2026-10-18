@@ -601,9 +601,14 @@ impl Inner {
                     };
                     if let Some(token) = token {
                         token.cancel();
-                        if let Some(speech_in) = &self.speech_in {
-                            speech_in.stop();
-                        }
+                    }
+                    // The recogniser starts afresh after the tutor's line, even when no listen was
+                    // open at this moment: the line can start before the microphone loop has
+                    // re-armed after the child's last words, and the recognition that heard them,
+                    // silent through the whole line, never heard the child again (the first
+                    // count after the place was chosen timed out over and over on the iPad).
+                    if let Some(speech_in) = &self.speech_in {
+                        speech_in.stop();
                     }
                 }
                 if let Some(speech_in) = &self.speech_in {
