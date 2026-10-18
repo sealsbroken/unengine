@@ -82,6 +82,8 @@ pub struct EngineSnapshot {
     /// The child said "пауза" (or "хватит", "enough"...): the lesson stopped; the app goes back
     /// to the lessons once the tutor has said goodbye.
     pub pause_requested: bool,
+    /// The child (or a tap) said no to "Продолжим?": the app shows the goodbye.
+    pub next_lesson_declined: bool,
 }
 
 /// Receives one line per thing the engine does.
@@ -118,6 +120,8 @@ struct Mic {
     /// Numbers the child said over the tutor's line (barge-in): the start of the answer the
     /// line asks for, handed to the listen that follows it.
     early: Vec<String>,
+    /// The last utterance the microphone delivered and when, for the HUD ("Heard: «три!»").
+    heard: Option<(String, Instant)>,
 }
 
 /// How long after the tutor's line a transcript of it may still come back from the microphone.
@@ -299,6 +303,7 @@ struct State {
     /// Times "Продолжим?" has been asked for the answer now awaited; 0 when not asking.
     continue_asked: u32,
     next_requested: bool,
+    next_declined: bool,
     pause_requested: bool,
     status: Status,
     last_spoken: String,
@@ -410,6 +415,7 @@ impl Engine {
                 offer_next: false,
                 continue_asked: 0,
                 next_requested: false,
+                next_declined: false,
                 pause_requested: false,
             }),
             effects: tx,
@@ -532,6 +538,14 @@ impl Engine {
         self.inner.dispatch(Event::Heard(number));
     }
 
+    /// The answer to "Продолжим?" tapped instead of said (the yes/no cards); ignored when the
+    /// question is not being asked.
+    pub fn answer_next_lesson(&self, yes: bool) {
+        if self.inner.state.lock().continue_asked > 0 {
+            self.inner.settle_continue(yes, if yes { "(tapped yes)" } else { "(tapped no)" });
+        }
+    }
+
     /// A number arrived from any other input (a test).
     pub fn heard(&self, number: u32) {
         self.inner.cancel_listening();
@@ -558,6 +572,13 @@ impl Engine {
     }
 
     pub fn snapshot(&self) -> EngineSnapshot {
+        // Read before the state lock: never hold both.
+        let heard = self.inner.mic.lock().heard.clone();
+        let heard_text = heard
+            .filter(|(_, at)| at.elapsed() < Duration::from_secs(5))
+            .map(|(text, _)| text)
+            .or_else(|| self.inner.speech_in.as_ref().map(|s| s.last_transcript()))
+            .unwrap_or_default();
         let state = self.inner.state.lock();
         let finished = matches!(state.status.kind, StatusKind::Finished | StatusKind::Idle);
         EngineSnapshot {
@@ -572,9 +593,10 @@ impl Engine {
             speech_available: state.speech_available,
             mic_name: self.inner.speech_in.as_ref().map(|s| s.device_name()).unwrap_or_default(),
             mic_level: self.inner.speech_in.as_ref().map(|s| s.level()).unwrap_or(0.0),
-            heard_text: self.inner.speech_in.as_ref().map(|s| s.last_transcript()).unwrap_or_default(),
+            heard_text,
             next_lesson_requested: state.next_requested,
             pause_requested: state.pause_requested,
+            next_lesson_declined: state.next_declined,
         }
     }
 
@@ -871,6 +893,7 @@ impl Inner {
         let mut barge = false;
         {
             let mut mic = self.mic.lock();
+            mic.heard = Some((text.clone(), Instant::now()));
             if mic.speaking {
                 let line = mic.lines.iter().rev().find(|(_, ended)| ended.is_none()).map(|(l, _)| l.clone());
                 if !self.speech_in.as_ref().is_some_and(|s| s.barge_in()) {
@@ -1189,26 +1212,30 @@ impl Inner {
             return false;
         }
         match yes_or_no(text) {
-            Some(true) => {
-                {
-                    let mut state = self.state.lock();
-                    state.continue_asked = 0;
-                    state.next_requested = true;
-                }
-                self.log(&format!("child: {text} -> the next lesson"));
-            }
-            Some(false) => {
-                self.state.lock().continue_asked = 0;
-                self.log(&format!("child: {text} -> no more today"));
-                let goodbye = match self.config.language {
-                    un_core::Language::Russian => "Хорошо! До встречи!",
-                    un_core::Language::English => "All right! See you next time!",
-                };
-                let _ = self.effects.send(Some((self.batch.fetch_add(1, Ordering::SeqCst) + 1, Effect::Say(goodbye.into()))));
-            }
+            Some(yes) => self.settle_continue(yes, text),
             None => self.log(&format!("child: {text} (not a yes or a no)")),
         }
         true
+    }
+
+    /// Yes: the app starts the next lesson. No: a goodbye, and the app says see you next time.
+    fn settle_continue(&self, yes: bool, text: &str) {
+        {
+            let mut state = self.state.lock();
+            state.continue_asked = 0;
+            state.next_requested = yes;
+            state.next_declined = !yes;
+        }
+        if yes {
+            self.log(&format!("child: {text} -> the next lesson"));
+            return;
+        }
+        self.log(&format!("child: {text} -> no more today"));
+        let goodbye = match self.config.language {
+            un_core::Language::Russian => "Хорошо! До встречи!",
+            un_core::Language::English => "All right! See you next time!",
+        };
+        let _ = self.effects.send(Some((self.batch.fetch_add(1, Ordering::SeqCst) + 1, Effect::Say(goodbye.into()))));
     }
 
     // ------------------------------------------------------------------ timers

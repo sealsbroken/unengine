@@ -660,3 +660,17 @@ fn saying_enough_pauses_the_lesson_over_the_tutor() {
     assert!(wait_for(|| events.lock().contains(&Event::Stop), Duration::from_secs(2)));
     engine.close();
 }
+
+#[test]
+fn the_yes_and_no_cards_answer_shall_we_go_on_by_tap() {
+    let (engine, speech_out) = ending_engine(false, "hmm");
+    engine.start();
+    assert!(wait_for(|| speech_out.spoken_joined().contains("Shall we go on?"), Duration::from_secs(5)));
+    engine.answer_next_lesson(false);
+    assert!(engine.snapshot().next_lesson_declined && !engine.snapshot().next_lesson_requested);
+    assert!(wait_for(|| speech_out.spoken_joined().contains("See you next time"), Duration::from_secs(5)));
+    // A second tap, the question over, changes nothing.
+    engine.answer_next_lesson(true);
+    assert!(!engine.snapshot().next_lesson_requested);
+    engine.close();
+}

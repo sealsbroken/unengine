@@ -264,6 +264,10 @@ pub struct UnSnapshot {
     /// The child said "пауза" (or "хватит", "enough"...): go back to the lessons once the
     /// tutor has said goodbye (`status` finished).
     pub pause_requested: bool,
+    /// The child said no to "Продолжим?" (or it was tapped): show the goodbye.
+    pub next_lesson_declined: bool,
+    /// What the microphone heard most recently, for a few seconds ("Heard: «три!»").
+    pub heard_text: String,
 }
 
 impl From<un_engine::EngineSnapshot> for UnSnapshot {
@@ -326,6 +330,8 @@ impl From<un_engine::EngineSnapshot> for UnSnapshot {
             mic_level: s.mic_level,
             next_lesson_requested: s.next_lesson_requested,
             pause_requested: s.pause_requested,
+            next_lesson_declined: s.next_lesson_declined,
+            heard_text: s.heard_text,
         }
     }
 }
@@ -524,6 +530,11 @@ impl UnSession {
         self.engine.offer_next_lesson(offer);
     }
 
+    /// The yes/no to "Продолжим?" tapped on screen instead of said.
+    pub fn answer_next_lesson(&self, yes: bool) {
+        self.engine.answer_next_lesson(yes);
+    }
+
     pub fn snapshot(&self) -> UnSnapshot {
         self.engine.snapshot().into()
     }
@@ -668,11 +679,19 @@ pub struct UnProfile {
     pub completed: Vec<String>,
     /// The lesson they go on with next.
     pub current: Option<String>,
+    /// The lesson they stopped halfway ("Paused here" on the trail).
+    pub paused: Option<String>,
 }
 
 impl From<&un_app::Profile> for UnProfile {
     fn from(p: &un_app::Profile) -> Self {
-        Self { id: p.id.clone(), name: p.name.clone(), completed: p.completed.clone(), current: p.current.clone() }
+        Self {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            completed: p.completed.clone(),
+            current: p.current.clone(),
+            paused: p.paused.clone(),
+        }
     }
 }
 

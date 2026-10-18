@@ -19,6 +19,10 @@ pub struct Profile {
     /// The lesson to go on with: the one stopped for a rest, or the next after a completed one.
     #[serde(default)]
     pub current: Option<String>,
+    /// The lesson stopped halfway ("пауза"), gone on with where it stopped; `None` once it is
+    /// completed.
+    #[serde(default)]
+    pub paused: Option<String>,
     /// What the lessons asked to remember for this child (`SessionSummary::remember`), passed back
     /// as `SessionConfig::extra`.
     #[serde(default)]
@@ -58,7 +62,8 @@ impl Profiles {
         while self.get(&id).is_some() {
             id.push('x');
         }
-        let profile = Profile { id, name: name.trim().to_string(), completed: vec![], current: None, extra: HashMap::new() };
+        let profile =
+            Profile { id, name: name.trim().to_string(), completed: vec![], current: None, paused: None, extra: HashMap::new() };
         self.list.push(profile.clone());
         self.save();
         profile
@@ -97,7 +102,11 @@ impl Profiles {
         summary.apply_remembered(&mut p.extra);
         if summary.paused {
             p.current = Some(lesson.to_string());
+            p.paused = Some(lesson.to_string());
         } else {
+            if p.paused.as_deref() == Some(lesson) {
+                p.paused = None;
+            }
             if !p.completed.iter().any(|c| c == lesson) {
                 p.completed.push(lesson.to_string());
             }
@@ -169,6 +178,8 @@ mod tests {
         assert_eq!(profiles.get(&mia).unwrap().completed, vec!["one".to_string()]);
         assert_eq!(profiles.next_lesson(&mia, &lessons()).as_deref(), Some("two"));
         assert_eq!(profiles.next_lesson(&vasya, &lessons()).as_deref(), Some("one"));
+        assert_eq!(profiles.get(&vasya).unwrap().paused.as_deref(), Some("one"));
+        assert_eq!(profiles.get(&mia).unwrap().paused, None);
         let config = profiles.config(&vasya, SessionConfig::default());
         assert_eq!(config.child_name.as_deref(), Some("Вася"));
         assert_eq!(config.extra.get("lesson1.step").map(String::as_str), Some("4"));
