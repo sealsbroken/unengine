@@ -1,234 +1,37 @@
 import SwiftUI
 
-/// The children, a child's lessons, then the lesson: the tutor's line, status, the camera's
-/// picture, and the number pad. Perception runs through the shared Rust models (`UnPerception`);
-/// speech through Apple's APIs. The lessons are whatever the linked library offers
-/// (`availableStrategies`); each child's progress through them is kept (`UnProfiles`).
+/// The app: the children, a child's adventures (the trail), and the lesson over them. Perception
+/// runs through the shared Rust models (`UnPerception`); speech through Apple's APIs. The lessons
+/// are whatever the linked library offers (`availableStrategies`); each child's progress through
+/// them is kept (`UnProfiles`). The look is the "Un Design Board" (Claude Design, Onym tokens).
 struct LessonScreen: View {
     @StateObject private var model = LessonModel()
 
     var body: some View {
         Group {
-            if model.running {
-                lesson
-            } else if model.child == nil {
-                ChildrenList(model: model)
+            if model.child == nil {
+                ChildrenScreen(model: model)
             } else {
-                LessonList(model: model)
+                TrailScreen(model: model)
             }
         }
-        .onAppear { model.reloadLessons(); model.reloadChildren(); model.preparePerception(); Permissions.request {} }
+        .animation(.easeInOut(duration: 0.25), value: model.childId)
+        // No swipe-back mid-lesson: the lesson leaves by Pause, "пауза" or its end.
+        .fullScreenCover(isPresented: $model.running) { LessonView(model: model) }
+        .onAppear {
+            model.reloadLessons()
+            model.reloadChildren()
+            model.preparePerception()
+            #if DEBUG
+            // Screenshots in the simulator, where speech permission can't be granted from outside.
+            if ProcessInfo.processInfo.environment["UN_SKIP_PERMISSIONS"] != nil {
+                if ProcessInfo.processInfo.environment["UN_START_LESSON"] != nil { model.start() }
+                return
+            }
+            #endif
+            Permissions.request {}
+        }
         .onDisappear { model.close() }
-    }
-
-    private var lesson: some View {
-        VStack(spacing: 12) {
-            Text(model.snapshot?.lastSpoken ?? "…").font(.title2).multilineTextAlignment(.center).padding()
-            Text(model.statusLine).font(.footnote).foregroundStyle(.secondary)
-            if let camera = model.camera {
-                ZStack {
-                    CameraPreview(session: camera.session)
-                    TableOverlay(table: model.table, frameSize: model.frameSize, highlight: model.snapshot?.highlightCount)
-                    CameraStatus(model: model)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .padding(.horizontal)
-            } else {
-                Spacer()
-            }
-            if model.snapshot?.showNumberPad == true {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5)) {
-                    ForEach(0...10, id: \.self) { n in
-                        Button("\(n)") { model.tap(UInt32(n)) }.buttonStyle(.borderedProminent).font(.title2)
-                    }
-                }.padding()
-            }
-            HStack {
-                Button(model.language == .russian ? "Пауза" : "Pause") { model.pause() }
-                Button("Repeat") { model.repeatLine() }
-                Button("Skip") { model.skip() }
-                // The tutor's language; a running lesson starts over in the new one.
-                Picker("Language", selection: $model.language) {
-                    Text("EN").tag(UnLanguage.english)
-                    Text("RU").tag(UnLanguage.russian)
-                }.pickerStyle(.segmented).frame(width: 100)
-            }.buttonStyle(.bordered).padding(.bottom)
-        }
-    }
-}
-
-/// While the detector loads (or when it failed), a card the grown-up can read: the camera does
-/// not count yet. After an install or update iOS compiles the model for the Neural Engine,
-/// which takes up to a minute; later launches take seconds.
-struct CameraStatus: View {
-    @ObservedObject var model: LessonModel
-
-    var body: some View {
-        let ru = model.language == .russian
-        if model.preparingCamera {
-            VStack(spacing: 8) {
-                ProgressView().controlSize(.large)
-                Text(ru ? "Готовим камеру…" : "Preparing the camera…").font(.headline)
-                Text(ru ? "После установки или обновления это занимает до минуты. Урок можно начинать: игрушки будут видны, как только камера будет готова."
-                        : "After an install or update this takes up to a minute. You can start a lesson: the toys are seen as soon as the camera is ready.")
-                    .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
-            }
-            .padding()
-            .frame(maxWidth: 420)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-            .padding()
-        } else if model.detectorFailed {
-            Label(ru ? "Камера не смогла загрузить распознавание игрушек." : "The camera could not load toy recognition.",
-                  systemImage: "exclamationmark.triangle")
-                .font(.headline).foregroundStyle(.red)
-                .padding()
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-                .padding()
-        }
-    }
-}
-
-/// The children who use the app, each with their progress; a tap goes to that child's lessons.
-/// A grown-up adds a child by name and can remove one.
-struct ChildrenList: View {
-    @ObservedObject var model: LessonModel
-    @State private var adding = false
-    @State private var name = ""
-    @State private var removing: UnProfile?
-
-    var body: some View {
-        let ru = model.language == .russian
-        NavigationStack {
-            List {
-                ForEach(model.children, id: \.id) { child in
-                    Button { model.childId = child.id } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(child.name).font(.title3.weight(.semibold))
-                            Text(progress(child, ru: ru)).font(.subheadline).foregroundStyle(.secondary)
-                        }
-                    }
-                    .foregroundStyle(.primary)
-                    .swipeActions {
-                        Button(ru ? "Удалить" : "Remove", role: .destructive) { removing = child }
-                    }
-                }
-            }
-            .overlay {
-                if model.children.isEmpty {
-                    ContentUnavailableView {
-                        Label(ru ? "Добавьте ребёнка" : "Add a child", systemImage: "person.crop.circle.badge.plus")
-                    } description: {
-                        Text(ru ? "У каждого ребёнка свой прогресс по урокам." : "Each child goes through the lessons at their own pace.")
-                    } actions: {
-                        Button(ru ? "Добавить" : "Add") { adding = true }.buttonStyle(.borderedProminent)
-                    }
-                }
-            }
-            .safeAreaInset(edge: .bottom) { CameraStatus(model: model) }
-            .navigationTitle(ru ? "Дети" : "Children")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Picker("Language", selection: $model.language) {
-                        Text("EN").tag(UnLanguage.english)
-                        Text("RU").tag(UnLanguage.russian)
-                    }.pickerStyle(.segmented).frame(width: 100)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { adding = true } label: { Image(systemName: "plus") }
-                        .accessibilityLabel(ru ? "Добавить ребёнка" : "Add a child")
-                }
-            }
-            .alert(ru ? "Новый ребёнок" : "New child", isPresented: $adding) {
-                TextField(ru ? "Имя" : "Name", text: $name)
-                Button(ru ? "Добавить" : "Add") { model.addChild(name); name = "" }
-                Button(ru ? "Отмена" : "Cancel", role: .cancel) { name = "" }
-            } message: {
-                Text(ru ? "Тьютор будет обращаться к ребёнку по имени." : "The tutor calls the child by this name.")
-            }
-            .alert(ru ? "Удалить \(removing?.name ?? "")?" : "Remove \(removing?.name ?? "")?", isPresented: Binding(
-                get: { removing != nil }, set: { if !$0 { removing = nil } })) {
-                Button(ru ? "Удалить" : "Remove", role: .destructive) {
-                    if let id = removing?.id { model.removeChild(id) }
-                    removing = nil
-                }
-                Button(ru ? "Отмена" : "Cancel", role: .cancel) { removing = nil }
-            } message: {
-                Text(ru ? "Прогресс ребёнка будет удалён." : "The child's progress is deleted.")
-            }
-        }
-    }
-
-    private func progress(_ child: UnProfile, ru: Bool) -> String {
-        let done = model.lessons.filter { child.completed.contains($0.id) }.count
-        let total = model.lessons.count
-        var text = ru ? "Пройдено уроков: \(done) из \(total)" : "\(done) of \(total) lessons done"
-        if let next = model.nextLesson(for: child) {
-            text += ru ? " · дальше: \(next.title)" : " · next: \(next.title)"
-        }
-        return text
-    }
-}
-
-/// The chosen child's lessons, in the library's order: the ones they completed are ticked and
-/// the one they go on with is marked; a tap starts any of them.
-struct LessonList: View {
-    @ObservedObject var model: LessonModel
-
-    var body: some View {
-        let ru = model.language == .russian
-        let child = model.child
-        let next = child.flatMap { model.nextLesson(for: $0) }
-        NavigationStack {
-            List {
-                if let next {
-                    Section {
-                        Button { model.start(next.id) } label: {
-                            Label((ru ? "Продолжить: " : "Continue: ") + next.title, systemImage: "play.fill")
-                                .font(.headline)
-                        }
-                    }
-                }
-                Section {
-                    ForEach(model.lessons, id: \.id) { lesson in
-                        Button { model.start(lesson.id) } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(lesson.title).font(.headline)
-                                    Text(lesson.description).font(.subheadline).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                if child?.completed.contains(lesson.id) == true {
-                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                                        .accessibilityLabel(ru ? "пройден" : "done")
-                                } else if lesson.id == next?.id {
-                                    Image(systemName: "arrow.right.circle").foregroundStyle(.tint)
-                                        .accessibilityLabel(ru ? "дальше" : "next")
-                                }
-                            }
-                        }
-                        .foregroundStyle(.primary)
-                    }
-                }
-            }
-            .overlay {
-                if model.lessons.isEmpty { Text(ru ? "Уроков нет" : "No lessons").foregroundStyle(.secondary) }
-            }
-            .safeAreaInset(edge: .bottom) { CameraStatus(model: model) }
-            .navigationTitle(child?.name ?? (ru ? "Уроки" : "Lessons"))
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { model.childId = nil } label: { Label(ru ? "Дети" : "Children", systemImage: "chevron.left") }
-                        .labelStyle(.titleAndIcon)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    // The tutor's language for the next lesson.
-                    Picker("Language", selection: $model.language) {
-                        Text("EN").tag(UnLanguage.english)
-                        Text("RU").tag(UnLanguage.russian)
-                    }.pickerStyle(.segmented).frame(width: 100)
-                }
-            }
-        }
     }
 }
 
@@ -281,6 +84,53 @@ final class LessonModel: ObservableObject {
     var child: UnProfile? { children.first { $0.id == childId } }
     /// The running lesson's end has been recorded for the child.
     private var recorded = false
+    /// When the running lesson was completed (the end screens follow it).
+    @Published private(set) var endedAt: Date?
+    /// "No" to "Продолжим?" tapped (the goodbye screen).
+    @Published private(set) var declined = false
+
+    enum EndPhase { case celebrate, ask, bye }
+
+    /// After a completed lesson: the stamped ticket (3 s), then "Продолжим?" (when there is a
+    /// next lesson), then the goodbye after a no. A paused lesson goes back to the trail instead.
+    var endPhase: EndPhase? {
+        guard let s = snapshot, let summary = s.summary, !summary.paused, leavingSince == nil, !s.pauseRequested,
+              let endedAt else { return nil }
+        if declined || s.nextLessonDeclined { return .bye }
+        if Date().timeIntervalSince(endedAt) < 3.5 { return .celebrate }
+        return nextLessonId != nil ? .ask : .bye
+    }
+
+    /// The tutor's state for the panel and the orb.
+    enum TutorState { case speaking, listening, watching, celebrating, muted }
+
+    var tutorState: TutorState {
+        guard let s = snapshot else { return .watching }
+        if let c = s.celebratedSecondsAgo, c < 3 { return .celebrating }
+        if s.showNumberPad { return .muted }
+        switch s.status {
+        case .speaking: return .speaking
+        case .listening: return .listening
+        default: return .watching
+        }
+    }
+
+    /// The yes/no cards under "Продолжим?": the same as saying it.
+    func answerNext(_ yes: Bool) {
+        session?.answerNextLesson(yes: yes)
+        if yes, let next = childId.flatMap({ profiles.nextLesson(id: $0) }) ?? nextLessonId {
+            close()
+            start(next)
+        } else if !yes {
+            declined = true
+        }
+    }
+
+    /// "Back to children" after the goodbye.
+    func goHome() {
+        end()
+        childId = nil
+    }
 
     private static func profilesPath() -> String {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -348,12 +198,6 @@ final class LessonModel: ObservableObject {
         }
     }
 
-    var statusLine: String {
-        let title = lessons.first { $0.id == lessonId }?.title ?? lessonId
-        guard let s = snapshot else { return title }
-        return "\(title)  \(s.status)  level \(s.level + 1)/\(s.levelCount)  \(s.correct)✓/\(s.tasksCompleted)"
-    }
-
     /// Starts lesson `id` for the chosen child (the one they go on with when `nil`).
     func start(_ id: String? = nil) {
         if lessons.isEmpty { reloadLessons() }
@@ -371,6 +215,8 @@ final class LessonModel: ObservableObject {
         // remembered: each child goes on where they stopped.
         if let childId { config = profiles.sessionConfig(id: childId, base: config) }
         recorded = false
+        endedAt = nil
+        declined = false
         do {
             // The microphone stays open for the whole lesson, so the child can answer at any time.
             session = try UnSession(
@@ -431,6 +277,7 @@ final class LessonModel: ObservableObject {
                 guard let self else { return }
                 self.snapshot = self.session?.snapshot()
                 // The lesson's end, recorded for the child once: progress, what it remembered.
+                if self.snapshot?.summary != nil, self.endedAt == nil { self.endedAt = Date() }
                 if let summary = self.snapshot?.summary, !self.recorded, let childId = self.childId {
                     self.recorded = true
                     self.profiles.record(id: childId, lessonId: self.lessonId, summary: summary)
