@@ -105,18 +105,43 @@ pub enum CoreMlFormat {
 /// minute; a cached one loads in seconds.
 pub fn coreml_cache_dir(model: &Path) -> std::path::PathBuf {
     let base = std::env::var_os("UN_CACHE_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    // A new export of the same name gets a fresh cache.
-    let stamp = std::fs::metadata(model)
-        .map(|m| {
-            format!(
-                "{}-{}",
-                m.len(),
-                m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0)
-            )
-        })
-        .unwrap_or_default();
     let stem = model.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    base.join("un-coreml").join(format!("{stem}-{stamp}"))
+    let root = base.join("un-coreml");
+    let dir = root.join(format!("{stem}-{}", model_stamp(model)));
+    // A compiled model is as large as the model: drop the ones of earlier exports.
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // `<stem>-<size>-<stamp>`; another model's name (`toys-yoloe-...`) has more parts.
+            let earlier = name.strip_prefix(&format!("{stem}-")).is_some_and(|rest| {
+                rest.split_once('-').is_some_and(|(size, stamp)| size.bytes().all(|b| b.is_ascii_digit()) && !stamp.contains('-'))
+            });
+            if path != dir && earlier {
+                let _ = std::fs::remove_dir_all(&path);
+            }
+        }
+    }
+    dir
+}
+
+/// The model's size and a hash of its first and last megabyte: the same model keeps its
+/// compiled copy across reinstalls and app updates (which give the file a new date; keyed on
+/// the date, every install compiled again, 45 s on an iPad mini), a new export gets a new one.
+fn model_stamp(model: &Path) -> String {
+    use std::hash::Hasher;
+    use std::io::{Read, Seek, SeekFrom};
+    const PART: u64 = 1 << 20;
+    let Ok(mut file) = std::fs::File::open(model) else { return String::new() };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut buffer = Vec::new();
+    let _ = file.by_ref().take(PART).read_to_end(&mut buffer);
+    if len > 2 * PART && file.seek(SeekFrom::End(-(PART as i64))).is_ok() {
+        let _ = file.read_to_end(&mut buffer);
+    }
+    hasher.write(&buffer);
+    format!("{len}-{:016x}", hasher.finish())
 }
 
 /// Loads a session with graph optimisation and the requested provider.
@@ -190,4 +215,48 @@ fn register_provider(
         }
     }
     Ok(builder)
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn the_compiled_model_follows_the_content_not_the_file_date() {
+        let dir = std::env::temp_dir().join(format!("un-cache-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let model = dir.join("toys.onnx");
+        std::fs::write(&model, vec![7u8; 3 << 20]).unwrap();
+        let first = model_stamp(&model);
+        // A reinstall: same bytes, new date.
+        std::fs::write(&model, vec![7u8; 3 << 20]).unwrap();
+        assert_eq!(model_stamp(&model), first);
+        let mut changed = vec![7u8; 3 << 20];
+        changed[10] = 8;
+        std::fs::write(&model, changed).unwrap();
+        assert_ne!(model_stamp(&model), first);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn earlier_compiles_of_the_same_model_are_dropped_and_others_kept() {
+        let base = std::env::temp_dir().join(format!("un-cache-prune-{}", std::process::id()));
+        let root = base.join("un-coreml");
+        for name in ["toys-100-1700000000", "toys-yoloe-40-1700000000", "caps-5-abc"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        let model = base.join("toys.onnx");
+        std::fs::write(&model, b"model").unwrap();
+        std::env::set_var("UN_CACHE_DIR", &base);
+        let dir = coreml_cache_dir(&model);
+        std::env::remove_var("UN_CACHE_DIR");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut left: Vec<String> =
+            std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left.len(), 3);
+        assert!(!left.contains(&"toys-100-1700000000".to_string()));
+        assert!(left.contains(&"toys-yoloe-40-1700000000".to_string()) && left.contains(&"caps-5-abc".to_string()));
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 }

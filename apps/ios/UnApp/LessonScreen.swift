@@ -103,6 +103,7 @@ final class LessonModel: ObservableObject {
     #if DEBUG
     nonisolated(unsafe) static var debugFrames = 0
     nonisolated(unsafe) static var debugWritten = 0.0
+    nonisolated(unsafe) static var debugFirstStable = -1.0
     #endif
     @Published private(set) var camera: CameraSource?
     /// The latest table state and the size of the frame it came from, for the overlay.
@@ -137,7 +138,9 @@ final class LessonModel: ObservableObject {
         }
         let modelsDir = Bundle.main.resourceURL!.appendingPathComponent("models").path
         preparingCamera = true
+        let began = Date()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer { print(String(format: "timing: detector loaded in %.1f s", Date().timeIntervalSince(began))) }
             let loaded = try? UnPerception(config: UnPerceptionConfig(
                 modelsDir: modelsDir, detector: "toys", confidence: 0.25, countLabel: nil, roi: nil))
             if loaded == nil { print("the toy detector failed to load") }
@@ -192,11 +195,17 @@ final class LessonModel: ObservableObject {
             let result = Result { try perception.processNv12(y: y, uv: uv, width: w, height: h, yStride: ys, uvStride: uvs, timestamp: t) }
             #if DEBUG
             if Self.debugFrames < 5 || Self.debugFrames % 50 == 0 {
-                print("frame \(Self.debugFrames): \(String(format: "%.0f", Date().timeIntervalSince(began) * 1000)) ms \(result.map { "raw=\($0.rawCount)" })")
+                print("frame \(Self.debugFrames) at \(String(format: "%.2f", t)) s: \(String(format: "%.0f", Date().timeIntervalSince(began) * 1000)) ms \(result.map { "raw=\($0.rawCount)" })")
             }
             if case .failure = result { Self.debugFrames += 1 }
             #endif
             if let state = try? result.get() {
+                #if DEBUG
+                if Self.debugFirstStable < 0, state.isStable {
+                    Self.debugFirstStable = t
+                    print(String(format: "timing: first settled count %@ at %.2f s after the camera started (%d frames)", String(describing: state.count), t, Self.debugFrames))
+                }
+                #endif
                 self.session?.observe(count: state.count, isStable: state.isStable, groups: state.groups)
                 Task { @MainActor in
                     self.table = state

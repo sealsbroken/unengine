@@ -59,6 +59,18 @@ def train(args: argparse.Namespace) -> Path:
     raise SystemExit(f"no checkpoint in {out}")
 
 
+def set_cache_key(model) -> None:
+    """Names the model's compiled CoreML copy after its content. Without the key ONNX Runtime
+    names it after the file's path, which on iOS changes with every install (and update): each
+    one compiled the model again (40 s on an iPad mini) and left 500 MB behind."""
+    import hashlib
+
+    del model.metadata_props[:]
+    digest = hashlib.sha256(model.SerializeToString()).hexdigest()[:32]
+    entry = model.metadata_props.add()
+    entry.key, entry.value = "COREML_CACHE_KEY", digest
+
+
 def export(args: argparse.Namespace, checkpoint: Path, labels: list[str]) -> None:
     import numpy as np
     import onnx
@@ -101,6 +113,7 @@ def export(args: argparse.Namespace, checkpoint: Path, labels: list[str]) -> Non
     del graph.output[:]
     graph.output.extend([helper.make_tensor_value_info("output0", TensorProto.FLOAT, None)])
     target = ROOT / "models" / f"{args.name}.onnx"
+    set_cache_key(graph_model)
     onnx.save(graph_model, str(target))
 
     session = ort.InferenceSession(str(target), providers=["CPUExecutionProvider"])
