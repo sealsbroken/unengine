@@ -15,32 +15,50 @@ import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** The tutor's voice through Android TextToSpeech. `speak` blocks the engine's effect thread until done. */
+/**
+ * The tutor's voice through Android TextToSpeech. `speak` blocks the engine's effect thread until
+ * the line has been said, stopped or failed: each line has its own latch, so a late callback of a
+ * stopped line (stopping is asynchronous) never ends or blocks the next one.
+ */
 class AndroidSpeechOutput(context: Context) : SpeechOutputCallback {
-    private var ready = CountDownLatch(1)
+    private val ready = CountDownLatch(1)
     private val tts = TextToSpeech(context) { ready.countDown() }
-    @Volatile private var done = CountDownLatch(0)
+    private val lines = java.util.concurrent.ConcurrentHashMap<String, CountDownLatch>()
 
     init {
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
-            override fun onDone(id: String?) { done.countDown() }
-            @Deprecated("Deprecated in Java") override fun onError(id: String?) { done.countDown() }
+            override fun onDone(id: String?) { finish(id) }
+            override fun onStop(id: String?, interrupted: Boolean) { finish(id) }
+            override fun onError(id: String?, errorCode: Int) { finish(id) }
+            @Deprecated("Deprecated in Java") override fun onError(id: String?) { finish(id) }
         })
     }
+
+    private fun finish(id: String?) { id?.let { lines.remove(it)?.countDown() } }
 
     override fun prepare(language: UnLanguage) { ready.await(5, TimeUnit.SECONDS) }
 
     override fun speak(text: String, language: UnLanguage) {
+        ready.await(5, TimeUnit.SECONDS)
         tts.language = if (language == UnLanguage.RUSSIAN) Locale("ru", "RU") else Locale.US
         tts.setSpeechRate(1.0f) // the voice's own pace
         tts.setPitch(1.45f) // a child's voice: there is no child voice, so the pitch goes up
-        done = CountDownLatch(1)
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "un-${System.nanoTime()}")
+        val id = "un-${System.nanoTime()}"
+        val done = CountDownLatch(1).also { lines[id] = it }
+        if (tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id) != TextToSpeech.SUCCESS) {
+            lines.remove(id)
+            return
+        }
         done.await(30, TimeUnit.SECONDS)
+        lines.remove(id)
     }
 
-    override fun stopSpeaking() { tts.stop(); done.countDown() }
+    override fun stopSpeaking() {
+        tts.stop()
+        for (id in lines.keys.toList()) finish(id)
+    }
+
     override fun playChime() {}
 }
 

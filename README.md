@@ -179,15 +179,20 @@ Each platform releases on its own:
   tag and a GitHub Release.
 - **Release Windows**: the Windows x64 alpha zip.
 - **Release macOS**: `Un.app` (Apple silicon), signed with Developer ID and notarised.
+- **Release Android**: the app bundle, signed with the upload key, attached to the release and
+  uploaded to a Google Play track (`-f track=internal|alpha|beta|production|none`).
 
-Windows and macOS take an existing tag too (`-f tag=v0.1.9`): that tag is built and its zip
-attached to the same release.
+Windows, macOS and Android take an existing tag too (`-f tag=v0.1.9`): that tag is built and its zip
+(or bundle) attached to the same release.
 - **TestFlight External**: give an uploaded build to the External group by hand.
 
 The app ships from this repository with [unmath](https://github.com/sealsbroken/unmath) only;
 the toy detector is the `models-v1` release. Secrets: `ASC_KEY_ID`, `ASC_ISSUER_ID`,
 `ASC_KEY_CONTENT` (sealsbroken organisation, App Store Connect API key) for iOS and macOS
-notarisation; `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD` (the Developer ID Application certificate).
+notarisation; `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD` (the Developer ID Application certificate);
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
+(the Play upload key) and `PLAY_SERVICE_ACCOUNT_JSON` (Google Play; the upload is skipped
+without it).
 
 ## Licence
 

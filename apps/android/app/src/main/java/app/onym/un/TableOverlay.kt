@@ -1,27 +1,35 @@
 package app.onym.un
 
-import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.sp
 import uniffi.un_ffi.*
 
 /**
- * What the tutor sees, drawn over the camera picture as on iOS and the desktop: a box around
- * every recognised object (green once the table is settled, white while it is still changing)
- * and the objects' stable numbers, lit red up to the number the tutor is counting out.
+ * What the tutor sees, over the camera picture (as on iOS): a box around every toy and its stable
+ * number badge. Overlays use a white core with a dark halo, so they stay readable on wood, a
+ * white table or a patterned cloth. A badge is white until counted, yellow (and larger) while the
+ * tutor counts it, blue once counted, green when the count was right.
  */
 @Composable
-fun TableOverlay(table: UnTableState?, frameSize: Pair<Int, Int>, highlight: UInt?, modifier: Modifier = Modifier) {
-    Canvas(modifier) {
+fun TableOverlay(table: UnTableState?, frameSize: Pair<Int, Int>, highlight: UInt?, correct: Boolean, copy: Copy, modifier: Modifier = Modifier) {
+    val measurer = rememberTextMeasurer()
+    val numbered = table?.detections?.filter { it.number > 0u }.orEmpty()
+    val description = numbered.joinToString(". ") {
+        copy("lesson.toy", "n" to "${it.number}", "state" to copy(stateKey(badgeState(it.number, highlight, correct))))
+    }
+    Canvas(modifier.semantics { if (description.isNotEmpty()) contentDescription = description }) {
         val (fw, fh) = frameSize
         if (table == null || fw <= 0 || fh <= 0) return@Canvas
         // The preview fills the view keeping the frame's aspect (FILL_CENTER), so the frame is
@@ -29,36 +37,56 @@ fun TableOverlay(table: UnTableState?, frameSize: Pair<Int, Int>, highlight: UIn
         val scale = maxOf(size.width / fw, size.height / fh)
         val drawn = Size(fw * scale, fh * scale)
         val origin = Offset((size.width - drawn.width) / 2, (size.height - drawn.height) / 2)
-        fun point(x: Float, y: Float) = Offset(origin.x + x * drawn.width, origin.y + y * drawn.height)
-        fun rect(b: UnBox): Rect = Rect(point(b.x1, b.y1), point(b.x2, b.y2))
-
-        val color = if (table.isStable) GREEN else Color.White
+        val badge = (size.width * 0.095f).coerceIn(44 * density, 72 * density)
         for (d in table.detections) {
-            val r = rect(d.bbox)
-            drawRoundRect(color, r.topLeft, r.size, androidx.compose.ui.geometry.CornerRadius(3f), style = Stroke(2f * density))
-            d.label?.let { text(it, r.left + 4 * density, r.top - 4 * density, 13f, color) }
-            if (d.number > 0u) {
-                val lit = highlight?.let { d.number <= it } ?: false
-                val radius = (if (lit) 22f else 16f) * density
-                drawCircle(if (lit) RED else Color.Black.copy(alpha = 0.6f), radius, r.center)
-                text(d.number.toString(), r.center.x, r.center.y, if (lit) 26f else 18f, Color.White, centered = true, bold = true)
+            val rect = Rect(origin.x + d.bbox.x1 * drawn.width, origin.y + d.bbox.y1 * drawn.height,
+                origin.x + d.bbox.x2 * drawn.width, origin.y + d.bbox.y2 * drawn.height)
+            val state = badgeState(d.number, highlight, correct)
+            // The box: a white (or lit / correct) stroke with a dark halo inside and out.
+            val stroke = when (state) { Badge.LIT -> Un.badgeLit; Badge.CORRECT -> Un.correctStroke; else -> Color.White }
+            val width = (if (state == Badge.LIT || state == Badge.CORRECT) 5f else 3f) * density
+            val radius = CornerRadius(minOf(22 * density, rect.width / 5))
+            drawRoundRect(Un.halo, rect.topLeft, rect.size, radius, style = Stroke(width + 3 * density))
+            drawRoundRect(stroke, rect.topLeft, rect.size, radius, style = Stroke(width))
+            if (d.number == 0u) continue
+            // The badge, centred on the box's corner.
+            val center = rect.topLeft + Offset(6 * density, 6 * density)
+            val grow = when (state) { Badge.LIT -> 1.25f; Badge.CORRECT -> 1.1f; else -> 1f }
+            val r = badge * grow / 2
+            val (bg, fg) = when (state) {
+                Badge.IDLE -> Un.badgeIdle to Un.ink
+                Badge.LIT -> Un.badgeLit to Color.Black
+                Badge.COUNTED -> Un.badgeCounted to Color.White
+                Badge.CORRECT -> Un.badgeCorrect to Color.White
             }
+            when (state) {
+                Badge.LIT -> drawCircle(Un.badgeLit.copy(alpha = 0.45f), r + 12 * density * grow, center)
+                Badge.CORRECT -> drawCircle(Un.correctStroke.copy(alpha = 0.35f), r + 10 * density * grow, center)
+                else -> {}
+            }
+            drawCircle(Color.Black.copy(alpha = 0.3f), r + 2 * density, center + Offset(0f, 4 * density))
+            drawCircle(Un.halo, r + 2 * density, center)
+            drawCircle(if (state == Badge.IDLE || state == Badge.COUNTED) Color.White else bg, r, center)
+            drawCircle(bg, r - 4 * density * grow, center)
+            val text = measurer.measure(d.number.toString(), Un.rounded((badge * grow * 0.56f / density / fontScale).sp).copy(color = fg))
+            drawText(text, topLeft = center - Offset(text.size.width / 2f, text.size.height / 2f))
         }
     }
 }
 
-private val GREEN = Color(90, 200, 90)
-private val RED = Color(230, 80, 80)
+private enum class Badge { IDLE, LIT, COUNTED, CORRECT }
 
-/** Text in scale-independent points at (x, y), the baseline at y unless `centered`. */
-private fun DrawScope.text(s: String, x: Float, y: Float, sp: Float, color: Color, centered: Boolean = false, bold: Boolean = false) {
-    val paint = Paint().apply {
-        this.color = color.toArgb()
-        textSize = sp * density
-        isAntiAlias = true
-        isFakeBoldText = bold
-        textAlign = if (centered) Paint.Align.CENTER else Paint.Align.LEFT
-    }
-    val baseline = if (centered) y - (paint.descent() + paint.ascent()) / 2 else y
-    drawContext.canvas.nativeCanvas.drawText(s, x, baseline, paint)
+private fun badgeState(number: UInt, highlight: UInt?, correct: Boolean): Badge = when {
+    correct -> Badge.CORRECT
+    highlight == null || number == 0u -> Badge.IDLE
+    number < highlight -> Badge.COUNTED
+    number == highlight -> Badge.LIT
+    else -> Badge.IDLE
+}
+
+private fun stateKey(state: Badge) = when (state) {
+    Badge.IDLE -> "lesson.idle"
+    Badge.LIT -> "lesson.lit"
+    Badge.COUNTED -> "lesson.counted"
+    Badge.CORRECT -> "lesson.done"
 }

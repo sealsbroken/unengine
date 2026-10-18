@@ -1,0 +1,189 @@
+name: Release Android
+
+# Releases Un for Android on its own, as onym-android's Play Publish does: the tag
+# (release-tag.yml) → lesson tests → the Rust library for arm64 and the bundle → the AAB signed
+# with the upload key (jarsigner; Play App Signing re-signs it) → attached to the tag's GitHub
+# Release → uploaded to a Google Play track.
+#
+#   gh workflow run "Release Android"                                 # the next patch, from main
+#   gh workflow run "Release Android" -f tag=v0.2.0 -f track=beta     # a chosen version and track
+#
+# Version: the tag (v0.1.9 → versionName 0.1.9, versionCode 109: MAJOR*10000 + MINOR*100 + PATCH,
+# the same number as the iOS build). versionCode must be higher than any build already on Play.
+#
+# The app is this repository at the tag (apps/android, apps/mobile: the engine) with the unmath
+# lessons (sealsbroken/unmath at main; the release notes record its commit) and nothing else. The
+# toy detector comes from this repository's `models-v1` release.
+#
+# One-time Play Console prerequisites (cannot be automated):
+#   - The app app.onym.un exists in the Play Console.
+#   - The very first AAB is uploaded by hand (it enrols Play App Signing): take it from the GitHub
+#     Release this workflow attaches it to. Until PLAY_SERVICE_ACCOUNT_JSON is set, the Play
+#     upload is skipped.
+#
+# Secrets (sealsbroken organisation secrets granted to this repository, or repository secrets):
+#   ANDROID_KEYSTORE_BASE64    — the upload key's JKS keystore, base64
+#   ANDROID_KEYSTORE_PASSWORD  — its password
+#   ANDROID_KEY_ALIAS          — the key's alias
+#   ANDROID_KEY_PASSWORD       — the key's password
+#   PLAY_SERVICE_ACCOUNT_JSON  — a Google Cloud service account's JSON key with "Release to testing
+#                                tracks" (and production, for that track) on app.onym.un
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag: blank = the next patch of the latest v* tag (a new release from this commit); an existing tag = build it and attach'
+        required: false
+        type: string
+        default: ''
+      track:
+        description: 'Google Play track (none = only the GitHub Release)'
+        required: false
+        type: choice
+        options: [internal, alpha, beta, production, none]
+        default: internal
+
+permissions:
+  contents: write   # upload the bundle to the release
+
+concurrency:
+  group: release-android
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Version
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      tag: ${{ inputs.tag }}
+      platform: Android
+    permissions:
+      contents: write
+
+  android:
+    name: Build, sign, attach and upload to Play
+    needs: tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NDK_VERSION: 29.0.14206865
+      PLAY_CONFIGURED: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unengine
+          fetch-depth: 0
+
+      - name: Resolve the tag
+        id: tag
+        working-directory: unengine
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::No tag $TAG"; exit 1; }
+          git checkout -q "$TAG"
+          [ -f tools/android.sh ] || { echo "::error::$TAG predates the Android release (no tools/android.sh): release a newer tag"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: sealsbroken/unmath
+          path: unmath
+
+      - name: Record the lessons commit
+        id: revs
+        run: echo "unmath=$(git -C unmath rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install the NDK, cargo-ndk and zsh
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked
+          sudo apt-get install -y -qq zsh
+
+      - name: Fetch the toy detector
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+
+      - name: Lesson tests
+        run: |
+          cargo test --manifest-path unmath/Cargo.toml
+          cargo test --manifest-path unengine/apps/mobile/Cargo.toml
+
+      - name: Build the bundle
+        # Produces apps/android/app/build/outputs/bundle/release/app-release.aab, unsigned (no
+        # signingConfig on the release build type).
+        env:
+          RELEASE_VERSION: ${{ steps.tag.outputs.tag }}
+        run: zsh unengine/tools/android.sh bundle
+
+      - name: Sign the bundle with the upload key
+        # Bundles are JAR-signed with jarsigner (apksigner does not sign them); -verify fails the
+        # build on a bad signature rather than shipping it.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          for s in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            [ -n "${!s}" ] || { echo "::error::secret ANDROID_${s} unset"; exit 1; }
+          done
+          mkdir -p dist
+          aab="dist/Un-${VERSION}-android.aab"
+          cp unengine/apps/android/app/build/outputs/bundle/release/app-release.aab "$aab"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          jarsigner -keystore "$RUNNER_TEMP/upload.jks" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" "$aab" "$KEY_ALIAS"
+          rm "$RUNNER_TEMP/upload.jks"
+          jarsigner -verify "$aab"
+          echo "AAB=$aab" >> "$GITHUB_ENV"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          UNMATH: ${{ steps.revs.outputs.unmath }}
+          RELEASE_VERSION: ${{ steps.tag.outputs.tag }}
+        working-directory: unengine
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "Un ${VERSION}" --notes "Un ${VERSION}."
+          fi
+          gh release upload "$TAG" "../$AAB" --clobber
+          # The Android line of the notes, replacing an older one (a re-run).
+          gh release view "$TAG" --json body --jq .body | grep -v '^\*\*Android\*\*' > notes.md || true
+          printf '\n**Android**: Un-%s-android.aab (versionCode %s), arm64, signed with the upload key for Google Play, with the lessons of sealsbroken/unmath@%s.\n' \
+            "$VERSION" "$(scripts/resolve-release-version.sh | sed -n 's/^CURRENT_PROJECT_VERSION=//p')" "$UNMATH" >> notes.md
+          gh release edit "$TAG" --notes-file notes.md
+
+      - name: Skip Google Play (not set up yet)
+        if: inputs.track != 'none' && env.PLAY_CONFIGURED != 'true'
+        run: echo "::warning::PLAY_SERVICE_ACCOUNT_JSON is not set; upload the bundle from the GitHub Release by hand (the first one must be)."
+
+      - name: Upload to Google Play
+        if: inputs.track != 'none' && env.PLAY_CONFIGURED == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: app.onym.un
+          releaseFiles: ${{ env.AAB }}
+          tracks: ${{ inputs.track }}
+          status: completed

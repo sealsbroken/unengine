@@ -25,3 +25,4 @@ __pycache__/
 /fastlane/report.xml
 /fastlane/README.md
 /apps/un/target/
+/apps/android/app/src/main/assets/models/
