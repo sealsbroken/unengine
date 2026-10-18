@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Un.app's Info.plist; release-macos.yml fills in __VERSION__ and __BUILD__. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Un</string>
+	<key>CFBundleExecutable</key>
+	<string>un</string>
+	<key>CFBundleIconFile</key>
+	<string>Un</string>
+	<key>CFBundleIdentifier</key>
+	<string>app.onym.undigit.mac</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Un</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD__</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.education</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera looks at the table to count the toys on it. Nothing leaves the device.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The tutor listens for the spoken answer. Nothing leaves the device.</string>
+</dict>
+</plist>

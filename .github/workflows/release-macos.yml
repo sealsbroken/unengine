@@ -1,8 +1,8 @@
 name: Release macOS
 
-# Builds Un for macOS (Apple silicon; alpha: built and smoke-tested on a GitHub runner, signed
-# with Developer ID and notarised) and attaches the zip to the GitHub Release of a v* tag. Release Desktop
-# and Release iOS run it after tagging; run it by hand for an existing tag:
+# Builds Un.app for macOS (Apple silicon; alpha: built and smoke-tested on a GitHub runner, signed
+# with Developer ID, notarised and stapled) and attaches the zip to the GitHub Release of a v* tag.
+# Release Desktop and Release iOS run it after tagging; run it by hand for an existing tag:
 #
 #   gh workflow run "Release macOS"                # the latest v* tag
 #   gh workflow run "Release macOS" -f tag=v0.1.8
@@ -101,50 +101,59 @@ jobs:
           gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
           python3 unengine/tools/fetch_models.py --whisper small
 
-      - name: Assemble the folder
+      - name: Assemble and sign Un.app
         env:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
-          out=dist/Un-$VERSION-macos-arm64
+          IFS=. read -r major minor patch <<<"$VERSION"
+          build_number=$((major * 10000 + minor * 100 + patch))
+          app=dist/Un-$VERSION-macos-arm64/Un.app
           build=unengine/apps/un/target/release
           models=unengine/models
-          mkdir -p "$out/models/speech"
-          cp "$build/un" "$build/un-cli" "$out/"
-          # The shared libraries (onnxruntime, sherpa-onnx) the executables find next to themselves.
-          cp -a "$build"/*.dylib "$out/"
-          cp "$models/toys.onnx" "$models/toys.json" "$out/models/"
-          cp "$models/speech/silero_vad.onnx" "$out/models/speech/"
+          mac=unengine/apps/un/macos
+          # The executables find the libraries in ../Frameworks and the models in ../Resources/models
+          # (apps/un/build.rs, un_app::ModelPaths).
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources/models/speech"
+          sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$build_number/" "$mac/Info.plist" > "$app/Contents/Info.plist"
+          plutil -lint "$app/Contents/Info.plist"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          cp "$mac/Un.icns" "$app/Contents/Resources/"
+          cp "$build/un" "$build/un-cli" "$app/Contents/MacOS/"
+          cp -a "$build"/*.dylib "$app/Contents/Frameworks/"
+          res="$app/Contents/Resources/models"
+          cp "$models/toys.onnx" "$models/toys.json" "$res/"
+          cp "$models/speech/silero_vad.onnx" "$res/speech/"
           for voice in vits-piper-ru_RU-irina-medium vits-piper-en_US-lessac-medium; do
-            cp -R "$models/speech/$voice" "$out/models/speech/"
+            cp -R "$models/speech/$voice" "$res/speech/"
           done
           whisper=sherpa-onnx-whisper-small
-          mkdir -p "$out/models/speech/$whisper"
-          cp "$models/speech/$whisper"/*int8* "$models/speech/$whisper"/*tokens* "$out/models/speech/$whisper/"
-          # Developer ID with the hardened runtime and a timestamp, as notarisation requires: the
-          # libraries first, then the executables with the camera and microphone entitlements.
-          for f in "$out"/*.dylib; do
-            [ -L "$f" ] || codesign --force --options runtime --timestamp --sign "$IDENTITY" "$f"
-          done
-          for f in "$out"/un "$out"/un-cli; do
-            codesign --force --options runtime --timestamp \
-              --entitlements unengine/apps/un/macos/un.entitlements --sign "$IDENTITY" "$f"
-          done
-          for f in "$out"/un "$out"/un-cli "$out"/*.dylib; do codesign --verify --strict "$f"; done
-          ls -la "$out"
-          echo "OUT=$out" >> "$GITHUB_ENV"
+          mkdir -p "$res/speech/$whisper"
+          cp "$models/speech/$whisper"/*int8* "$models/speech/$whisper"/*tokens* "$res/speech/$whisper/"
+          # Developer ID with the hardened runtime and a timestamp, as notarisation requires, inside
+          # out: the libraries, the command line, then the bundle (its main executable gets the
+          # camera and microphone entitlements, the resources get sealed).
+          sign() { codesign --force --options runtime --timestamp --sign "$IDENTITY" "$@"; }
+          for f in "$app/Contents/Frameworks"/*.dylib; do [ -L "$f" ] || sign "$f"; done
+          sign --entitlements "$mac/un.entitlements" "$app/Contents/MacOS/un-cli"
+          sign --entitlements "$mac/un.entitlements" "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          du -sh "$app"
+          echo "APP=$app" >> "$GITHUB_ENV"
 
       - name: Smoke tests (no camera, no microphone, no speakers)
         run: |
           set -euo pipefail
-          cd "$OUT"
-          ./un-cli strategies | tee strategies.txt
+          # From a scratch directory, without --models: the bundle must find its own models.
+          cli="$PWD/$APP/Contents/MacOS/un-cli"
+          mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          "$cli" strategies | tee strategies.txt
           grep -q '^unmath-count-to-three' strategies.txt && ! grep -q '^demo' strategies.txt
-          ./un-cli --models models lesson --sim 1 --strategy unmath-count-to-three --language ru \
+          "$cli" lesson --sim 1 --strategy unmath-count-to-three --language ru \
             --voice console --mic off --answers "лес,один" --frames 120 | tee lesson.txt
           grep -q 'tutor: ' lesson.txt
-          ./un-cli --models models check-speech --language ru
-          ./un-cli --models models check-speech --language en
+          "$cli" check-speech --language ru
+          "$cli" check-speech --language en
           python3 - <<'PY'
           # A wooden table with one yellow toy, as a binary PPM; sips makes it a JPEG.
           w, h = 640, 480
@@ -155,9 +164,35 @@ jobs:
           open("table.ppm", "wb").write(b"P6 %d %d 255\n" % (w, h) + bytes(px))
           PY
           sips -s format jpeg table.ppm --out table.jpg >/dev/null
-          ./un-cli --models models run --source table.jpg --frames 3 | tee detector.txt
+          "$cli" run --source table.jpg --frames 3 | tee detector.txt
           grep -q '"raw"' detector.txt
-          rm -f strategies.txt lesson.txt detector.txt table.ppm table.jpg
+          # The tests ran the signed bundle; it must still be intact.
+          codesign --verify --deep --strict "$GITHUB_WORKSPACE/$APP"
+
+      - name: Notarise and staple
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+          printf '%s' "$ASC_KEY_CONTENT" > "$key"
+          submission="$RUNNER_TEMP/Un-notarise.zip"
+          ditto -c -k --keepParent "$APP" "$submission"
+          xcrun notarytool submit "$submission" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
+            --wait --timeout 60m --output-format json | tee notary.json
+          id=$(python3 -c 'import json; print(json.load(open("notary.json"))["id"])')
+          status=$(python3 -c 'import json; print(json.load(open("notary.json"))["status"])')
+          if [ "$status" != "Accepted" ]; then
+            xcrun notarytool log "$id" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" || true
+            echo "::error::Notarisation: $status"; exit 1
+          fi
+          # The ticket goes into the app, so it opens offline too.
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute -vv "$APP"
+          rm -f "$key" notary.json "$submission"
 
       - name: README and zip
         env:
@@ -166,20 +201,20 @@ jobs:
         run: |
           set -euo pipefail
           UNMATH=$(git -C unmath rev-parse HEAD)
-          cat > "$OUT/README.txt" <<README
+          cat > "dist/Un-$VERSION-macos-arm64/README.txt" <<README
           Un ${VERSION} for macOS (Apple silicon, alpha)
 
           Un teaches children to count with real toys on a table: the camera counts the toys, a voice
           tutor leads the lesson, the child answers by voice.
 
           ALPHA: built and smoke-tested automatically; signed with Developer ID and notarised by
-          Apple. Unzip, then from the folder:
+          Apple. Drag Un.app to Applications and open it; allow the camera and microphone when asked.
 
-            ./un          the app (allow the camera and microphone when asked)
-            ./un-cli      the command line: ./un-cli lesson --strategy unmath-count-to-three --language ru
+          The command line is inside the app:
 
-          Keep the .dylib files and the models folder next to the executables. Settings and the
-          children's progress are kept in ~/Library/Application Support/un.
+            /Applications/Un.app/Contents/MacOS/un-cli lesson --strategy unmath-count-to-three --language ru
+
+          Settings and the children's progress are kept in ~/Library/Application Support/un.
 
           Source: https://github.com/sealsbroken/unengine (${TAG}) and
           https://github.com/sealsbroken/unmath (${UNMATH}). The engine and lessons are LGPL-3.0;
@@ -187,29 +222,6 @@ jobs:
           README
           (cd dist && ditto -c -k --keepParent "Un-${VERSION}-macos-arm64" "Un-${VERSION}-macos-arm64-alpha.zip")
           ls -la dist
-
-      - name: Notarise
-        env:
-          VERSION: ${{ steps.tag.outputs.version }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-        run: |
-          set -euo pipefail
-          key="$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
-          printf '%s' "$ASC_KEY_CONTENT" > "$key"
-          zip="dist/Un-${VERSION}-macos-arm64-alpha.zip"
-          xcrun notarytool submit "$zip" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
-            --wait --timeout 60m --output-format json | tee notary.json
-          id=$(python3 -c 'import json; print(json.load(open("notary.json"))["id"])')
-          status=$(python3 -c 'import json; print(json.load(open("notary.json"))["status"])')
-          if [ "$status" != "Accepted" ]; then
-            xcrun notarytool log "$id" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" || true
-            echo "::error::Notarisation: $status"; exit 1
-          fi
-          # Bare executables can't carry a stapled ticket; Gatekeeper looks it up online on first run.
-          spctl --assess --type execute -vv "$OUT/un" || true
-          rm -f "$key" notary.json
 
       - name: Attach to the release
         env:
@@ -226,7 +238,7 @@ jobs:
           gh release upload "$TAG" "$zip" --clobber
           # The macOS line of the notes, replacing an older one (a re-run).
           gh release view "$TAG" --json body --jq .body | grep -v '^\*\*macOS (alpha)\*\*' > notes.md || true
-          printf '\n**macOS (alpha)**: Un-%s-macos-arm64-alpha.zip, Apple silicon, built and smoke-tested on a GitHub runner, signed with Developer ID and notarised (see its README).\n' "$VERSION" >> notes.md
+          printf '\n**macOS (alpha)**: Un-%s-macos-arm64-alpha.zip, Apple silicon, built and smoke-tested on a GitHub runner, Un.app signed with Developer ID and notarised (see its README).\n' "$VERSION" >> notes.md
           gh release edit "$TAG" --notes-file notes.md
 
       - name: Remove the signing keychain
