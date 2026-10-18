@@ -1,0 +1,78 @@
+name: TestFlight External
+
+# Gives a TestFlight build to the External group (public beta) once Apple has processed it,
+# which submits it for Beta App Review. Release iOS calls this after every upload; run it by hand
+# for a build that is already in App Store Connect:
+#   gh workflow run "TestFlight External" -f version=0.1.6 -f build=106
+#
+# The testers' "What to Test" is the commits since the previous tag. Secrets: the ASC_* key
+# (see release-ios.yml). The beta review details (contact, notes) are App Store Connect's.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (CFBundleShortVersionString), e.g. 0.1.6'
+        required: true
+        type: string
+      build:
+        description: 'Build number (CFBundleVersion), e.g. 106'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      build:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  external:
+    name: External group and Beta App Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: What to test
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || TAG=HEAD
+          PREV=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^v${VERSION}$" \
+                   | while read -r t; do git merge-base --is-ancestor "$t" "$TAG" && { echo "$t"; break; }; done || true)
+          {
+            echo "Un ${VERSION}: count real toys on the table with a voice tutor."
+            echo ""
+            echo "New in this build:"
+            git log ${PREV:+$PREV..}"$TAG" --no-merges --pretty=format:'- %s' | head -40
+          } | cut -c1-200 | head -c 3800 > what_to_test.txt
+          cat what_to_test.txt
+          {
+            echo "TF_WHAT_TO_TEST<<WHAT_TO_TEST_EOF"
+            cat what_to_test.txt
+            echo ""
+            echo "WHAT_TO_TEST_EOF"
+          } >> "$GITHUB_ENV"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Wait for processing, then External + Beta App Review
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          TF_VERSION: ${{ inputs.version }}
+          TF_BUILD: ${{ inputs.build }}
+        run: bundle exec fastlane ios external

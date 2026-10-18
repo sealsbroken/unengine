@@ -1,7 +1,8 @@
 name: Release iOS
 
 # Cuts an iOS release of Un: the version from the tag → lesson tests → signed App Store build →
-# TestFlight → tag + GitHub Release. Versioned and tagged as onym-ios is.
+# TestFlight → tag + GitHub Release → once processed, the External group (public beta), which
+# submits Beta App Review (testflight-external.yml). Versioned and tagged as onym-ios is.
 #
 # Trigger (Actions tab → "Release iOS" → Run workflow), or:
 #   gh workflow run "Release iOS"                 # next patch of the latest v* tag
@@ -213,3 +214,12 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: iOS ${{ needs.version.outputs.marketing }}
           body_path: release_notes.md
+
+  external:
+    name: Public beta
+    needs: [version, release]
+    uses: ./.github/workflows/testflight-external.yml
+    with:
+      version: ${{ needs.version.outputs.marketing }}
+      build: ${{ needs.version.outputs.build }}
+    secrets: inherit

@@ -67,8 +67,49 @@ platform :ios do
     upload_to_testflight(
       api_key: api_key,
       ipa: "build/ios/Un.ipa",
-      # The build appears in TestFlight once Apple has processed it; no need to hold the runner.
+      # Processing takes a while: the `external` lane waits for it on a cheaper runner.
       skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "Once Apple has processed a build, give it to the External group (submits Beta App Review)"
+  desc "Environment: the ASC_* key, TF_VERSION, TF_BUILD, TF_WHAT_TO_TEST (the testers' notes)"
+  lane :external do
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_content: ENV.fetch("ASC_KEY_CONTENT"),
+      in_house: false
+    )
+    version = ENV.fetch("TF_VERSION")
+    build_number = ENV.fetch("TF_BUILD")
+
+    # External distribution needs a processed build: poll until App Store Connect has one
+    # (an upload shows up after a few minutes, processing takes up to half an hour or so).
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: api_key)
+    app = Spaceship::ConnectAPI::App.find("app.onym.undigit") or UI.user_error!("no app app.onym.undigit in App Store Connect")
+    deadline = Time.now + 90 * 60
+    loop do
+      build = Spaceship::ConnectAPI::Build.all(app_id: app.id, version: version, build_number: build_number).first
+      state = build&.processing_state
+      UI.message("build #{version} (#{build_number}): #{state || 'not in App Store Connect yet'}")
+      break if state == "VALID"
+      UI.user_error!("build #{version} (#{build_number}) failed processing: #{state}") if %w[FAILED INVALID].include?(state)
+      UI.user_error!("build #{version} (#{build_number}) still not processed after 90 minutes") if Time.now > deadline
+      sleep 60
+    end
+
+    upload_to_testflight(
+      api_key: api_key,
+      distribute_only: true,
+      app_identifier: "app.onym.undigit",
+      app_version: version,
+      build_number: build_number,
+      distribute_external: true,
+      groups: ["External"],
+      changelog: ENV.fetch("TF_WHAT_TO_TEST"),
+      notify_external_testers: true,
+      submit_beta_review: true
     )
   end
 end
