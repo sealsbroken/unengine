@@ -1,11 +1,11 @@
 name: Release Windows
 
-# Builds Un for Windows x64 (alpha: built and smoke-tested on a GitHub runner, never run on a real
-# PC with a camera) and attaches the zip to the GitHub Release of a v* tag, next to the iOS build
-# of the same version. Release iOS runs it after tagging; run it by hand for an existing tag:
+# Releases Un for Windows x64 on its own (alpha: built and smoke-tested on a GitHub runner, never
+# run on a real PC with a camera): the tag (release-tag.yml) → the build → the zip attached to the
+# tag's GitHub Release.
 #
-#   gh workflow run "Release Windows"                # the latest v* tag
-#   gh workflow run "Release Windows" -f tag=v0.1.6
+#   gh workflow run "Release Windows"                # a new release: the next patch, from main
+#   gh workflow run "Release Windows" -f tag=v0.1.9  # build v0.1.9 and attach to its release
 #
 # The app is this repository at the tag (apps/un: the desktop window and CLI) with the unmath
 # lessons (sealsbroken/unmath at main; the zip's README records its commit). Speech is sherpa-onnx:
@@ -17,16 +17,10 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'The v* tag to build and attach to (blank: the latest)'
+        description: 'Release tag: blank = the next patch of the latest v* tag (a new release from this commit); an existing tag = build it and attach'
         required: false
         type: string
         default: ''
-  # Release iOS calls this once it has tagged, so every release has both.
-  workflow_call:
-    inputs:
-      tag:
-        required: true
-        type: string
 
 permissions:
   contents: write   # upload the zip to the release
@@ -36,8 +30,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tag:
+    name: Version
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      tag: ${{ inputs.tag }}
+      platform: Windows x64
+    permissions:
+      contents: write
+
   windows:
     name: Build, smoke-test and attach
+    needs: tag
     runs-on: windows-latest
     timeout-minutes: 90
     defaults:
@@ -53,11 +57,9 @@ jobs:
         id: tag
         working-directory: unengine
         env:
-          INPUT_TAG: ${{ inputs.tag }}
+          TAG: ${{ needs.tag.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${INPUT_TAG// /}"
-          [ -n "$TAG" ] || TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::No tag $TAG"; exit 1; }
           git checkout -q "$TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"

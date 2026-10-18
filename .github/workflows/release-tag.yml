@@ -1,0 +1,107 @@
+name: Release tag
+
+# The version step every platform's release shares (Release Windows, Release macOS): the tag is the
+# version, as in Release iOS and onym-ios.
+#   blank          → the next patch of the latest v* tag, created on this commit with a GitHub Release
+#   a new tag      → created on this commit with a GitHub Release
+#   an existing tag → used as it is (the platform's build is attached to its release)
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: false
+        type: string
+        default: ''
+      platform:
+        description: 'For the release notes, e.g. "Windows x64"'
+        required: true
+        type: string
+    outputs:
+      tag:
+        value: ${{ jobs.tag.outputs.tag }}
+
+jobs:
+  tag:
+    name: Resolve or create the tag
+    runs-on: ubuntu-latest
+    # One version at a time: two releases started together get two versions, not the same one twice.
+    concurrency:
+      group: release-version
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The v* tag history: `fetch-tags: true` alone (with the default depth 1) does not
+          # populate refs/tags.
+          fetch-depth: 0
+
+      - name: Resolve the tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG// /}"
+          if [ -z "$TAG" ]; then
+            LATEST=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+            if [ -z "$LATEST" ]; then
+              REMOTE_LATEST=$(git ls-remote --tags origin 'refs/tags/v*' | sed 's|.*refs/tags/||' | grep -v '\^{}' \
+                                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+              if [ -n "$REMOTE_LATEST" ]; then
+                echo "::error::No v* tags here but the remote has $REMOTE_LATEST: the tag fetch failed. Refusing to start over at v0.0.1."
+                exit 1
+              fi
+              TAG="v0.0.1"
+            else
+              IFS='.' read -r MAJ MIN PAT <<< "${LATEST#v}"
+              TAG="v${MAJ}.${MIN}.$((PAT + 1))"
+            fi
+            echo "::notice::No tag given; ${LATEST:-none} → ${TAG}"
+          fi
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' is not vMAJOR.MINOR.PATCH."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::notice::$TAG exists: building it and attaching to its release"
+            echo "create=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "create=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "### ${TAG} (${{ inputs.platform }})" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Release notes
+        if: steps.tag.outputs.create == 'true'
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+          RANGE=${PREV_TAG:+${PREV_TAG}..}HEAD
+          {
+            echo "Un ${TAG#v} for ${PLATFORM}: attached below once built."
+            echo ""
+            echo "## What's Changed"
+            echo ""
+            git log "$RANGE" --pretty=format:"- %s" --no-merges
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              echo ""
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${TAG}"
+            fi
+          } > release_notes.md
+
+      - name: Create the tag and GitHub Release
+        if: steps.tag.outputs.create == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Un ${{ steps.tag.outputs.tag }}
+          body_path: release_notes.md

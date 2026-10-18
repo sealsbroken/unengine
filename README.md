@@ -173,16 +173,21 @@ cargo run -p un-cli -- check-speech
 All from the Actions tab (or `gh workflow run "<name>"`); the tag is the version, as in onym-ios:
 leave it blank for the next patch of the latest `v*` tag (`v0.1.9` → version 0.1.9, build 109).
 
+Each platform releases on its own:
+
 - **Release iOS**: TestFlight (then the External group and Beta App Review once processed), the
-  tag and a GitHub Release, and the Windows and macOS alphas of the same tag.
-- **Release Desktop**: the tag and a GitHub Release with the Windows x64 and macOS (Apple silicon)
-  alphas, no iOS build.
-- **Release Windows** / **Release macOS**: build and attach one platform's zip to an existing tag.
+  tag and a GitHub Release.
+- **Release Windows**: the Windows x64 alpha zip.
+- **Release macOS**: `Un.app` (Apple silicon), signed with Developer ID and notarised.
+
+Windows and macOS take an existing tag too (`-f tag=v0.1.9`): that tag is built and its zip
+attached to the same release.
 - **TestFlight External**: give an uploaded build to the External group by hand.
 
 The app ships from this repository with [unmath](https://github.com/sealsbroken/unmath) only;
 the toy detector is the `models-v1` release. Secrets: `ASC_KEY_ID`, `ASC_ISSUER_ID`,
-`ASC_KEY_CONTENT` (sealsbroken organisation, App Store Connect API key) for iOS.
+`ASC_KEY_CONTENT` (sealsbroken organisation, App Store Connect API key) for iOS and macOS
+notarisation; `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD` (the Developer ID Application certificate).
 
 ## Licence
 

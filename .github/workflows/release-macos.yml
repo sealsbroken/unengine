@@ -1,11 +1,11 @@
 name: Release macOS
 
-# Builds Un.app for macOS (Apple silicon; alpha: built and smoke-tested on a GitHub runner, signed
-# with Developer ID, notarised and stapled) and attaches the zip to the GitHub Release of a v* tag.
-# Release Desktop and Release iOS run it after tagging; run it by hand for an existing tag:
+# Releases Un.app for macOS (Apple silicon) on its own (alpha: built and smoke-tested on a GitHub
+# runner, signed with Developer ID, notarised and stapled): the tag (release-tag.yml) → the build →
+# the zip attached to the tag's GitHub Release.
 #
-#   gh workflow run "Release macOS"                # the latest v* tag
-#   gh workflow run "Release macOS" -f tag=v0.1.8
+#   gh workflow run "Release macOS"                # a new release: the next patch, from main
+#   gh workflow run "Release macOS" -f tag=v0.1.9  # build v0.1.9 and attach to its release
 #
 # Same contents as the Windows build (apps/un with the unmath lessons, the toy detector, Whisper
 # small, Piper voices); see release-windows.yml for the licences.
@@ -20,15 +20,10 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'The v* tag to build and attach to (blank: the latest)'
+        description: 'Release tag: blank = the next patch of the latest v* tag (a new release from this commit); an existing tag = build it and attach'
         required: false
         type: string
         default: ''
-  workflow_call:
-    inputs:
-      tag:
-        required: true
-        type: string
 
 permissions:
   contents: write   # upload the zip to the release
@@ -38,10 +33,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tag:
+    name: Version
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      tag: ${{ inputs.tag }}
+      platform: macOS (Apple silicon)
+    permissions:
+      contents: write
+
   macos:
     name: Build, smoke-test and attach
+    needs: tag
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 240   # notarisation can wait up to 3h
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,11 +57,9 @@ jobs:
         id: tag
         working-directory: unengine
         env:
-          INPUT_TAG: ${{ inputs.tag }}
+          TAG: ${{ needs.tag.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${INPUT_TAG// /}"
-          [ -n "$TAG" ] || TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::No tag $TAG"; exit 1; }
           # The packaging (Info.plist, icon, entitlements) comes from this workflow's commit, so an
           # older tag can be packaged too.
@@ -183,9 +186,15 @@ jobs:
           printf '%s' "$ASC_KEY_CONTENT" > "$key"
           submission="$RUNNER_TEMP/Un-notarise.zip"
           ditto -c -k --keepParent "$APP" "$submission"
+          # Submit, then wait: in JSON mode notarytool prints nothing until it returns, so the ID goes
+          # into the log as soon as the upload is done (check it with notarytool info <id>). Apple can
+          # take hours on a first or large submission.
           xcrun notarytool submit "$submission" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
-            --wait --timeout 60m --output-format json | tee notary.json
-          id=$(python3 -c 'import json; print(json.load(open("notary.json"))["id"])')
+            --output-format json | tee submit.json
+          id=$(python3 -c 'import json; print(json.load(open("submit.json"))["id"])')
+          echo "Submission ID: $id"
+          xcrun notarytool wait "$id" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
+            --timeout 3h --output-format json | tee notary.json
           status=$(python3 -c 'import json; print(json.load(open("notary.json"))["status"])')
           if [ "$status" != "Accepted" ]; then
             xcrun notarytool log "$id" --key "$key" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" || true
@@ -195,7 +204,7 @@ jobs:
           xcrun stapler staple "$APP"
           xcrun stapler validate "$APP"
           spctl --assess --type execute -vv "$APP"
-          rm -f "$key" notary.json "$submission"
+          rm -f "$key" submit.json notary.json "$submission"
 
       - name: README and zip
         env:
