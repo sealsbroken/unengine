@@ -58,6 +58,7 @@ const RUSSIAN_EXTRA: &[(&str, u32)] = &[
     ("ни одного", 0),
     ("ни одной", 0),
     ("нисколько", 0),
+    ("раз", 1), // Natural counting alternative: "раз, два, три".
     ("одна", 1),
     ("одно", 1),
     ("две", 2),
@@ -197,6 +198,14 @@ impl NumberParser {
         let mut i = 0;
         while i < tokens.len() {
             let token = &tokens[i];
+            // In "ещё раз" and similar frequency phrases, раз is not the
+            // beginning of a count. Keep standalone "раз" and repeated counts.
+            if language == Language::Russian && token == "раз"
+                && i > 0 && matches!(tokens[i - 1].as_str(), "еще" | "этот" | "каждый" | "первый" | "второй" | "последний")
+            {
+                i += 1;
+                continue;
+            }
             if token.chars().all(|c| c.is_ascii_digit()) {
                 if let Ok(value) = token.parse::<u32>() {
                     if value <= Self::MAX {
@@ -438,6 +447,28 @@ mod tests {
         assert_eq!(en("twenty five"), Some(5));
         assert_eq!(en("25"), None);
         assert_eq!(en("100"), None);
+    }
+
+    #[test]
+    fn russian_raz_is_one_in_counts_but_not_repeat_requests() {
+        for (text, expected) in [
+            ("раз", vec![1]),
+            ("РАЗ, два, три!", vec![1, 2, 3]),
+            ("раз два раз два", vec![1, 2, 1, 2]),
+            ("один два раз два", vec![1, 2, 1, 2]),
+            ("ноль раз два", vec![0, 1, 2]),
+            ("раз три", vec![1, 3]),
+            ("ещё раз", vec![]),
+            ("повтори еще раз", vec![]),
+            ("в этот раз", vec![]),
+            ("ещё раз: раз, два", vec![1, 2]),
+            ("разные игрушки", vec![]),
+        ] {
+            assert_eq!(NumberParser::all(text, RU), expected, "{text}");
+        }
+        assert_eq!(NumberParser::parse("раз", RU), Some(1));
+        assert!(NumberWords::words(RU).contains(&"раз".to_string()));
+        assert!(NumberParser::all("раз", EN).is_empty());
     }
 
     #[test]
