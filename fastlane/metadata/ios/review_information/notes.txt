@@ -1,0 +1,13 @@
+Un needs no account, login or demo credentials.
+
+To try a lesson:
+1. Launch the app and allow the camera, the microphone and speech recognition.
+2. Add a child (any name) and tap Continue to start the first adventure.
+3. Point the camera at a table and put one to three small objects (toys, cups, fruit) in front of it. The tutor numbers them on the screen and asks, out loud, how many there are.
+4. Answer by voice ("three") or with the number buttons.
+
+Notes for review:
+- Toy recognition runs on the device (an on-device model); no camera frames or audio are stored or sent anywhere by the app.
+- Speech recognition uses Apple's Speech framework, on the device where supported.
+- No accounts, no ads, no in-app purchases, no analytics, no tracking. The children's names and progress stay on the device.
+- On a Mac, the camera is the one chosen in Settings (default: the system's camera); an iPhone as a Continuity Camera works best, looking down at the table.

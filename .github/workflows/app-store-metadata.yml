@@ -1,0 +1,89 @@
+name: App Store Metadata
+
+# Uploads the App Store listing text of Un (app.onym.undigit) for iPhone/iPad and for the Mac:
+# name, subtitle, description, keywords, promotional text, support/marketing/privacy URLs (en-US
+# and ru), the category, copyright and App Review notes, from fastlane/metadata/ios, with fastlane
+# deliver (the `ios upload_metadata` lane, as in onym-ios). No binary, no screenshots, nothing
+# submitted for review: Release iOS and Release macOS TestFlight upload the builds.
+#
+#   gh workflow run "App Store Metadata"                       # iOS and macOS
+#   gh workflow run "App Store Metadata" -f platform=osx       # the Mac listing only
+#   gh workflow run "App Store Metadata" -f version=0.1.15     # a chosen version's texts
+#
+# The texts belong to an App Store version that can still be edited (the one being prepared);
+# App Store Connect creates one per platform. Secrets: the ASC_* key, as in Release iOS.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Which listing'
+        required: false
+        type: choice
+        options: [both, ios, osx]
+        default: both
+      version:
+        description: 'App Store version whose texts to edit (blank = the editable one)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-metadata
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Upload the listing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate the listing
+        # App Store limits: name and subtitle 30 characters, keywords 100, promotional text 170,
+        # description 4000; every URL https.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys
+          bad = []
+          limits = {'name': 30, 'subtitle': 30, 'keywords': 100, 'promotional_text': 170, 'description': 4000}
+          for loc in ('en-US', 'ru'):
+              d = f'fastlane/metadata/ios/{loc}'
+              for name, limit in limits.items():
+                  text = open(f'{d}/{name}.txt', encoding='utf-8').read().strip()
+                  if not text or len(text) > limit:
+                      bad.append(f'{loc}/{name}.txt: {len(text)} characters (1..{limit})')
+              for name in ('support_url', 'marketing_url', 'privacy_url'):
+                  url = open(f'{d}/{name}.txt', encoding='utf-8').read().strip()
+                  if not url.startswith('https://'):
+                      bad.append(f'{loc}/{name}.txt: not an https URL')
+          for b in bad: print(f'::error::{b}')
+          sys.exit(1 if bad else 0)
+          PY
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+
+      - name: Upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          ASC_APP_VERSION: ${{ inputs.version }}
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          set -euo pipefail
+          [ -n "$ASC_KEY_CONTENT" ] || { echo "::error::secret ASC_KEY_CONTENT unset"; exit 1; }
+          case "$PLATFORM" in both) platforms="ios osx" ;; *) platforms="$PLATFORM" ;; esac
+          for p in $platforms; do
+            echo "::group::$p"
+            bundle exec fastlane ios upload_metadata platform:"$p"
+            echo "::endgroup::"
+          done

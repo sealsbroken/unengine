@@ -1,0 +1,11 @@
+# Shared defaults for `fastlane deliver` (the `ios upload_metadata` lane passes its own): the App
+# Store listing text in fastlane/metadata/ios, no binary, no screenshots, nothing submitted.
+app_identifier("app.onym.undigit")
+metadata_path("./fastlane/metadata/ios")
+
+skip_binary_upload(true)
+skip_screenshots(true)
+force(true)
+submit_for_review(false)
+run_precheck_before_submit(false)
+precheck_include_in_app_purchases(false)
