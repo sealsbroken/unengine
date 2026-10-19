@@ -4,6 +4,7 @@ name: TestFlight External
 # which submits it for Beta App Review. Release iOS calls this after every upload; run it by hand
 # for a build that is already in App Store Connect:
 #   gh workflow run "TestFlight External" -f version=0.1.6 -f build=106
+#   gh workflow run "TestFlight External" -f version=0.1.6 -f build=106 -f platform=osx   # the Mac app
 #
 # The testers' "What to Test" is the commits since the previous tag. Secrets: the ASC_* key
 # (see release-ios.yml). The beta review details (contact, notes) are App Store Connect's.
@@ -19,6 +20,12 @@ on:
         description: 'Build number (CFBundleVersion), e.g. 106'
         required: true
         type: string
+      platform:
+        description: 'ios, or osx for the Mac app'
+        required: false
+        type: choice
+        options: [ios, osx]
+        default: ios
   workflow_call:
     inputs:
       version:
@@ -27,6 +34,10 @@ on:
       build:
         required: true
         type: string
+      platform:
+        required: false
+        type: string
+        default: ios
 
 permissions:
   contents: read
@@ -75,4 +86,5 @@ jobs:
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
           TF_VERSION: ${{ inputs.version }}
           TF_BUILD: ${{ inputs.build }}
+          TF_PLATFORM: ${{ inputs.platform }}
         run: bundle exec fastlane ios external

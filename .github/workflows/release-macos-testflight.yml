@@ -1,0 +1,158 @@
+name: Release macOS TestFlight
+
+# Releases the Mac app to TestFlight: the iOS app's SwiftUI screens as a native, sandboxed Mac app
+# (the UnMac target in apps/ios), with the same bundle ID, so it is the macOS platform of the same
+# App Store Connect record. No notarisation: TestFlight and the Mac App Store need none. (Release
+# macOS is the other Mac build: the egui desktop app, Developer ID, outside the App Store.)
+#
+#   gh workflow run "Release macOS TestFlight"                  # the next patch, from main
+#   gh workflow run "Release macOS TestFlight" -f tag=v0.1.13   # an existing tag (after Release iOS)
+#
+# Version: the tag (v0.1.13 → 0.1.13, build 113), the same numbers as the iOS build of that tag;
+# App Store Connect counts builds per platform.
+#
+# The app is this repository at the tag with the unmath lessons (sealsbroken/unmath at main; the
+# release notes record its commit) and nothing else. The toy detector comes from the `models-v1`
+# release.
+#
+# Secrets: the ASC_* key, as for Release iOS (Admin role: cloud-managed signing creates the Apple
+# Distribution and Mac Installer Distribution certificates with it).
+#
+# One-time, in App Store Connect: add the macOS platform to the Un app (app.onym.undigit). Until
+# then the upload is refused.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag: blank = the next patch of the latest v* tag (a new release from this commit); an existing tag = build it'
+        required: false
+        type: string
+        default: ''
+      external:
+        description: 'Once processed, give it to the External group (submits Beta App Review)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # the tag and the release notes
+
+concurrency:
+  group: release-macos-testflight
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Version
+    uses: ./.github/workflows/release-tag.yml
+    with:
+      tag: ${{ inputs.tag }}
+      platform: macOS (TestFlight)
+    permissions:
+      contents: write
+
+  testflight:
+    name: Build and upload to TestFlight
+    needs: tag
+    runs-on: macos-latest
+    timeout-minutes: 120
+    outputs:
+      marketing: ${{ steps.version.outputs.MARKETING_VERSION }}
+      build: ${{ steps.version.outputs.CURRENT_PROJECT_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unengine
+          fetch-depth: 0
+
+      - name: Resolve the tag
+        working-directory: unengine
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || { echo "::error::No tag $TAG"; exit 1; }
+          git checkout -q "$TAG"
+          grep -q 'UnMac:' apps/ios/project.yml || { echo "::error::$TAG predates the Mac app (no UnMac target): release a newer tag"; exit 1; }
+
+      - name: Resolve version and build number
+        id: version
+        working-directory: unengine
+        env:
+          RELEASE_VERSION: ${{ needs.tag.outputs.tag }}
+        run: scripts/resolve-release-version.sh | tee -a "$GITHUB_OUTPUT" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: sealsbroken/unmath
+          path: unmath
+
+      - name: Record the lessons commit
+        run: echo "UNMATH=$(git -C unmath rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Select the latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: unengine/apps/mobile
+
+      - name: Install xcodegen
+        run: command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Fetch the toy detector
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+
+      - name: Lesson tests
+        run: |
+          cargo test --manifest-path unmath/Cargo.toml
+          cargo test --manifest-path unengine/apps/mobile/Cargo.toml
+
+      - name: Prepare the Xcode project (library, bindings, models)
+        run: zsh unengine/tools/ios.sh mac-prepare
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: unengine
+
+      - name: Archive, sign and upload to TestFlight
+        working-directory: unengine
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: bundle exec fastlane mac testflight_release
+
+      - name: Release notes
+        working-directory: unengine
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # The Mac line of the notes, replacing an older one (a re-run).
+          gh release view "$TAG" --json body --jq .body | grep -v '^\*\*macOS (TestFlight)\*\*' > notes.md || true
+          printf '\n**macOS (TestFlight)**: %s (build %s), Apple silicon, uploaded to TestFlight, with the lessons of sealsbroken/unmath@%s.\n' \
+            "$MARKETING_VERSION" "$CURRENT_PROJECT_VERSION" "$UNMATH" >> notes.md
+          gh release edit "$TAG" --notes-file notes.md
+
+  external:
+    name: Public beta
+    needs: testflight
+    if: inputs.external
+    uses: ./.github/workflows/testflight-external.yml
+    with:
+      version: ${{ needs.testflight.outputs.marketing }}
+      build: ${{ needs.testflight.outputs.build }}
+      platform: osx
+    secrets: inherit

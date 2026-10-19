@@ -46,11 +46,11 @@ extension Color {
     }
 
     init(light: UInt32, dark: UInt32, opacity: Double = 1) {
-        func ui(_ hex: UInt32) -> UIColor {
-            UIColor(red: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255,
-                    blue: CGFloat(hex & 0xFF) / 255, alpha: opacity)
+        func ui(_ hex: UInt32) -> PlatformColor {
+            PlatformColor(red: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255,
+                          blue: CGFloat(hex & 0xFF) / 255, alpha: opacity)
         }
-        self.init(UIColor { $0.userInterfaceStyle == .dark ? ui(dark) : ui(light) })
+        self.init(PlatformColor.dynamic(light: ui(light), dark: ui(dark)))
     }
 }
 
@@ -60,7 +60,7 @@ struct GlassBackground<S: Shape>: ViewModifier {
     var strong = false
 
     func body(content: Content) -> some View {
-        if #available(iOS 26, *), !strong {
+        if #available(iOS 26, macOS 26, *), !strong {
             content.glassEffect(.regular, in: shape)
         } else {
             content.background(strong ? AnyShapeStyle(.thickMaterial) : AnyShapeStyle(.ultraThinMaterial), in: shape)

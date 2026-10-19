@@ -73,7 +73,8 @@ platform :ios do
   end
 
   desc "Once Apple has processed a build, give it to the External group (submits Beta App Review)"
-  desc "Environment: the ASC_* key, TF_VERSION, TF_BUILD, TF_WHAT_TO_TEST (the testers' notes)"
+  desc "Environment: the ASC_* key, TF_VERSION, TF_BUILD, TF_WHAT_TO_TEST (the testers' notes),"
+  desc "TF_PLATFORM (ios, the default, or osx for the Mac app)"
   lane :external do
     api_key = app_store_connect_api_key(
       key_id: ENV.fetch("ASC_KEY_ID"),
@@ -83,6 +84,8 @@ platform :ios do
     )
     version = ENV.fetch("TF_VERSION")
     build_number = ENV.fetch("TF_BUILD")
+    platform = ENV["TF_PLATFORM"].to_s.empty? ? "ios" : ENV["TF_PLATFORM"]
+    api_platform = platform == "osx" ? "MAC_OS" : "IOS"
 
     # External distribution needs a processed build: poll until App Store Connect has one
     # (an upload shows up after a few minutes, processing takes up to half an hour or so).
@@ -90,9 +93,9 @@ platform :ios do
     app = Spaceship::ConnectAPI::App.find("app.onym.undigit") or UI.user_error!("no app app.onym.undigit in App Store Connect")
     deadline = Time.now + 90 * 60
     loop do
-      build = Spaceship::ConnectAPI::Build.all(app_id: app.id, version: version, build_number: build_number).first
+      build = Spaceship::ConnectAPI::Build.all(app_id: app.id, version: version, build_number: build_number, platform: api_platform).first
       state = build&.processing_state
-      UI.message("build #{version} (#{build_number}): #{state || 'not in App Store Connect yet'}")
+      UI.message("#{platform} build #{version} (#{build_number}): #{state || 'not in App Store Connect yet'}")
       break if state == "VALID"
       UI.user_error!("build #{version} (#{build_number}) failed processing: #{state}") if %w[FAILED INVALID].include?(state)
       UI.user_error!("build #{version} (#{build_number}) still not processed after 90 minutes") if Time.now > deadline
@@ -104,7 +107,7 @@ platform :ios do
       distribute_only: true,
       app_identifier: "app.onym.undigit",
       # Without an .ipa to read it from, pilot would ask (and fail in CI).
-      app_platform: "ios",
+      app_platform: platform,
       app_version: version,
       build_number: build_number,
       distribute_external: true,
@@ -113,6 +116,60 @@ platform :ios do
       notify_external_testers: true,
       submit_beta_review: true
     )
+  end
+end
+
+# The Mac app (the UnMac target: the iOS screens as a native, sandboxed Mac app) to TestFlight,
+# from CI (.github/workflows/release-macos-testflight.yml), after `tools/ios.sh mac-prepare`. The
+# same bundle ID as the iOS app: one App Store Connect record with a macOS platform. Signed and
+# uploaded by xcodebuild itself with the API key (cloud-managed Apple Distribution and Mac
+# Installer Distribution certificates), no certificate in the repository's secrets.
+#
+# Environment: as the iOS lane (the ASC_* key, MARKETING_VERSION, CURRENT_PROJECT_VERSION).
+platform :mac do
+  desc "Archive the Mac app, sign it and upload it to TestFlight"
+  lane :testflight_release do
+    setup_ci(force: true)
+
+    key_path = File.join(Dir.tmpdir, "AuthKey_#{ENV.fetch('ASC_KEY_ID')}.p8")
+    File.write(key_path, ENV.fetch("ASC_KEY_CONTENT"))
+    File.chmod(0o600, key_path)
+    auth = [
+      "-allowProvisioningUpdates",
+      "-authenticationKeyPath", key_path,
+      "-authenticationKeyID", ENV.fetch("ASC_KEY_ID"),
+      "-authenticationKeyIssuerID", ENV.fetch("ASC_ISSUER_ID")
+    ]
+    archive = File.expand_path("../build/mac/Un.xcarchive", __dir__)
+    options = File.expand_path("../build/mac/ExportOptions.plist", __dir__)
+    FileUtils.mkdir_p(File.dirname(options))
+    # destination upload: xcodebuild signs for the Mac App Store, packages and uploads in one go.
+    File.write(options, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+        <key>method</key><string>app-store-connect</string>
+        <key>destination</key><string>upload</string>
+        <key>signingStyle</key><string>automatic</string>
+        <key>teamID</key><string>#{TEAM_ID}</string>
+        <key>manageAppVersionAndBuildNumber</key><false/>
+      </dict>
+      </plist>
+    PLIST
+
+    begin
+      sh("xcodebuild", "-project", PROJECT, "-scheme", "UnMac", "-configuration", "Release",
+         "-destination", "generic/platform=macOS", "-archivePath", archive, *auth,
+         "MARKETING_VERSION=#{ENV.fetch('MARKETING_VERSION')}",
+         "CURRENT_PROJECT_VERSION=#{ENV.fetch('CURRENT_PROJECT_VERSION')}",
+         "DEVELOPMENT_TEAM=#{TEAM_ID}", "CODE_SIGN_STYLE=Automatic", "COMPILER_INDEX_STORE_ENABLE=NO",
+         "archive", "-quiet")
+      sh("xcodebuild", "-exportArchive", "-archivePath", archive, "-exportOptionsPlist", options,
+         "-exportPath", File.dirname(archive), *auth)
+    ensure
+      File.delete(key_path) if File.exist?(key_path)
+    end
   end
 end
 

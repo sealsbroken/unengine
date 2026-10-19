@@ -18,7 +18,13 @@ tools/ios.sh run [name]     # build, install and launch on a connected iPhone/iP
 UN_CONSOLE=1 tools/ios.sh run   # the same, with the app's console
 tools/ios.sh test           # the lesson tests (Tests/) on a simulator: a scripted child, a simulated table
 tools/ios.sh device         # build, then open the Xcode project
+tools/ios.sh mac            # the same app as a Mac app (the UnMac target): build and launch it
 ```
+
+The Mac app is these screens in a window: `UnApp/Platform.swift` holds the few differences (the
+camera preview view, keeping the screen awake, the lesson over the whole window, the camera:
+a Continuity Camera iPhone, else an external one, else the built-in one). It is sandboxed
+(`UnMac.entitlements`), Apple silicon only, and goes to TestFlight with **Release macOS TestFlight**.
 
 TestFlight: the **Release iOS** workflow (Actions tab → Run workflow, or `gh workflow run "Release iOS"`)
 builds on a GitHub macOS runner with unmath's main next to this repository, signs automatically with an App Store Connect API key (no certificate repository),

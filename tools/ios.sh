@@ -12,6 +12,11 @@
 #   tools/ios.sh prepare               # the device library, the bindings and the Xcode project, nothing built
 #                                      #   (CI: fastlane archives, signs and uploads to TestFlight)
 #
+# The same app for the Mac (the UnMac target: the iOS screens in a window, sandboxed, Apple silicon):
+#   rustup target add aarch64-apple-darwin
+#   tools/ios.sh mac                   # build and launch it
+#   tools/ios.sh mac-prepare           # the Mac library, the bindings and the Xcode project (CI)
+#
 # Versions come from the release tag (scripts/resolve-release-version.sh, as in onym-ios):
 # RELEASE_VERSION=v0.1.7 -> version 0.1.7, build 107; without it, `git describe`.
 #
@@ -27,12 +32,13 @@ manifest=$here/apps/mobile/Cargo.toml
 case $mode in
   sim | test) target=aarch64-apple-ios-sim; sdk=iphonesimulator ;;
   device | run | archive | prepare) target=aarch64-apple-ios; sdk=iphoneos ;;
-  *) echo "usage: tools/ios.sh sim [device-name] | device | run [device-name] | test [device-name] | archive | prepare" >&2; exit 2 ;;
+  mac | mac-prepare) target=aarch64-apple-darwin; sdk=macosx ;;
+  *) echo "usage: tools/ios.sh sim [device-name] | device | run [device-name] | test [device-name] | archive | prepare | mac | mac-prepare" >&2; exit 2 ;;
 esac
 
 # The deployment target of the Rust build (rustc's default for iOS is far older than the
 # prebuilt ONNX Runtime, whose objects then need symbols the old libSystem lacks).
-export IPHONEOS_DEPLOYMENT_TARGET=17.0
+export IPHONEOS_DEPLOYMENT_TARGET=17.0 MACOSX_DEPLOYMENT_TARGET=14.0
 [[ -d $here/../unmath ]] || { echo "the unmath lessons are missing: clone sealsbroken/unmath next to this repository (../unmath)" >&2; exit 1; }
 [[ -f $models/toys.onnx ]] || { echo "no toy detector in $models: gh release download models-v1 -R sealsbroken/unengine -D $models" >&2; exit 1; }
 cargo build --manifest-path "$manifest" --release --target $target
@@ -50,7 +56,13 @@ rm -rf "$ios"/build/Build/Products/*/UnApp.app/models/{llm,hand_landmark.onnx,pa
 
 cd "$ios"
 xcodegen generate
-if [[ $mode == prepare ]]; then
+if [[ $mode == mac ]]; then
+  xcodebuild -project UnApp.xcodeproj -scheme UnMac -configuration Debug -destination 'platform=macOS,arch=arm64' \
+    -derivedDataPath build -allowProvisioningUpdates build -quiet
+  open build/Build/Products/Debug/Un.app
+  exit 0
+fi
+if [[ $mode == prepare || $mode == mac-prepare ]]; then
   echo "prepared: $ios/UnApp.xcodeproj"
   exit 0
 fi

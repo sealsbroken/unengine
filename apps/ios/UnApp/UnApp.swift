@@ -7,7 +7,15 @@ struct UnApp: App {
     init() { un_mobile_init() }
 
     var body: some Scene {
+        #if os(macOS)
+        // The lesson's camera picture is landscape on a Mac; the window opens at a size that fits
+        // it and the HUD, and never gets so small that the HUD overlaps.
+        WindowGroup { LessonScreen().frame(minWidth: 760, minHeight: 600) }
+            .defaultSize(width: 1100, height: 800)
+            .windowResizability(.contentMinSize)
+        #else
         WindowGroup { LessonScreen() }
+        #endif
     }
 }
 

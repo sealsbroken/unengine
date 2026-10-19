@@ -7,7 +7,11 @@ struct ChildrenScreen: View {
     @ObservedObject var model: LessonModel
     @State private var adding = false
     @State private var removing: UnProfile?
+    #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    #else
+    private let sizeClass: UserInterfaceSizeClass? = .regular  // a Mac window is never compact
+    #endif
 
     var body: some View {
         let t = Copy(ru: model.language == .russian)
@@ -193,7 +197,7 @@ struct AddChildSheet: View {
             .padding(16)
             .background(Un.surface.ignoresSafeArea())
             .navigationTitle(t("add.title"))
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(t("add.cancel")) { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

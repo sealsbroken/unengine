@@ -425,6 +425,7 @@ enum AudioSession {
     static func configure() {
         lock.lock(); defer { lock.unlock() }
         guard !configured else { return }
+        #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
@@ -433,5 +434,8 @@ enum AudioSession {
         } catch {
             print("audio session: \(error)")
         }
+        #else
+        configured = true  // the Mac has no audio session: the default input and output are used
+        #endif
     }
 }

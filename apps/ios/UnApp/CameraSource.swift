@@ -19,11 +19,11 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private let ciContext = CIContext()
     #endif
 
-    init(position: AVCaptureDevice.Position = .back, handler: @escaping FrameHandler) {
+    init(handler: @escaping FrameHandler) {
         self.handler = handler
         super.init()
         session.sessionPreset = .hd1280x720
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
+        guard let device = tableCamera(),
               let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else { return }
         session.addInput(input)
         let output = AVCaptureVideoDataOutput()
@@ -31,7 +31,7 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: queue)
         if session.canAddOutput(output) { session.addOutput(output) }
-        output.connection(with: .video)?.videoRotationAngle = 90
+        output.connection(with: .video)?.videoRotationAngle = cameraRotationAngle
     }
 
     #if DEBUG
@@ -73,6 +73,37 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 }
 
 /// The camera's own picture behind the lesson, so the child and the grown-up see what the tutor sees.
+#if os(macOS)
+struct CameraPreview: NSViewRepresentable {
+    let session: AVCaptureSession
+
+    final class PreviewView: NSView {
+        let previewLayer = AVCaptureVideoPreviewLayer()
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            layer = previewLayer
+        }
+
+        required init?(coder: NSCoder) { fatalError("not from a nib") }
+    }
+
+    func makeNSView(context: Context) -> PreviewView {
+        let view = PreviewView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        return view
+    }
+
+    /// A restarted lesson brings a new capture session; SwiftUI keeps this view, so it must follow.
+    func updateNSView(_ nsView: PreviewView, context: Context) {
+        if nsView.previewLayer.session !== session {
+            nsView.previewLayer.session = session
+        }
+    }
+}
+#else
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
 
@@ -96,3 +127,4 @@ struct CameraPreview: UIViewRepresentable {
         }
     }
 }
+#endif

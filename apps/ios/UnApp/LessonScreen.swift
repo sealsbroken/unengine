@@ -17,7 +17,7 @@ struct LessonScreen: View {
         }
         .animation(.easeInOut(duration: 0.25), value: model.childId)
         // No swipe-back mid-lesson: the lesson leaves by Pause, "пауза" or its end.
-        .fullScreenCover(isPresented: $model.running) { LessonView(model: model) }
+        .lessonCover(isPresented: $model.running) { LessonView(model: model) }
         .onAppear {
             model.reloadLessons()
             model.reloadChildren()
@@ -238,7 +238,7 @@ final class LessonModel: ObservableObject {
         running = true
         // The phone lies on the table for minutes with nobody touching it: no auto-lock while
         // a lesson runs.
-        UIApplication.shared.isIdleTimerDisabled = true
+        ScreenAwake.set(true)
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -319,7 +319,7 @@ final class LessonModel: ObservableObject {
     func stop() {
         session?.stop()
         running = false
-        UIApplication.shared.isIdleTimerDisabled = false
+        ScreenAwake.set(false)
     }
     func restart() { close(keepCamera: true); start() }
     /// When the grown-up (or the child, saying "пауза") asked to stop: the lesson ends as paused
@@ -347,7 +347,7 @@ final class LessonModel: ObservableObject {
 
     /// Ends the session; the camera too unless another lesson follows at once.
     func close(keepCamera: Bool = false) {
-        UIApplication.shared.isIdleTimerDisabled = false
+        ScreenAwake.set(false)
         timer?.invalidate()
         if !keepCamera {
             camera?.stop()

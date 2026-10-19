@@ -24,7 +24,7 @@ stays open and relinkable (see [Licence](#licence)).
 | `crates/un-ffi` | UniFFI bindings for Swift and Kotlin: sessions, snapshots, the shared vision, and callback interfaces for platform speech. |
 | `apps/desktop` | The desktop window (egui): camera view with overlay, tutor HUD, number pad. A library, plus a binary that ships the demo lesson. |
 | `apps/un`, `apps/mobile` | The products: the desktop app and the mobile library, each linking the engine with the unmath lessons (`../unmath`, next to this repository) and nothing else. |
-| `apps/ios`, `apps/android` | SwiftUI and Compose apps over `apps/mobile`, using the phone's camera and speech. The iOS screen is the reference; Android and the desktop mirror it. |
+| `apps/ios`, `apps/android` | SwiftUI and Compose apps over `apps/mobile`, using the device's camera and speech. The iOS screen is the reference; Android and the desktop mirror it. `apps/ios` also builds the same SwiftUI app as a native, sandboxed Mac app (the `UnMac` target) for TestFlight and the Mac App Store. |
 | `strategies/demo` | The smallest strategy: "how many are on the table?" |
 | `tools/` | `fetch_models.py` (speech models), `label.py` and `train_detector.py` (the toy detector), `ios.sh` and `android.sh` (build the mobile library and bindings). |
 | `docs/architecture.md` | The design, the strategy boundary, and what each platform needs. |
@@ -203,15 +203,20 @@ is the version, as in onym-ios. A blank tag means the next patch of the latest `
 | Workflow | What it ships |
 |---|---|
 | **Release iOS** | TestFlight, then the External group and Beta App Review once the build is processed; the tag and a GitHub Release. |
-| **Release macOS** | `Un.app` (Apple silicon), signed with Developer ID and notarised. |
+| **Release macOS TestFlight** | The Mac app (the iOS screens, `UnMac`) to TestFlight, then the External group and Beta App Review once processed. No notarisation. |
+| **Release macOS** | The egui desktop app, `Un.app` (Apple silicon), signed with Developer ID and notarised, outside the App Store. |
 | **Release Windows** | The Windows x64 alpha zip. |
 | **Release Linux** | The Linux x86-64 alpha `.tar.gz` (glibc 2.39+). |
 | **Release Android** | The app bundle for Google Play and an APK to install directly, both signed with the upload key. The bundle goes to a Play track (`-f track=internal\|alpha\|beta\|production\|none`). |
 | **Play Store Metadata** | The Play listing's text and images from `fastlane/metadata/android`. |
-| **TestFlight External** | Gives an uploaded build to the External group. |
+| **TestFlight External** | Gives an uploaded build to the External group (`-f platform=osx` for the Mac app). |
 
-macOS, Windows, Linux and Android also take an existing tag (`-f tag=v0.1.9`). They build that
-tag and attach the result to its release.
+macOS, macOS TestFlight, Windows, Linux and Android also take an existing tag (`-f tag=v0.1.9`).
+They build that tag and attach the result (or a line in the notes) to its release.
+
+The Mac app has the iOS app's bundle ID, so it is the macOS platform of the same App Store
+Connect record (one purchase for both). Run it locally with `tools/ios.sh mac`. On a Mac it uses
+an iPhone as a Continuity Camera if there is one, else an external camera, else the built-in one.
 
 The apps ship from this repository with [unmath](https://github.com/sealsbroken/unmath) only. The
 release notes record which unmath commit each build has. The toy detector comes from the
@@ -221,7 +226,7 @@ Secrets:
 
 | Secret | For |
 |---|---|
-| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT` | The App Store Connect API key (sealsbroken organisation): iOS and macOS notarisation. |
+| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT` | The App Store Connect API key (sealsbroken organisation, Admin role): TestFlight for iOS and the Mac, and macOS notarisation. |
 | `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD` | The Developer ID Application certificate. |
 | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | The Play upload key. |
 | `PLAY_SERVICE_ACCOUNT_JSON` | Google Play uploads and metadata. Without it, the Play upload is skipped. |

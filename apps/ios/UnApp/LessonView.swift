@@ -6,7 +6,11 @@ import SwiftUI
 /// screens follow a completed lesson.
 struct LessonView: View {
     @ObservedObject var model: LessonModel
+    #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
+    #else
+    private let sizeClass: UserInterfaceSizeClass? = .regular  // a Mac window is never compact
+    #endif
 
     var body: some View {
         let ru = model.language == .russian
