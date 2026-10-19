@@ -46,6 +46,11 @@ The Zipformer recognisers are small and quick but mishear short answers ("ten ca
 half a second on an Apple laptop. `un listen` prints what the microphone hears, which helps when
 checking a setup.
 
+The tutor's voice on the desktop is Piper: LJSpeech for English and Irina for Russian, both adult
+women. No free voice sounds like a child, so every app raises the pitch by 1.45. The desktop
+synthesises the line 1.45 times slower and plays it 1.45 times faster (`SpeakerOutput::pitch`);
+iOS and Android set the same pitch on the system voice.
+
 ### The toy detector
 
 `models/toys.onnx` is an RF-DETR nano model (Roboflow, Apache-2.0), trained here on photos
@@ -230,8 +235,12 @@ Third-party components:
 - ONNX Runtime, `ort`, egui, nokhwa, cpal: MIT/Apache-2.0.
 - sherpa-onnx and the Zipformer models: Apache-2.0.
 - Whisper and Silero VAD: MIT.
-- The Piper voices: their training data has its own terms. Irina's (from RHVoice) is marked
-  "Unknown" in its model card; check it before shipping it.
+- The Piper voices. LJSpeech (English) is trained from scratch on public-domain recordings.
+  Irina (Russian) is trained on RHVoice recordings whose model card says "Unknown" licence, and
+  it is fine-tuned from Lessac, whose data is research-only. Every Russian Piper voice has one of
+  these problems: Denis and Dmitri (CC0 data) are also fine-tuned from Lessac, and Ruslan's data
+  is non-commercial. Many English ones do too (Lessac, Hi-Fi Captain). Before selling a desktop
+  build, replace Irina with a Russian voice trained on data we may use.
 
 The toy detector (`models/toys.onnx`) is not in this repository. Built with `tools/label.py` and
 `tools/train_detector.py`, it is Apache-2.0 work:

@@ -133,7 +133,7 @@ jobs:
           res="$app/Contents/Resources/models"
           cp "$models/toys.onnx" "$models/toys.json" "$res/"
           cp "$models/speech/silero_vad.onnx" "$res/speech/"
-          for voice in vits-piper-ru_RU-irina-medium vits-piper-en_US-lessac-medium; do
+          for voice in vits-piper-ru_RU-irina-medium vits-piper-en_US-ljspeech-medium; do
             cp -R "$models/speech/$voice" "$res/speech/"
           done
           whisper=sherpa-onnx-whisper-small

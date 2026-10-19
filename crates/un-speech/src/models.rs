@@ -12,7 +12,7 @@ use un_engine::SpeechError;
 ///   silero_vad.onnx
 ///   sherpa-onnx-zipformer-small-en-2023-06-26/{encoder…int8.onnx, decoder….onnx, joiner…int8.onnx, tokens.txt}
 ///   sherpa-onnx-zipformer-ru-int8-2025-04-20/{encoder.int8.onnx, decoder.onnx, joiner.int8.onnx, tokens.txt}
-///   vits-piper-en_US-lessac-medium/{en_US-lessac-medium.onnx, tokens.txt, espeak-ng-data/}
+///   vits-piper-en_US-ljspeech-medium/{en_US-ljspeech-medium.onnx, tokens.txt, espeak-ng-data/}
 ///   vits-piper-ru_RU-irina-medium/{ru_RU-irina-medium.onnx, tokens.txt, espeak-ng-data/}
 ///   sherpa-onnx-whisper-<size>/{<size>-encoder.int8.onnx, <size>-decoder.int8.onnx, <size>-tokens.txt}   (optional)
 /// ```
@@ -65,7 +65,7 @@ impl SpeechModels {
 
     pub fn voice_name(language: Language) -> &'static str {
         match language {
-            Language::English => "en_US-lessac-medium",
+            Language::English => "en_US-ljspeech-medium",
             Language::Russian => "ru_RU-irina-medium",
         }
     }

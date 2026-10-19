@@ -8,7 +8,9 @@
 
 Sources (all Apache-2.0 / MIT):
   recognisers: sherpa-onnx Zipformer transducers (k2-fsa) and Silero VAD
-  voices:      Piper voices packaged for sherpa-onnx (with espeak-ng-data), from the sherpa-onnx tts-models release
+  voices:      Piper voices packaged for sherpa-onnx (with espeak-ng-data), from the sherpa-onnx tts-models release;
+               English is LJSpeech (public-domain data, trained from scratch); Russian is Irina
+               (RHVoice data, no stated licence; see the README)
 
 The toy detector is not downloaded: build it with tools/label.py and tools/train_detector.py.
 """
@@ -27,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SHERPA_ASR = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
 SHERPA_TTS = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
 RECOGNIZERS = {"en": "sherpa-onnx-zipformer-small-en-2023-06-26", "ru": "sherpa-onnx-zipformer-ru-int8-2025-04-20"}
-VOICES = {"en": "vits-piper-en_US-lessac-medium", "ru": "vits-piper-ru_RU-irina-medium"}
+VOICES = {"en": "vits-piper-en_US-ljspeech-medium", "ru": "vits-piper-ru_RU-irina-medium"}
 # Whisper hears short answers far better than the small Zipformers and covers both languages;
 # the engine prefers it whenever one of these directories is present.
 WHISPER_SIZES = ("tiny", "base", "small", "medium", "turbo")

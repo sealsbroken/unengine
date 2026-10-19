@@ -54,11 +54,18 @@ pub fn check(models: &SpeechModels, language: Language) -> Result<(String, Strin
     Ok((said.to_string(), heard))
 }
 
-/// `check` plus the verdict: did the recogniser hear a three?
+/// `check` plus the verdict: did the recogniser hear a three? The voice is random (VITS noise), and
+/// a lone word is sometimes misheard ("three" as "read"), so it gets three tries.
 pub fn check_ok(models: &SpeechModels, language: Language) -> Result<(String, String, bool), SpeechError> {
-    let (said, heard) = check(models, language)?;
-    let ok = NumberParser::parse(&heard, language) == Some(3);
-    Ok((said, heard, ok))
+    let mut last = check(models, language)?;
+    for _ in 0..2 {
+        if NumberParser::parse(&last.1, language) == Some(3) {
+            break;
+        }
+        last = check(models, language)?;
+    }
+    let ok = NumberParser::parse(&last.1, language) == Some(3);
+    Ok((last.0, last.1, ok))
 }
 
 /// Linear resampling; good enough for speech going into a recogniser.
