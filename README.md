@@ -215,8 +215,9 @@ macOS, macOS TestFlight, Windows, Linux and Android also take an existing tag (`
 They build that tag and attach the result (or a line in the notes) to its release.
 
 The Mac app has the iOS app's bundle ID, so it is the macOS platform of the same App Store
-Connect record (one purchase for both). Run it locally with `tools/ios.sh mac`. On a Mac it uses
-an iPhone as a Continuity Camera if there is one, else an external camera, else the built-in one.
+Connect record (one purchase for both). Run it locally with `tools/ios.sh mac`. It uses the
+system's camera and microphone (the camera chosen in macOS, an iPhone as a Continuity Camera
+included) unless others are picked in its Settings (⌘,).
 
 The apps ship from this repository with [unmath](https://github.com/sealsbroken/unmath) only. The
 release notes record which unmath commit each build has. The toy detector comes from the

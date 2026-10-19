@@ -22,9 +22,11 @@ tools/ios.sh mac            # the same app as a Mac app (the UnMac target): buil
 ```
 
 The Mac app is these screens in a window: `UnApp/Platform.swift` holds the few differences (the
-camera preview view, keeping the screen awake, the lesson over the whole window, the camera:
-a Continuity Camera iPhone, else an external one, else the built-in one). It is sandboxed
-(`UnMac.entitlements`), Apple silicon only, and goes to TestFlight with **Release macOS TestFlight**.
+camera preview view, keeping the screen awake, the lesson over the whole window). Its Settings
+window (Un ▸ Settings…, ⌘,; `UnApp/MacSettings.swift`) picks the camera and the microphone; both
+follow the system's choice by default (the camera chosen in macOS, an iPhone as a Continuity
+Camera included; the default input). It is sandboxed (`UnMac.entitlements`), Apple silicon only,
+and goes to TestFlight with **Release macOS TestFlight**.
 
 TestFlight: the **Release iOS** workflow (Actions tab → Run workflow, or `gh workflow run "Release iOS"`)
 builds on a GitHub macOS runner with unmath's main next to this repository, signs automatically with an App Store Connect API key (no certificate repository),

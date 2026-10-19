@@ -80,17 +80,11 @@ extension View {
     }
 }
 
-/// The camera that looks at the table. On iPhone and iPad the back camera. A Mac has no back
-/// camera, so it takes an iPhone used as a Continuity Camera, else an external camera, else the
-/// built-in one (which faces the user; tilt the screen or put the toys in front of it).
+/// The camera that looks at the table. On iPhone and iPad the back camera. On a Mac the one picked
+/// in Settings, else the system's (see `MediaDevices`).
 func tableCamera() -> AVCaptureDevice? {
     #if os(macOS)
-    let session = AVCaptureDevice.DiscoverySession(deviceTypes: [.continuityCamera, .external, .builtInWideAngleCamera],
-                                                   mediaType: .video, position: .unspecified)
-    for type in [AVCaptureDevice.DeviceType.continuityCamera, .external, .builtInWideAngleCamera] {
-        if let device = session.devices.first(where: { $0.deviceType == type }) { return device }
-    }
-    return AVCaptureDevice.default(for: .video)
+    return MediaDevices.camera()
     #else
     return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
     #endif

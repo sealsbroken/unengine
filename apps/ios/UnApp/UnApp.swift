@@ -13,6 +13,7 @@ struct UnApp: App {
         WindowGroup { LessonScreen().frame(minWidth: 760, minHeight: 600) }
             .defaultSize(width: 1100, height: 800)
             .windowResizability(.contentMinSize)
+        Settings { MacSettings() }
         #else
         WindowGroup { LessonScreen() }
         #endif

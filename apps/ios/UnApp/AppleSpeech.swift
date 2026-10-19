@@ -33,9 +33,16 @@ final class AudioIO: @unchecked Sendable {
         if built && engine.isRunning { return true }
         AudioSession.configure()
         let input = engine.inputNode
+        #if os(macOS)
+        useMicrophone(input)
+        #endif
         if !built {
             // Voice processing must be switched on before the engine starts; it fails where there
             // is no voice-processing hardware path (the simulator), and then the old way stays.
+            // Not on the Mac: there it initialises, then the engine's output fails to start
+            // (-10875, a MacBook Air's own speakers and microphone), and switched off again it
+            // leaves the output silent.
+            #if os(iOS)
             do {
                 try input.setVoiceProcessingEnabled(true)
                 echoCancelled = true
@@ -45,6 +52,7 @@ final class AudioIO: @unchecked Sendable {
             } catch {
                 print("voice processing unavailable: \(error)")
             }
+            #endif
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: playerFormat)
             built = true
@@ -72,8 +80,28 @@ final class AudioIO: @unchecked Sendable {
             try engine.start()
         } catch {
             print("audio engine: \(error)")
-            return false
+            // Voice processing joins the microphone and the speaker in one unit: when it cannot
+            // start (no microphone access, a device it does not support), neither can the
+            // tutor's voice. Without it the tutor still speaks, and the microphone closes while
+            // it does, as on the simulator.
+            guard echoCancelled else { return false }
+            if tapInstalled {
+                input.removeTap(onBus: 0)
+                tapInstalled = false
+            }
+            do {
+                try input.setVoiceProcessingEnabled(false)
+            } catch {
+                print("voice processing off: \(error)")
+                return false
+            }
+            echoCancelled = false
+            speechDebug("voice processing failed to start; running without echo cancellation")
+            lock.unlock()
+            defer { lock.lock() }
+            return start()
         }
+        speechDebug("permissions: camera \(AVCaptureDevice.authorizationStatus(for: .video).rawValue), microphone \(AVCaptureDevice.authorizationStatus(for: .audio).rawValue), speech \(SFSpeechRecognizer.authorizationStatus().rawValue) (3 = granted, 2 = denied, 0 = not asked)")
         speechDebug("audio started (microphone \(microphoneOn ? "\(format.sampleRate) Hz" : "none"), echo cancellation \(echoCancelled ? "on" : "off"))")
         return true
     }
@@ -90,6 +118,26 @@ final class AudioIO: @unchecked Sendable {
     }
 
     func stopPlaying() { player.stop() }
+
+    #if os(macOS)
+    /// Points the engine's input at the microphone picked in Settings (else the default input).
+    /// Only while the engine is stopped.
+    private func useMicrophone(_ input: AVAudioInputNode) {
+        guard var device = MediaDevices.microphoneDeviceID(), let unit = input.audioUnit else { return }
+        let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                          &device, UInt32(MemoryLayout<AudioDeviceID>.size))
+        if status != noErr { print("microphone \(device): \(status)") }
+    }
+
+    /// Settings picked another microphone: a running engine stops and starts again on it.
+    func microphoneChanged() {
+        lock.lock()
+        let running = built && engine.isRunning
+        if running { engine.stop() }
+        lock.unlock()
+        if running { start() }
+    }
+    #endif
 }
 
 /// The tutor's voice through AVSpeechSynthesizer, rendered into the shared audio engine (see
@@ -123,19 +171,29 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, @unchecked Sendab
         AudioIO.shared.onLine?()
         AudioSession.tutorSpeaking(true)
         defer { AudioSession.tutorSpeaking(false) }
-        guard AudioIO.shared.start() else { return }
+        guard AudioIO.shared.start() else {
+            speechDebug("say \"\(text)\": the audio engine did not start")
+            return
+        }
+        speechDebug("say \"\(text)\" (voice \(utterance.voice?.identifier ?? "none"))")
+        var buffers = 0
         // Not on the main thread: the app may be waiting there for the lesson to close, and this
         // line (a goodbye) would then never be said (it froze the lesson screen).
         do {
             synthesizer.write(utterance) { [weak self] buffer in
                 guard let self else { return }
                 guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else {
+                    speechDebug("said: \(buffers) buffers, the last \(type(of: buffer)) \(buffer.format)")
                     // The end of the line.
                     self.lock.lock(); line.written = true; self.lock.unlock()
                     self.check(line)
                     return
                 }
-                guard let converted = self.convert(pcm) else { return }
+                buffers += 1
+                guard let converted = self.convert(pcm) else {
+                    speechDebug("could not convert \(pcm.format)")
+                    return
+                }
                 self.lock.lock(); line.pending += 1; self.lock.unlock()
                 AudioIO.shared.play(converted) { [weak self] in
                     guard let self else { return }
