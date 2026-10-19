@@ -68,6 +68,10 @@ targets:
         ARCHS: arm64
         LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/Frameworks/macosx
         OTHER_LDFLAGS: ["-lun_mobile", "-lc++"]
+      configs:
+        # Screenshot mode reads its photo from, and saves the window to, /tmp/un-screenshots.
+        Debug:
+          CODE_SIGN_ENTITLEMENTS: UnMac-Debug.entitlements
   # Synthetic lesson tests: the engine and the lessons through the Swift bindings, with a
   # scripted child and a simulated table, no host app (tools/ios.sh test).
   UnAppTests:

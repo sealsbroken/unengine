@@ -3,12 +3,16 @@ name: App Store Metadata
 # Uploads the App Store listing text of Un (app.onym.undigit) for iPhone/iPad and for the Mac:
 # name, subtitle, description, keywords, promotional text, support/marketing/privacy URLs (en-US
 # and ru), the category, copyright and App Review notes, from fastlane/metadata/ios, with fastlane
-# deliver (the `ios upload_metadata` lane, as in onym-ios). No binary, no screenshots, nothing
-# submitted for review: Release iOS and Release macOS TestFlight upload the builds.
+# deliver (the `ios upload_metadata` lane, as in onym-ios). No binary and nothing submitted for
+# review: Release iOS and Release macOS TestFlight upload the builds.
 #
 #   gh workflow run "App Store Metadata"                       # iOS and macOS
 #   gh workflow run "App Store Metadata" -f platform=osx       # the Mac listing only
 #   gh workflow run "App Store Metadata" -f version=0.1.15     # a chosen version's texts
+#   gh workflow run "App Store Metadata" -f screenshots=true   # also replace the screenshots
+#
+# Screenshots: fastlane/screenshots/ios (iPhone 6.9" and iPad 13") and fastlane/screenshots/mac,
+# made by tools/screenshots.sh.
 #
 # The texts belong to an App Store version that can still be edited (the one being prepared);
 # App Store Connect creates one per platform. Secrets: the ASC_* key, as in Release iOS.
@@ -27,6 +31,11 @@ on:
         required: false
         type: string
         default: ''
+      screenshots:
+        description: 'Also replace the screenshots (fastlane/screenshots)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -78,12 +87,13 @@ jobs:
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
           ASC_APP_VERSION: ${{ inputs.version }}
           PLATFORM: ${{ inputs.platform }}
+          SCREENSHOTS: ${{ inputs.screenshots }}
         run: |
           set -euo pipefail
           [ -n "$ASC_KEY_CONTENT" ] || { echo "::error::secret ASC_KEY_CONTENT unset"; exit 1; }
           case "$PLATFORM" in both) platforms="ios osx" ;; *) platforms="$PLATFORM" ;; esac
           for p in $platforms; do
             echo "::group::$p"
-            bundle exec fastlane ios upload_metadata platform:"$p"
+            bundle exec fastlane ios upload_metadata platform:"$p" screenshots:"$SCREENSHOTS"
             echo "::endgroup::"
           done

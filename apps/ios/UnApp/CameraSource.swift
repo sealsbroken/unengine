@@ -17,6 +17,9 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private var lastDump = Date.distantPast
     private var dumpIndex = 0
     private let ciContext = CIContext()
+    /// Screenshot mode: a still of the camera's picture, about twice a second.
+    var onStill: ((CGImage) -> Void)?
+    private var lastStill = Date.distantPast
     #endif
 
     init(handler: @escaping FrameHandler) {
@@ -26,6 +29,16 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         guard let device = tableCamera(),
               let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else { return }
         session.addInput(input)
+        #if DEBUG
+        // Screenshot mode: the sharpest picture, as it fills a large screen (the detector
+        // letterboxes it to its input anyway).
+        if Screenshot.active {
+            for preset in [AVCaptureSession.Preset.hd4K3840x2160, .hd1920x1080] where session.canSetSessionPreset(preset) {
+                session.sessionPreset = preset
+                break
+            }
+        }
+        #endif
         let output = AVCaptureVideoDataOutput()
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
         output.alwaysDiscardsLateVideoFrames = true
@@ -55,6 +68,12 @@ final class CameraSource: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
             if let data = ciContext.jpegRepresentation(of: image, colorSpace: CGColorSpaceCreateDeviceRGB()) {
                 try? data.write(to: dir.appendingPathComponent("frame-\(dumpIndex).jpg"))
                 dumpIndex = (dumpIndex + 1) % 5
+            }
+        }
+        if let onStill, Date().timeIntervalSince(lastStill) > 0.5 {
+            lastStill = Date()
+            if let still = ciContext.createCGImage(CIImage(cvPixelBuffer: pixelBuffer), from: CIImage(cvPixelBuffer: pixelBuffer).extent) {
+                onStill(still)
             }
         }
         #endif

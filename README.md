@@ -208,12 +208,19 @@ is the version, as in onym-ios. A blank tag means the next patch of the latest `
 | **Release Windows** | The Windows x64 alpha zip. |
 | **Release Linux** | The Linux x86-64 alpha `.tar.gz` (glibc 2.39+). |
 | **Release Android** | The app bundle for Google Play and an APK to install directly, both signed with the upload key. The bundle goes to a Play track (`-f track=internal\|alpha\|beta\|production\|none`). |
-| **App Store Metadata** | The App Store listing text for iPhone/iPad and the Mac (`fastlane/metadata/ios`, en-US and ru; `-f platform=ios\|osx`). No screenshots yet. The privacy policy it links to is `PRIVACY.md`. |
+| **App Store Metadata** | The App Store listing text for iPhone/iPad and the Mac (`fastlane/metadata/ios`, en-US and ru; `-f platform=ios\|osx`); `-f screenshots=true` also replaces the screenshots in `fastlane/screenshots`. The privacy policy it links to is `PRIVACY.md`. |
 | **Play Store Metadata** | The Play listing's text and images from `fastlane/metadata/android`. |
 | **TestFlight External** | Gives an uploaded build to the External group (`-f platform=osx` for the Mac app). |
 
 macOS, macOS TestFlight, Windows, Linux and Android also take an existing tag (`-f tag=v0.1.9`).
 They build that tag and attach the result (or a line in the notes) to its release.
+
+Store screenshots come from the apps' screenshot mode (debug builds; `UnApp/Screenshot.swift`):
+example children, then one screen per launch, saved by the app itself. `tools/screenshots.sh photo`
+takes a still from the iPad's camera looking at real toys (`fastlane/screenshots/source/table.jpg`),
+`tools/screenshots.sh ios` shoots the iPhone 6.9" and iPad 13" simulators with that photo (its
+frames still go through the real detector), and `tools/screenshots.sh mac` the Mac app with its
+own camera, in English and Russian.
 
 The Mac app has the iOS app's bundle ID, so it is the macOS platform of the same App Store
 Connect record (one purchase for both). Run it locally with `tools/ios.sh mac`. It uses the

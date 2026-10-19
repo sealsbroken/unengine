@@ -29,6 +29,16 @@ struct LessonView: View {
                 CameraPreview(session: camera.session).ignoresSafeArea()
             }
             #endif
+            #if DEBUG
+            if let picture = model.photo?.image ?? model.still {
+                // Screenshot mode: the table photo, or a still of the camera, filling the screen
+                // as the camera's picture does.
+                // (In an overlay, so the filled image cannot make the stack larger than the screen.)
+                Color.clear
+                    .overlay { Image(decorative: picture, scale: 1).resizable().scaledToFill() }
+                    .clipped().ignoresSafeArea()
+            }
+            #endif
             TableOverlay(table: model.table, frameSize: model.frameSize, highlight: model.snapshot?.highlightCount,
                          correct: state == .celebrating, copy: t)
                 .ignoresSafeArea()

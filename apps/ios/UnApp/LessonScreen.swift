@@ -19,6 +19,12 @@ struct LessonScreen: View {
         // No swipe-back mid-lesson: the lesson leaves by Pause, "пауза" or its end.
         .lessonCover(isPresented: $model.running) { LessonView(model: model) }
         .onAppear {
+            #if DEBUG
+            if Screenshot.active {
+                model.showScreenshot()
+                return
+            }
+            #endif
             model.reloadLessons()
             model.reloadChildren()
             model.preparePerception()
@@ -53,6 +59,20 @@ final class LessonModel: ObservableObject {
     nonisolated(unsafe) static var debugFirstStable = -1.0
     #endif
     @Published private(set) var camera: CameraSource?
+    #if DEBUG
+    /// Screenshot mode: the table photo instead of the camera.
+    @Published private(set) var photo: PhotoSource?
+    /// Screenshot mode with the real camera: its latest still, shown instead of the live preview
+    /// (which the app's own capture of its window cannot see).
+    @Published private(set) var still: CGImage?
+    #endif
+    private var hasPhoto: Bool {
+        #if DEBUG
+        return photo != nil
+        #else
+        return false
+        #endif
+    }
     /// The latest table state and the size of the frame it came from, for the overlay.
     @Published private(set) var table: UnTableState?
     @Published private(set) var frameSize: CGSize = .zero
@@ -60,7 +80,7 @@ final class LessonModel: ObservableObject {
     /// Changing it during a lesson starts the lesson over in the new language.
     @Published var language: UnLanguage = LessonModel.savedLanguage() {
         didSet {
-            UserDefaults.standard.set(language == .russian ? "ru" : "en", forKey: "language")
+            if LessonModel.persists { UserDefaults.standard.set(language == .russian ? "ru" : "en", forKey: "language") }
             if running && language != oldValue { restart() }
         }
     }
@@ -79,7 +99,7 @@ final class LessonModel: ObservableObject {
     @Published private(set) var children: [UnProfile] = []
     /// The child the lessons are for, remembered between runs; nil shows the children.
     @Published var childId: String? = UserDefaults.standard.string(forKey: "child") {
-        didSet { UserDefaults.standard.set(childId, forKey: "child") }
+        didSet { if LessonModel.persists { UserDefaults.standard.set(childId, forKey: "child") } }
     }
     var child: UnProfile? { children.first { $0.id == childId } }
     /// The running lesson's end has been recorded for the child.
@@ -132,7 +152,19 @@ final class LessonModel: ObservableObject {
         childId = nil
     }
 
+    /// What the app picks is remembered between runs, except in screenshot mode.
+    static var persists: Bool {
+        #if DEBUG
+        return !Screenshot.active
+        #else
+        return true
+        #endif
+    }
+
     private static func profilesPath() -> String {
+        #if DEBUG
+        if Screenshot.active { return Screenshot.profilesPath() }
+        #endif
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return dir.appendingPathComponent("profiles.json").path
     }
@@ -208,7 +240,7 @@ final class LessonModel: ObservableObject {
         }
         guard let lesson = lessons.first(where: { $0.id == lessonId }) ?? lessons.first else { return }
         lessonId = lesson.id
-        UserDefaults.standard.set(lesson.id, forKey: "lesson")
+        if LessonModel.persists { UserDefaults.standard.set(lesson.id, forKey: "lesson") }
         var config = defaultSessionConfig()
         config.language = language
         // The child's name (the tutor greets them and does not ask it) and what their lessons
@@ -230,7 +262,26 @@ final class LessonModel: ObservableObject {
         preparePerception()
         // One camera for the whole visit: the next lesson keeps it. (A new capture session started
         // while the old one was still stopping crashed AVFoundation as the preview moved over.)
-        if camera == nil { camera = makeCamera() }
+        #if DEBUG
+        if Screenshot.active, photo == nil, let source = PhotoSource(url: Screenshot.photoURL) {
+            photo = source
+            source.start { [weak self] rgb, w, h, t in
+                guard let self, let perception = self.perception,
+                      let state = try? perception.processRgb(rgb: rgb, width: w, height: h, timestamp: t) else { return }
+                self.session?.observe(count: state.count, isStable: state.isStable, groups: state.groups)
+                Task { @MainActor in
+                    self.table = state
+                    self.frameSize = CGSize(width: CGFloat(w), height: CGFloat(h))
+                }
+            }
+        }
+        #endif
+        if camera == nil, !hasPhoto { camera = makeCamera() }
+        #if DEBUG
+        if Screenshot.active {
+            camera?.onStill = { [weak self] image in Task { @MainActor in self?.still = image } }
+        }
+        #endif
         camera?.start()
         // After a completed lesson the tutor asks "Продолжим?"; a yes starts the next one.
         session?.offerNextLesson(offer: nextLessonId != nil)
@@ -350,6 +401,10 @@ final class LessonModel: ObservableObject {
         ScreenAwake.set(false)
         timer?.invalidate()
         if !keepCamera {
+            #if DEBUG
+            photo?.stop()
+            photo = nil
+            #endif
             camera?.stop()
             camera = nil
             table = nil
@@ -361,3 +416,26 @@ final class LessonModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { closing?.shutdown() }
     }
 }
+
+#if DEBUG
+extension LessonModel {
+    /// Screenshot mode (see `Screenshot`): example children, then the chosen screen.
+    func showScreenshot() {
+        if let language = Screenshot.language { self.language = language }
+        reloadLessons()
+        let first = Screenshot.seed(profiles, lessons: lessons, ru: language == .russian)
+        reloadChildren()
+        // The detector only for the lesson: loading, it shows a "getting the camera ready" card.
+        switch Screenshot.screen {
+        case "trail":
+            childId = first
+        case "lesson":
+            childId = first
+            start()
+        default:
+            childId = nil
+        }
+        Screenshot.scheduleCapture { [weak self] in self?.still ?? self?.photo?.image }
+    }
+}
+#endif
