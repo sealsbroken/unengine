@@ -7,6 +7,7 @@
 //! * [`Profiles`]: the children and their progress through the lessons.
 //! * [`Session`]: strategy + engine + perception, with a JSON transcript for headless runs.
 
+pub mod bundle;
 pub mod paths;
 pub mod perception;
 pub mod profiles;

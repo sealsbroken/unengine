@@ -2,6 +2,7 @@
 //! (`un-cli strategies` lists them).
 
 fn main() -> anyhow::Result<()> {
+    un_app::bundle::use_bundled_libraries();
     un_app::set_registry(un_mobile::registry);
     un_cli::main()
 }

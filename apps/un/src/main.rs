@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() -> eframe::Result<()> {
+    un_app::bundle::use_bundled_libraries();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     un_app::set_registry(un_mobile::registry);
     let first = un_app::registry().infos().first().map(|i| i.id.clone());
