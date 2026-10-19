@@ -36,3 +36,9 @@ serde.workspace = true
 serde_json.workspace = true
 image.workspace = true
 parking_lot.workspace = true
+
+# Linux: choosing X11 when the Wayland client library is missing (display.rs). The same winit as
+# eframe's; only its X11 switch is used.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["x11", "wayland", "wayland-dlopen"] }
+libc = "0.2"

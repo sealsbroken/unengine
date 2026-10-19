@@ -6,6 +6,7 @@
 //! strategy registry.
 
 mod app;
+mod display;
 mod overlay;
 mod settings;
 mod un;

@@ -160,6 +160,12 @@ jobs:
           (Ubuntu 24.04, Debian 13, Fedora 40 and later), X11 or Wayland, a V4L2 camera and ALSA or
           PipeWire/PulseAudio sound.
 
+          The window needs the system's display libraries. On Debian and Ubuntu:
+            sudo apt install libwayland-client0 libxkbcommon0 libxkbcommon-x11-0 libgl1 libegl1
+          Without the Wayland library the window opens on X11 (XWayland); UN_DISPLAY=x11 or
+          UN_DISPLAY=wayland ./un chooses by hand. un-cli needs a camera for a real lesson
+          (./un-cli cameras lists them); --sim 3 runs one on a drawn table instead.
+
           Source: https://github.com/sealsbroken/unengine (${{ steps.tag.outputs.tag }}) and
           https://github.com/sealsbroken/unmath (${UNMATH}). The engine and lessons are LGPL-3.0;
           the bundled Piper voices use espeak-ng (GPL-3.0), so this bundle as a whole is GPL-3.0.

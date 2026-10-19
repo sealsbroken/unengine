@@ -4075,6 +4075,7 @@ dependencies = [
  "egui",
  "env_logger",
  "image",
+ "libc",
  "log",
  "parking_lot",
  "serde",
@@ -4085,6 +4086,7 @@ dependencies = [
  "un-media",
  "un-strategy-demo",
  "un-vision",
+ "winit",
 ]
 
 [[package]]

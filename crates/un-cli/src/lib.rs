@@ -320,7 +320,18 @@ fn open_source(source: &SourceArgs) -> Result<Source> {
                 .split_once('x')
                 .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
                 .ok_or_else(|| anyhow!("--size must look like 1280x720"))?;
-            let mut cam = CameraSource::open(camera.unwrap_or(0), w, h).map_err(|e| anyhow!("{e}"))?;
+            let index = camera.unwrap_or(0);
+            let mut cam = CameraSource::open(index, w, h).map_err(|e| {
+                // No camera at all is the usual cause: say so, and how to go on without one.
+                if un_media::list_cameras().is_ok_and(|c| c.is_empty()) {
+                    anyhow!(
+                        "no camera found. Connect a webcam (`un-cli cameras` lists them), or run without one: \
+                         --sim 3 (a drawn table with 3 toys) or --source photo.jpg"
+                    )
+                } else {
+                    anyhow!("camera {index}: {e} (`un-cli cameras` lists the cameras; pick one with --camera N)")
+                }
+            })?;
             cam.rotate = Rotation::from_degrees(source.rotate).ok_or_else(|| anyhow!("--rotate must be 0, 90, 180 or 270"))?;
             Source::Camera(cam)
         }

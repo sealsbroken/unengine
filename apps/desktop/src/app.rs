@@ -42,6 +42,7 @@ pub fn run_with(registry: StrategyRegistry, defaults: Defaults) -> eframe::Resul
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([1024.0, 700.0])
             .with_title("Un"),
+        event_loop_builder: crate::display::event_loop_hook(),
         ..Default::default()
     };
     eframe::run_native(
