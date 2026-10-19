@@ -208,7 +208,7 @@ is the version, as in onym-ios. A blank tag means the next patch of the latest `
 | **Release Windows** | The Windows x64 alpha zip. |
 | **Release Linux** | The Linux x86-64 alpha `.tar.gz` (glibc 2.39+). |
 | **Release Android** | The app bundle for Google Play and an APK to install directly, both signed with the upload key. The bundle goes to a Play track (`-f track=internal\|alpha\|beta\|production\|none`). |
-| **App Store Metadata** | The App Store listing text for iPhone/iPad and the Mac (`fastlane/metadata/ios`, en-US and ru; `-f platform=ios\|osx`); `-f screenshots=true` also replaces the screenshots in `fastlane/screenshots`. The privacy policy it links to is `PRIVACY.md`. |
+| **App Store Metadata** | The App Store listing text for iPhone/iPad and the Mac (`fastlane/metadata/ios`, en-US and ru; `-f platform=ios\|osx`); `-f screenshots=true` also replaces the screenshots in `fastlane/screenshots`, `-f previews=true` the app previews in `fastlane/previews` (cut from screen recordings by `tools/app-preview.sh`). The privacy policy it links to is `PRIVACY.md`. |
 | **Play Store Metadata** | The Play listing's text and images from `fastlane/metadata/android`. |
 | **TestFlight External** | Gives an uploaded build to the External group (`-f platform=osx` for the Mac app). |
 

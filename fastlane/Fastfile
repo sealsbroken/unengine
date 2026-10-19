@@ -111,6 +111,50 @@ platform :ios do
     )
   end
 
+  desc "Upload the app previews (videos) in fastlane/previews/<ios|mac>/<locale> to App Store Connect"
+  desc "Made by tools/app-preview.sh; the type is in the file name (iphone-IPHONE_67.mp4) and the"
+  desc "poster frame in <name>.poster. Each type's previews in that locale are replaced. deliver"
+  desc "cannot upload previews, hence the App Store Connect API directly."
+  desc "Options: platform:ios (default) or platform:osx. Environment: the ASC_* key."
+  lane :upload_previews do |options|
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV["ASC_KEY_PATH"],
+      key_content: ENV["ASC_KEY_CONTENT"],
+      in_house: false
+    )
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: api_key)
+    mac = options[:platform].to_s == "osx"
+    root = File.expand_path("../fastlane/previews/#{mac ? 'mac' : 'ios'}", __dir__)
+    files = Dir.glob(File.join(root, "*", "*.{mp4,mov}")).sort
+    if files.empty?
+      UI.important("no previews in #{root}")
+      next
+    end
+
+    app = Spaceship::ConnectAPI::App.find("app.onym.undigit") or UI.user_error!("no app app.onym.undigit in App Store Connect")
+    platform = mac ? Spaceship::ConnectAPI::Platform::MAC_OS : Spaceship::ConnectAPI::Platform::IOS
+    version = app.get_edit_app_store_version(platform: platform) or UI.user_error!("no editable #{platform} version")
+    localizations = version.get_app_store_version_localizations
+
+    files.group_by { |f| File.basename(File.dirname(f)) }.each do |locale, paths|
+      localization = localizations.find { |l| l.locale == locale } or UI.user_error!("no #{locale} localization on #{version.version_string}")
+      sets = localization.get_app_preview_sets
+      paths.each do |path|
+        type = Spaceship::ConnectAPI::AppPreviewSet.preview_type_from_filename(File.basename(path)) or
+          UI.user_error!("#{path}: name the file after its type, e.g. iphone-IPHONE_67.mp4")
+        set = sets.find { |s| s.preview_type == type } ||
+              localization.create_app_preview_set(attributes: { previewType: type })
+        (set.app_previews || []).each(&:delete!)
+        poster = File.exist?(path.sub(/\.\w+$/, ".poster")) ? File.read(path.sub(/\.\w+$/, ".poster")).strip : nil
+        UI.message("#{locale} #{type}: uploading #{File.basename(path)}#{poster ? " (poster #{poster})" : ''}")
+        set.upload_preview(path: path, wait_for_processing: false, frame_time_code: poster)
+      end
+    end
+    UI.success("previews uploaded; App Store Connect processes them for a few minutes")
+  end
+
   desc "Once Apple has processed a build, give it to the External group (submits Beta App Review)"
   desc "Environment: the ASC_* key, TF_VERSION, TF_BUILD, TF_WHAT_TO_TEST (the testers' notes),"
   desc "TF_PLATFORM (ios, the default, or osx for the Mac app)"
