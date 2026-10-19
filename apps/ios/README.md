@@ -4,7 +4,7 @@ A SwiftUI shell over the shared Rust engine, for iPhone and iPad (portrait, full
 perception (`UnPerception`, ONNX Runtime on the CPU/CoreML) and the lesson runs in the shared
 engine (`UnSession`); speech goes through the `SpeechOutputCallback` / `SpeechInputCallback` interfaces: Apple's
 on-device recogniser, and Apple's synthesiser except for Russian on iPhone and iPad, which the
-tutor says in a Piper voice fine-tuned on a child's recordings (`models/voice-ru`;
+tutor says in a Piper voice fine-tuned on recordings of an adult man's voice (`models/voice-ru`;
 `UnApp/PiperVoice.swift`, through sherpa-onnx's C library, which tools/ios.sh fetches).
 
 ## Build

@@ -29,7 +29,8 @@ final class PiperVoice: @unchecked Sendable {
             speechDebug("no Piper voice in \(folder)")
             return false
         }
-        let strings = [model, tokens, data, "cpu"].map { strdup($0) }
+        let paths: [String] = [model, tokens, data, "cpu"]
+        let strings = paths.map { strdup($0) }
         defer { strings.forEach { free($0) } }
         var config = SherpaOnnxOfflineTtsConfig()
         config.model.vits.model = UnsafePointer(strings[0])
