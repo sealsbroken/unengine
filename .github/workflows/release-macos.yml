@@ -94,8 +94,11 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "$pass" "$keychain" >/dev/null
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           rm "$RUNNER_TEMP/cert.p12"
-          identity=$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
-          [ -n "$identity" ] || { echo "::error::No Developer ID Application identity in MACOS_CERT_P12"; exit 1; }
+          # Only the team's Developer ID Application certificate can be notarised (an Apple Development
+          # or Distribution one signs fine and is rejected later).
+          identity=$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*(7C7LXXWRMG)"' | head -1 | tr -d '"')
+          [ -n "$identity" ] || { echo "::error::No Developer ID Application identity for team 7C7LXXWRMG in MACOS_CERT_P12"; exit 1; }
+          echo "Signing with: $identity"
           echo "IDENTITY=$identity" >> "$GITHUB_ENV"
           echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
@@ -144,6 +147,11 @@ jobs:
           sign --entitlements "$mac/un.entitlements" "$app/Contents/MacOS/un-cli"
           sign --entitlements "$mac/un.entitlements" "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dvv "$app" 2>&1 | tee signature.txt
+          grep -q '^Authority=Developer ID Application: .*(7C7LXXWRMG)$' signature.txt
+          grep -q '^TeamIdentifier=7C7LXXWRMG$' signature.txt
+          grep -q '^Timestamp=' signature.txt
+          rm signature.txt
           du -sh "$app"
           echo "APP=$app" >> "$GITHUB_ENV"
 
