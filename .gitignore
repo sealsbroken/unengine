@@ -2,6 +2,7 @@
 /models/*.onnx
 /models/*.json
 /models/speech/
+/models/voice-ru/
 /dist
 /apps/ios/Generated/
 /apps/ios/*.xcodeproj

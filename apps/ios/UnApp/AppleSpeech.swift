@@ -157,9 +157,21 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, @unchecked Sendab
         var over = false
     }
 
-    func prepare(language: UnLanguage) throws { AudioIO.shared.start() }
+    func prepare(language: UnLanguage) throws {
+        AudioIO.shared.start()
+        #if os(iOS)
+        if language == .russian { PiperVoice.russian.load() }
+        #endif
+    }
 
     func speak(text: String, language: UnLanguage) throws {
+        #if os(iOS)
+        // Russian in the bundled Piper voice; Apple's voice when it is missing or says nothing.
+        if language == .russian, let buffer = PiperVoice.russian.synthesize(text) {
+            say(buffer, text: text)
+            return
+        }
+        #endif
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: language == .russian ? "ru-RU" : "en-US")
         // The voice's own pace (speed 1).
@@ -201,6 +213,30 @@ final class AppleSpeechOutput: NSObject, SpeechOutputCallback, @unchecked Sendab
                     self.check(line)
                 }
             }
+        }
+        line.finished.wait()
+    }
+
+    /// Plays a line synthesised in full beforehand (the Piper voice) and waits until it has been heard or stopped.
+    private func say(_ buffer: AVAudioPCMBuffer, text: String) {
+        let line = Line()
+        line.written = true
+        line.pending = 1
+        lock.lock(); self.line = line; lock.unlock()
+        AudioIO.shared.onLine?()
+        AudioSession.tutorSpeaking(true)
+        defer { AudioSession.tutorSpeaking(false) }
+        guard AudioIO.shared.start() else {
+            speechDebug("say \"\(text)\": the audio engine did not start")
+            return
+        }
+        speechDebug("say \"\(text)\" (Piper voice)")
+        lock.lock(); let stopped = line.over; lock.unlock()
+        if stopped { return }
+        AudioIO.shared.play(buffer) { [weak self] in
+            guard let self else { return }
+            self.lock.lock(); line.pending -= 1; self.lock.unlock()
+            self.check(line)
         }
         line.finished.wait()
     }

@@ -53,6 +53,33 @@ for f in toys.onnx toys.json; do
   cp "$models/$f" "$ios/Resources/models/"
 done
 rm -rf "$ios"/build/Build/Products/*/UnApp.app/models/{llm,hand_landmark.onnx,palm_detection.onnx}(N)
+# iPhone and iPad: the Russian tutor's Piper voice and sherpa-onnx, which speaks it (its static
+# library alone: it runs on the ONNX Runtime inside libun_mobile). The Mac app keeps Apple's voice.
+if [[ $sdk != macosx ]]; then
+  [[ -f $models/voice-ru/model.onnx ]] || { echo "no Russian voice in $models/voice-ru: gh release download models-v1 -R sealsbroken/unengine -p voice-ru.tar.gz -O - | tar -xz -C $models" >&2; exit 1; }
+  rm -rf "$ios/Resources/models/voice-ru"
+  cp -R "$models/voice-ru" "$ios/Resources/models/"
+  sherpa_tag=v1.12.9
+  sherpa_sha=d5891a2e57895ce22d0623c486809ea2e142ea35d61b38c17d2f51e1f0def98e
+  # The archive sherpa-rs fetched for the simulator, else a download of the same one.
+  sherpa=$HOME/Library/Caches/sherpa-rs/aarch64-apple-ios-sim/$sherpa_sha
+  if [[ ! -d $sherpa/build-ios ]]; then
+    sherpa=$here/vendor/sherpa-onnx-$sherpa_tag-ios
+    if [[ ! -d $sherpa/build-ios ]]; then
+      mkdir -p "$sherpa"
+      curl -fsSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/$sherpa_tag/sherpa-onnx-$sherpa_tag-ios.tar.bz2" -o "$sherpa.tar.bz2"
+      echo "$sherpa_sha  $sherpa.tar.bz2" | shasum -a 256 -c - >/dev/null
+      tar -xjf "$sherpa.tar.bz2" -C "$sherpa"
+      rm "$sherpa.tar.bz2"
+    fi
+  fi
+  slice=ios-arm64
+  [[ $sdk == iphonesimulator ]] && slice=ios-arm64_x86_64-simulator
+  cp "$sherpa/build-ios/sherpa-onnx.xcframework/$slice/libsherpa-onnx.a" "$ios/Frameworks/$sdk/"
+  rm -rf "$ios/Frameworks/include"
+  mkdir -p "$ios/Frameworks/include"
+  cp -R "$sherpa/build-ios/sherpa-onnx.xcframework/Headers/sherpa-onnx" "$ios/Frameworks/include/"
+fi
 
 cd "$ios"
 xcodegen generate

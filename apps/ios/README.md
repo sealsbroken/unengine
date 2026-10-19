@@ -2,15 +2,17 @@
 
 A SwiftUI shell over the shared Rust engine, for iPhone and iPad (portrait, full screen). The phone's camera frames go to the shared
 perception (`UnPerception`, ONNX Runtime on the CPU/CoreML) and the lesson runs in the shared
-engine (`UnSession`); speech uses Apple's on-device synthesiser and recogniser through the
-`SpeechOutputCallback` / `SpeechInputCallback` interfaces. Swap in sherpa-onnx's Swift package
-by implementing the same interfaces.
+engine (`UnSession`); speech goes through the `SpeechOutputCallback` / `SpeechInputCallback` interfaces: Apple's
+on-device recogniser, and Apple's synthesiser except for Russian on iPhone and iPad, which the
+tutor says in a Piper voice fine-tuned on a child's recordings (`models/voice-ru`;
+`UnApp/PiperVoice.swift`, through sherpa-onnx's C library, which tools/ios.sh fetches).
 
 ## Build
 
 The app (the engine plus the unmath lessons, `apps/mobile`) is one command in this repository,
 with [unmath](https://github.com/sealsbroken/unmath) cloned next to it (`../unmath`) and the toy
-detector in `models/` (`gh release download models-v1 -R sealsbroken/unengine -D models`):
+detector and the Russian voice in `models/` (`gh release download models-v1 -R sealsbroken/unengine -p 'toys.*' -D models`,
+then `gh release download models-v1 -R sealsbroken/unengine -p voice-ru.tar.gz -O - | tar -xz -C models`):
 
 ```sh
 tools/ios.sh sim            # build, install and launch on a simulator ("iPhone 17"; tools/ios.sh sim "iPhone 17 Pro")
@@ -78,7 +80,7 @@ tutor waits after the last number. `tools/ios.sh test` runs them on the
 simulator (`xcodebuild test -scheme UnApp -only-testing:UnAppTests`).
 
 Generated files: `Generated/un_ffi.swift`, `Generated/un_ffiFFI.h`, `Generated/un_ffiFFI.modulemap`.
-ONNX Runtime for iOS is linked statically by the `ort` crate (download-binaries). sherpa-onnx is
-not needed on iOS because speech goes through Apple's APIs (`un-app` is built without its `speech`
-feature); if you prefer Piper voices, add the `sherpa-onnx` Swift package and implement
-`SpeechOutputCallback` over it.
+ONNX Runtime for iOS is linked statically by the `ort` crate (download-binaries). `un-app` is built
+without its `speech` feature: the Russian Piper voice is sherpa-onnx's own static library
+(`Frameworks/<sdk>/libsherpa-onnx.a`, its C API header in `Frameworks/include`), called from Swift,
+whose ONNX Runtime calls resolve to the one in libun_mobile.

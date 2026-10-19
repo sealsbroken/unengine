@@ -35,7 +35,10 @@ targets:
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(PROJECT_DIR)/Frameworks/iphonesimulator
         # No -all_load: the prebuilt ONNX Runtime carries some objects twice, which would then
         # collide. Strategies are registered explicitly (un_mobile_init) instead.
-        OTHER_LDFLAGS: ["-lun_mobile", "-lc++"]
+        # sherpa-onnx (the Russian tutor's Piper voice) without its own ONNX Runtime: it runs on
+        # the one in libun_mobile.
+        OTHER_LDFLAGS: ["-lun_mobile", "-lsherpa-onnx", "-lc++"]
+        HEADER_SEARCH_PATHS: $(PROJECT_DIR)/Frameworks/include
         TARGETED_DEVICE_FAMILY: "1,2"  # iPhone and iPad, portrait, full screen
   # The same app as a native Mac app, for TestFlight and the Mac App Store: the same SwiftUI
   # screens (UnApp/Platform.swift holds the few differences), the same bundle ID, so it is one App

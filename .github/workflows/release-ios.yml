@@ -16,7 +16,8 @@ name: Release iOS
 #
 # The app is this repository (the engine, apps/mobile, the Xcode project) with the unmath lessons
 # (sealsbroken/unmath at its main branch, checked out next to it; the release notes record its
-# commit) and nothing else. The toy detector comes from this repository's `models-v1` release.
+# commit) and nothing else. The toy detector and the Russian tutor's Piper voice (voice-ru.tar.gz)
+# come from this repository's `models-v1` release; tools/ios.sh fetches sherpa-onnx, which speaks it.
 # The repository is public, so neither the IPA nor build artifacts are published: the build goes
 # to TestFlight only.
 #
@@ -146,10 +147,12 @@ jobs:
       - name: Install xcodegen
         run: command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
 
-      - name: Fetch the toy detector
+      - name: Fetch the toy detector and the Russian voice
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+        run: |
+          gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+          gh release download models-v1 -R ${{ github.repository }} -p voice-ru.tar.gz -O - | tar -xz -C unengine/models
 
       - name: Lesson tests
         run: |
