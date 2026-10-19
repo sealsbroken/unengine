@@ -79,7 +79,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq pkg-config libclang-dev libasound2-dev libudev-dev libv4l-dev libssl-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev libxcursor-dev libxrandr-dev \
-            libxi-dev libxinerama-dev libgl1-mesa-dev libegl1 libgl1-mesa-dri xkb-data xvfb imagemagick
+            libxi-dev libxinerama-dev libgl1-mesa-dev libegl1 libegl-mesa0 libglx-mesa0 libgbm1 libgl1-mesa-dri xkb-data libx11-data \
+            xvfb imagemagick
 
       - uses: dtolnay/rust-toolchain@stable
       # No build cache: a restored target dir once left ort-sys linking a missing cargs.lib.
@@ -110,24 +111,54 @@ jobs:
           # The display libraries the window loads at run time by name (winit, glutin), with every
           # library they need except glibc's: on a Linux that keeps them outside the standard
           # directories they would not be found. The executables put lib/ on LD_LIBRARY_PATH when
-          # they start (un-app's bundle.rs). OpenGL is the system's, the graphics driver.
-          mkdir -p "$out/lib"
-          roots="libwayland-client.so.0 libwayland-cursor.so.0 libwayland-egl.so.1 libxkbcommon.so.0
-            libxkbcommon-x11.so.0 libX11.so.6 libX11-xcb.so.1 libxcb.so.1 libXcursor.so.1 libXrandr.so.2
-            libXi.so.6 libXinerama.so.1 libXext.so.6 libXrender.so.1 libXfixes.so.3"
+          # they start (un-app's bundle.rs).
           glibc='^(linux-vdso|ld-linux|libc|libm|libdl|libpthread|librt|libresolv)\.so'
-          for name in $roots; do
-            path=$(ldconfig -p | awk -v n="$name" '$1 == n && /x86-64/ {print $NF; exit}')
-            [ -n "$path" ] || { echo "::error::$name is not installed on the runner"; exit 1; }
-            for dep in "$path" $(ldd "$path" | awk '/=> \// {print $3}'); do
-              base=$(basename "$dep")
-              echo "$base" | grep -Eq "$glibc" && continue
-              [ -e "$out/lib/$base" ] || cp -L "$dep" "$out/lib/$base"
+          # bundle DEST FILE...: each file and the libraries it needs, into DEST, except glibc's and
+          # those already in lib/.
+          bundle() {
+            local dest=$1 file dep base; shift
+            mkdir -p "$dest"
+            for file in "$@"; do
+              for dep in "$file" $(ldd "$file" | awk '/=> \// {print $3}'); do
+                base=$(basename "$dep")
+                echo "$base" | grep -Eq "$glibc" && continue
+                [ -e "$out/lib/$base" ] || [ -e "$dest/$base" ] || cp -L "$dep" "$dest/$base"
+              done
             done
+          }
+          soname() {
+            local path
+            path=$(ldconfig -p | awk -v n="$1" '$1 == n && /x86-64/ {print $NF; exit}')
+            [ -n "$path" ] || { echo "::error::$1 is not installed on the runner" >&2; exit 1; }
+            echo "$path"
+          }
+          for name in libwayland-client.so.0 libwayland-cursor.so.0 libwayland-egl.so.1 libxkbcommon.so.0 \
+            libxkbcommon-x11.so.0 libX11.so.6 libX11-xcb.so.1 libxcb.so.1 libXcursor.so.1 libXrandr.so.2 \
+            libXi.so.6 libXinerama.so.1 libXext.so.6 libXrender.so.1 libXfixes.so.3; do
+            bundle "$out/lib" "$(soname "$name")"
           done
-          # The keyboard layouts xkbcommon reads (XKB_CONFIG_ROOT, where the system has none).
+          # OpenGL is the system's graphics driver first; where it fails (no configuration for the
+          # window), the program restarts on this Mesa in lib/gl: glvnd's EGL and GLX, Mesa's EGL,
+          # GLX and GBM, and its drivers (Intel, AMD, Nouveau, virtio and llvmpipe, software
+          # rendering for anything else; one file, hard-linked).
+          gl=$out/lib/gl
+          for name in libEGL.so.1 libGL.so.1 libGLX.so.0 libGLdispatch.so.0 libEGL_mesa.so.0 libGLX_mesa.so.0 libgbm.so.1; do
+            bundle "$gl" "$(soname "$name")"
+          done
+          mkdir -p "$gl/dri"
+          cp -a /usr/lib/x86_64-linux-gnu/dri/*_dri.so "$gl/dri/"
+          bundle "$gl" "$gl"/dri/*_dri.so
+          if [ -d /usr/lib/x86_64-linux-gnu/gbm ]; then
+            cp -a /usr/lib/x86_64-linux-gnu/gbm "$gl/gbm"
+            bundle "$gl" "$gl"/gbm/*.so
+          fi
+          printf '{"file_format_version": "1.0.0", "ICD": {"library_path": "libEGL_mesa.so.0"}}\n' > "$gl/50_mesa.json"
+          # The keyboard layouts xkbcommon reads (XKB_CONFIG_ROOT) and the X11 locale data for dead
+          # keys (XLOCALEDIR), where the system has none.
           cp -R /usr/share/X11/xkb "$out/xkb"
-          ls "$out/lib"
+          cp -R /usr/share/X11/locale "$out/locale"
+          ls "$out/lib" "$gl" "$gl/dri"
+          du -sh "$out/lib" "$gl"
           cp "$models/toys.onnx" "$models/toys.json" "$out/models/"
           cp "$models/speech/silero_vad.onnx" "$out/models/speech/"
           for voice in vits-piper-ru_RU-irina-medium vits-piper-en_US-ljspeech-medium; do
@@ -160,9 +191,9 @@ jobs:
           grep -q '"raw"' detector.txt
           rm -f strategies.txt lesson.txt detector.txt table.jpg
           # Every bundled library finds what it needs in lib/ (or glibc).
-          for so in lib/*.so*; do
-            if LD_LIBRARY_PATH=lib ldd "$so" | grep -q 'not found'; then
-              echo "::error::$so: $(LD_LIBRARY_PATH=lib ldd "$so" | grep 'not found' | tr -s ' ' | paste -sd,)"; exit 1
+          for so in lib/*.so* lib/gl/*.so* lib/gl/dri/*.so; do
+            if LD_LIBRARY_PATH=lib/gl:lib ldd "$so" | grep -q 'not found'; then
+              echo "::error::$so: $(LD_LIBRARY_PATH=lib/gl:lib ldd "$so" | grep 'not found' | tr -s ' ' | paste -sd,)"; exit 1
             fi
           done
           # The window opens (on a virtual X server, Mesa's software OpenGL) and keeps running.
@@ -170,6 +201,12 @@ jobs:
           xvfb-run -a -s '-screen 0 1280x800x24' timeout 15 ./un > window.txt 2>&1 || status=$?
           cat window.txt
           [ "$status" = 124 ] || { echo "::error::the window did not keep running (exit $status)"; exit 1; }
+          # The same on the bundled Mesa (software rendering here: Xvfb has no GPU).
+          status=0
+          UN_GL=bundled xvfb-run -a -s '-screen 0 1280x800x24' timeout 15 ./un > window.txt 2>&1 || status=$?
+          cat window.txt
+          grep -q 'using the bundled OpenGL' window.txt || { echo "::error::the bundled OpenGL was not used"; exit 1; }
+          [ "$status" = 124 ] || { echo "::error::the window did not keep running on the bundled OpenGL (exit $status)"; exit 1; }
           rm -f window.txt
 
       - name: README and zip
@@ -195,10 +232,11 @@ jobs:
           (Ubuntu 24.04, Debian 13, Fedora 40 and later), X11 or Wayland, a V4L2 camera and ALSA or
           PipeWire/PulseAudio sound.
 
-          The window needs OpenGL from the system (Debian, Ubuntu: libgl1 libegl1, usually there).
           The display libraries are in lib/ (and the keyboard layouts in xkb/): the programs use them
           by themselves, also where a Linux keeps its own outside the standard directories. OpenGL is
-          the system's graphics driver (on NixOS and Guix found in their driver directories). Without
+          the system's graphics driver (on NixOS and Guix found in their driver directories); where
+          it gives the window nothing to draw with, the bundled Mesa in lib/gl takes over by itself
+          (UN_GL=bundled ./un uses it from the start). Without
           Wayland the window opens on X11 (XWayland); UN_DISPLAY=x11 or UN_DISPLAY=wayland ./un
           chooses by hand. un-cli needs a camera for a real lesson
           (./un-cli cameras lists them); --sim 3 runs one on a drawn table instead.
