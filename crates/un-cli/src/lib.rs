@@ -77,7 +77,7 @@ enum Command {
         #[command(flatten)]
         lesson: LessonArgs,
     },
-    /// Record auto-labelled camera frames (YOLO txt labels) to fine-tune a detector with tools/teach.py.
+    /// Record camera frames of the table (with the detector's boxes as YOLO txt labels) for tools/label.py.
     Collect {
         #[command(flatten)]
         source: SourceArgs,
@@ -118,7 +118,7 @@ struct SourceArgs {
 
 #[derive(Args)]
 struct VisionArgs {
-    /// Detector: a name in the models directory (toys, or one taught with tools/teach.py) or a path to an .onnx.
+    /// Detector: a name in the models directory (toys, or one trained with tools/train_detector.py) or a path to an .onnx.
     #[arg(long, default_value = "toys")]
     model: String,
     #[arg(long, default_value_t = 0.25)]

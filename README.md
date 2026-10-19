@@ -1,37 +1,38 @@
 # Un
 
-The open engine behind Unnumberium: a camera looks at the table, recognises and counts the
-toys on it, and a tutor talks about what it sees, listens to the
-spoken answer and adapts. One Rust core on **macOS, Windows, Linux, iOS and Android**;
-everything runs on the device and nothing leaves it.
+The open engine behind Unnumberium. A camera looks at the table and counts the toys on it, and a
+tutor talks about what it sees, listens to the child's spoken answer and adapts. One Rust core
+runs on **macOS, Windows, Linux, iOS and Android**. Everything runs on the device; nothing leaves it.
 
-The engine is deliberately empty of lessons. What the tutor asks, how difficulty moves and
-what it says is a *strategy* (`un_core::strategy::Strategy`) plugged in from another crate.
-This repository ships one tiny demo strategy; the real methodics live in a separate,
-proprietary repository and plug in through the same trait. The engine is LGPL-3.0-or-later,
-so it can be reused in products that keep their lessons closed, as long as the engine itself
+The engine has no lessons of its own. What the tutor asks, how the difficulty moves and what it
+says is a *strategy* (`un_core::strategy::Strategy`) plugged in from another crate. This
+repository has one tiny demo strategy; the real lessons live in
+[sealsbroken/unmath](https://github.com/sealsbroken/unmath) and plug in through the same trait.
+The engine is LGPL-3.0-or-later, so a product can keep its lessons closed as long as the engine
 stays open and relinkable (see [Licence](#licence)).
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `crates/un-core` | Pure, platform-independent: geometry, detections, the debounced table state and object numbering, languages and numerals, the forgiving number parser, and the **strategy interface**. Fully unit-tested. |
-| `crates/un-engine` | The lesson runtime: runs a strategy against perception, speech and taps; owns timers, listening and the HUD snapshot. Speech is behind traits. A listen in `ListenMode::Counting` collects the numbers of a count said aloud across the child's pauses (every recogniser cuts an utterance at a pause), reporting each utterance as `Event::Counted` and the whole sequence as `Event::Numbers` once the child has been quiet for five seconds after the last number or the tutor's last word, or for a beat and a half after the sequence reached the expected answer. |
-| `crates/un-vision` | ONNX Runtime (`ort`): object detector (Ultralytics raw heads, end-to-end rows, RT-DETR rows). |
+| `crates/un-core` | Pure and platform-independent: geometry, detections, the debounced table state and object numbering, languages and numerals, the forgiving number parser, and the **strategy interface**. Fully unit-tested. |
+| `crates/un-engine` | The lesson runtime: runs a strategy against perception, speech and taps, and owns the timers, the listening and the HUD snapshot. Speech sits behind traits. |
+| `crates/un-vision` | ONNX Runtime (`ort`): the toy detector (letterboxing, box decoding, NMS). |
 | `crates/un-media` | Desktop camera capture (AVFoundation, Media Foundation, V4L2) and image files. |
-| `crates/un-app` | Assembles a session: finds models, builds speech in/out, runs perception, simulated table. |
-| `crates/un-cli` | `un`: headless counting and lessons, the speech self-test, camera and strategy listing. |
+| `crates/un-app` | Assembles a session: finds the models, builds speech in and out, runs perception, simulates a table. |
+| `crates/un-cli` | `un`: headless counting and lessons, the speech self-test, listing cameras and strategies, recording frames. |
 | `crates/un-ffi` | UniFFI bindings for Swift and Kotlin: sessions, snapshots, the shared vision, and callback interfaces for platform speech. |
-| `apps/desktop` | The desktop window (egui): camera view with overlay, tutor HUD, number pad. A library plus a binary that ships the demo lesson. |
-| `apps/ios`, `apps/android` | SwiftUI and Compose shells over `un-ffi`: the phone's camera and speech APIs, the shared engine. The iOS screen is the reference: the tutor's line and status, the camera picture with the overlay (toys and their numbers), the number pad, start/end, repeat, skip and the EN/RU switch; Android and the desktop's live view carry the same controls. |
+| `apps/desktop` | The desktop window (egui): camera view with overlay, tutor HUD, number pad. A library, plus a binary that ships the demo lesson. |
+| `apps/un`, `apps/mobile` | The products: the desktop app and the mobile library, each linking the engine with the unmath lessons (`../unmath`, next to this repository) and nothing else. |
+| `apps/ios`, `apps/android` | SwiftUI and Compose apps over `apps/mobile`, using the phone's camera and speech. The iOS screen is the reference; Android and the desktop mirror it. |
 | `strategies/demo` | The smallest strategy: "how many are on the table?" |
-| `tools/` | `fetch_models.py` (speech models), `export_detector.py` (export a detector), `teach.py` (fine-tune on `un collect` frames). |
-| `docs/architecture.md` | Design, the strategy boundary, and the per-platform feasibility matrix. |
+| `tools/` | `fetch_models.py` (speech models), `label.py` and `train_detector.py` (the toy detector), `ios.sh` and `android.sh` (build the mobile library and bindings). |
+| `docs/architecture.md` | The design, the strategy boundary, and what each platform needs. |
 
 ## Setup
 
-Rust 1.92+ (`rustup`), Python 3 for the model tools. On Linux: `libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libgtk-3-dev`.
+You need Rust 1.92+ (`rustup`) and Python 3 for the model tools. On Linux also install
+`libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libgtk-3-dev`.
 
 ```sh
 python3 tools/fetch_models.py              # EN/RU recognisers, VAD and voices (~400 MB)
@@ -39,17 +40,17 @@ cargo build --release --workspace
 cargo run --release -p un-cli -- check-speech --language ru   # the voice says "три", the recogniser hears it
 ```
 
-The Zipformers are small and quick but mishear short answers ("ten cars" can become "and cards").
-`python3 tools/fetch_models.py --whisper small` adds a multilingual Whisper (about 250 MB) that
-the engine then prefers for every language; it decodes an answer in about half a second on an
-Apple laptop. `un listen` prints what the microphone hears, for checking a setup.
+The Zipformer recognisers are small and quick but mishear short answers ("ten cars" can become
+"and cards"). `python3 tools/fetch_models.py --whisper small` adds a multilingual Whisper
+(about 250 MB), which the engine then prefers for every language. It decodes an answer in about
+half a second on an Apple laptop. `un listen` prints what the microphone hears, which helps when
+checking a setup.
 
-The toy detector, `models/toys.onnx`, is an RF-DETR model (Roboflow, Apache-2.0) trained here on
-photos labelled by OWLv2 (Google, Apache-2.0). Nothing in that pipeline is Ultralytics, so the
-model ships under Apache-2.0 terms and an app built on it can stay closed or go to the App Store.
-It is not downloaded: build it with the two tools below. It has two classes: `toy` (every kind of
-toy) and `_hand`, a decoy for hands and fingers. Its input is a 576×576 square (phones send
-portrait frames, desktop cameras landscape; both are letterboxed).
+### The toy detector
+
+`models/toys.onnx` is an RF-DETR nano model (Roboflow, Apache-2.0), trained here on photos
+labelled by OWLv2 (Google, Apache-2.0). The release workflows take it from this repository's
+`models-v1` release; to build your own:
 
 ```sh
 # Photos: your own table (un collect, below) and any other toy photos, e.g. Open Images.
@@ -58,54 +59,66 @@ uv run --with torch,transformers,pillow python tools/label.py \
 uv run --with "rfdetr[train]",onnx,onnxruntime python tools/train_detector.py --dataset datasets/toys --name toys
 ```
 
-`label.py` asks OWLv2 for every toy and every hand in each photo (prompts per class with
-`--class label=prompt,prompt`) and writes a COCO dataset; `DIR:N` repeats a directory N times in
-training, so a few dozen frames of your own table weigh as much as thousands of photos from
-elsewhere; `--preview` draws the labels for checking by eye. `train_detector.py` fine-tunes RF-DETR
-nano from its COCO weights (Apache-2.0; the larger RF-DETR sizes have another licence) and exports
-`models/<name>.onnx` with its sidecar: RGB in 0...1, normalisation inside the graph, and one output
-of normalised boxes with a sigmoid score per class (the engine's `rtdetr` head).
+- `label.py` asks OWLv2 for every toy and every hand in each photo and writes a COCO dataset.
+  - `--class label=prompt,prompt` sets the prompts for each class.
+  - `DIR:N` repeats a directory N times in training, so a few dozen frames of your own table
+    weigh as much as thousands of photos from elsewhere.
+  - `--preview` draws the labels so you can check them by eye.
+- `train_detector.py` fine-tunes RF-DETR nano from its COCO weights. The larger RF-DETR sizes have
+  another licence. It exports `models/<name>.onnx` and its `.json` sidecar.
+  - Input: RGB in 0…1, with the normalisation inside the graph.
+  - Output: normalised boxes, each with a sigmoid score per class (the `rtdetr` head).
+
+The model has two classes. `toy` covers every kind of toy. `_hand` is a decoy: a label that starts
+with `_` is recognised so that a hand never becomes a toy, then dropped. Its input is a square
+(the size is in the sidecar). Phones send portrait frames and desktop cameras landscape ones;
+both are letterboxed. The engine does not track hands or fingers: the child answers by voice or
+on the number pad, and the camera only counts toys.
 
 On iPhone and iPad the detector runs on CoreML in the MLProgram format (`"coreml": "mlprogram"` in
-the sidecar), the only one that keeps RF-DETR's attention (GridSample) on the GPU. The first launch
-compiles it, about a minute; the compiled model is cached (`UN_CACHE_DIR`, else the temporary
-directory) and loads in seconds after that.
+the sidecar). It is the only format that keeps RF-DETR's attention (GridSample) on the GPU. The
+first launch compiles the model, which takes about a minute. The compiled model is cached in
+`UN_CACHE_DIR` (or the temporary directory) and loads in seconds after that.
 
-For more photos of *your* toys on *your* table, record frames with the CLI and label them as above:
+To add frames of *your* toys on *your* table, record them with the CLI and label them as above:
 
 ```sh
 cargo run --release -p un-cli -- collect --camera 0 --model toys --conf 0.15 --out datasets/table
 ```
 
-Move the toys between grabs, add and remove some, cover a few with a hand. The desktop app picks
-the most recently exported or trained detector, so a new `models/<name>.onnx` takes over.
-
-Labels starting with `_` are decoys (`_hand`, and for older detectors `_keyboard`, `_finger`):
-recognised so that a hand never becomes a toy, then dropped. The engine has no hand or finger
-tracking: the child answers by voice (or the number pad), and the camera only counts toys.
-
-The previous detector, Ultralytics' zero-shot YOLOE (`tools/export_detector.py`, `tools/teach.py`),
-still works with the engine but is AGPL-3.0 (see [Licence](#licence)); use it for experiments only.
+Move the toys between grabs, add and remove some, and cover a few with a hand. The desktop app
+picks the most recently trained detector, so a new `models/<name>.onnx` takes over.
 
 ## Lessons and the lesson list
 
-A lesson is a strategy crate (`un_core::strategy::StrategyFactory`). The apps list every
-lesson the registry holds and start the one picked: the iOS and Android apps open on a lesson
-list (title and description from `StrategyInfo`), the desktop app has its **Lesson** box. By
-default the registry is every linked strategy plus the demo. A product shows its own list
-instead by calling `un_app::set_registry(my_lessons)` (desktop, CLI) or
-`un_ffi::set_registry(my_lessons)` (mobile library, from its startup function) once at startup;
-`my_lessons` returns a `StrategyRegistry` in list order. See the `unmethod` repository's
-`crates/lessons` for a product list.
+A lesson is a strategy crate (`un_core::strategy::StrategyFactory`). The apps list every lesson
+in the registry and start the one picked. The iOS and Android apps open on the lesson list,
+taking each title and description from `StrategyInfo`. The desktop app has a **Lesson** box.
+
+By default the registry holds every linked strategy plus the demo. A product shows its own list
+instead: it calls `un_app::set_registry(my_lessons)` (desktop, CLI) or
+`un_ffi::set_registry(my_lessons)` (mobile library, from its startup function) once at startup.
+`my_lessons` returns a `StrategyRegistry` in list order. `apps/un` and `apps/mobile` do this
+with the unmath lessons.
 
 ## Talking to the tutor
 
-With `EngineOptions::always_listen` (on in every app) the microphone is open for the whole
-lesson, not only while the strategy waits for an answer: what the child says while an answer
-window is open goes to it (numbers, a count), anything else reaches the strategy as
-`Event::Said`. The microphone closes while the tutor speaks, so the tutor never hears or
-answers itself, except during a count, where the tutor's "good" overlaps the child's next
-number: then it stays open and the tutor's own words are taken out of the transcript.
+With `EngineOptions::always_listen`, which every app turns on, the microphone stays open for the
+whole lesson, not only while the strategy waits for an answer.
+
+- What the child says while an answer window is open goes to that answer (numbers, a count).
+- Anything else reaches the strategy as `Event::Said`.
+- The microphone closes while the tutor speaks, so the tutor never hears itself. A count is the
+  exception: the tutor's "good" overlaps the child's next number, so the microphone stays open
+  and the tutor's own words are taken out of the transcript.
+
+A listen in `ListenMode::Counting` collects a count said aloud across the child's pauses (every
+recogniser cuts an utterance at a pause). It reports two kinds of event:
+
+- `Event::Counted` for each utterance.
+- `Event::Numbers` for the whole sequence. It is sent once the child has been quiet for five
+  seconds after the last number or the tutor's last word, or a beat and a half after the
+  sequence reaches the expected answer.
 
 There is no language model: a strategy answers everything the child says from its own script.
 
@@ -119,12 +132,20 @@ cargo run --release -p un-cli -- lesson --sim 3 --answers 3,2 --voice console   
 cargo run --release -p un-cli -- lesson --camera 0 --language ru                # the real thing, headless
 ```
 
-Desktop keys: drag a rectangle over the table area, `r` resets it, digits answer on the number
-pad, `space` repeats the prompt, `n` skips a task, `+`/`-` change the simulated table.
+Desktop keys:
 
-sherpa-onnx is linked as shared libraries (`libsherpa-onnx-c-api`, `libonnxruntime` next to the
-executable; cargo puts them in `target/<profile>/deps`, where the binaries look too). Ship them
-beside the executable.
+| Key | Action |
+|---|---|
+| drag | Mark the table area |
+| `r` | Reset the table area |
+| digits | Answer on the number pad |
+| `space` | Repeat the prompt |
+| `n` | Skip a task |
+| `+` / `-` | Change the simulated table |
+
+sherpa-onnx is linked as shared libraries: `libsherpa-onnx-c-api` and `libonnxruntime` sit next to
+the executable. Cargo puts them in `target/<profile>/deps`, where the binaries also look. Ship
+them beside the executable.
 
 ## Plugging in a strategy
 
@@ -145,73 +166,86 @@ impl StrategyFactory for MyFactory {
 inventory::submit! { LinkedStrategy(|| Arc::new(MyFactory)) }   // found by every binary that links this crate
 ```
 
-A product is a binary (or a mobile library) that links the engine and its strategy crates:
-`un_desktop::run(registry)`, `un_cli::main()`, or `un-ffi` re-exported from a `staticlib`. The
-`unmethod` repository does exactly this for the Unnumberium lessons.
+A product is a binary or a mobile library that links the engine and its strategy crates:
+`un_desktop::run(registry)`, `un_cli::main()`, or `un-ffi` re-exported from a `staticlib` or
+`cdylib`. `apps/un` and `apps/mobile` are exactly that.
 
 ## Platforms
 
 | | Camera | Detector | Speech in | Speech out | UI |
 |---|---|---|---|---|---|
 | macOS | nokhwa (AVFoundation) | `un-vision` (ORT CPU/CoreML) | sherpa-onnx | sherpa-onnx (Piper) | egui |
-| Windows | nokhwa (Media Foundation) | `un-vision` (ORT CPU/DirectML) | sherpa-onnx | sherpa-onnx | egui |
-| Linux | nokhwa (V4L2) | `un-vision` (ORT CPU) | sherpa-onnx | sherpa-onnx | egui |
-| iOS | AVFoundation (Swift) | `un-vision` via FFI | Apple Speech or sherpa-onnx Swift | AVSpeechSynthesizer or Piper | SwiftUI |
-| Android | CameraX (Kotlin) | `un-vision` via FFI (ORT CPU/NNAPI), or MediaPipe | Android SpeechRecognizer or sherpa-onnx Kotlin | Android TTS or Piper | Compose |
+| Windows | nokhwa (Media Foundation) | `un-vision` (ORT CPU/DirectML) | sherpa-onnx | sherpa-onnx (Piper) | egui |
+| Linux | nokhwa (V4L2) | `un-vision` (ORT CPU) | sherpa-onnx | sherpa-onnx (Piper) | egui |
+| iOS | AVFoundation | `un-vision` via FFI (ORT CoreML) | Apple Speech | AVSpeechSynthesizer | SwiftUI |
+| Android | CameraX | `un-vision` via FFI (ORT) | SpeechRecognizer | TextToSpeech | Compose |
 
-See `docs/architecture.md` for the reasoning and the state of each shell.
+See `docs/architecture.md` for the reasoning behind each choice.
 
 ## Tests
 
 ```sh
-cargo test --workspace            # ~100 unit tests: state machines, parsers, decoders, the runtime end to end
+cargo test --workspace            # state machines, parsers, decoders, the runtime end to end
 cargo run -p un-cli -- check-speech
 ```
 
 ## Releases
 
-All from the Actions tab (or `gh workflow run "<name>"`); the tag is the version, as in onym-ios:
-leave it blank for the next patch of the latest `v*` tag (`v0.1.9` → version 0.1.9, build 109).
+Every release is started by hand from the Actions tab, or with `gh workflow run "<name>"`. The tag
+is the version, as in onym-ios. A blank tag means the next patch of the latest `v*` tag
+(`v0.1.9` → version 0.1.9, build 109). Each platform releases on its own:
 
-Each platform releases on its own:
+| Workflow | What it ships |
+|---|---|
+| **Release iOS** | TestFlight, then the External group and Beta App Review once the build is processed; the tag and a GitHub Release. |
+| **Release macOS** | `Un.app` (Apple silicon), signed with Developer ID and notarised. |
+| **Release Windows** | The Windows x64 alpha zip. |
+| **Release Linux** | The Linux x86-64 alpha `.tar.gz` (glibc 2.39+). |
+| **Release Android** | The app bundle for Google Play and an APK to install directly, both signed with the upload key. The bundle goes to a Play track (`-f track=internal\|alpha\|beta\|production\|none`). |
+| **Play Store Metadata** | The Play listing's text and images from `fastlane/metadata/android`. |
+| **TestFlight External** | Gives an uploaded build to the External group. |
 
-- **Release iOS**: TestFlight (then the External group and Beta App Review once processed), the
-  tag and a GitHub Release.
-- **Release Windows**: the Windows x64 alpha zip.
-- **Release Linux**: the Linux x86-64 alpha `.tar.gz` (glibc 2.39+).
-- **Release macOS**: `Un.app` (Apple silicon), signed with Developer ID and notarised.
-- **Release Android**: the app bundle, signed with the upload key, attached to the release and
-  uploaded to a Google Play track (`-f track=internal|alpha|beta|production|none`).
+macOS, Windows, Linux and Android also take an existing tag (`-f tag=v0.1.9`). They build that
+tag and attach the result to its release.
 
-Windows, Linux, macOS and Android take an existing tag too (`-f tag=v0.1.9`): that tag is built and its zip
-(or bundle) attached to the same release.
-- **TestFlight External**: give an uploaded build to the External group by hand.
+The apps ship from this repository with [unmath](https://github.com/sealsbroken/unmath) only. The
+release notes record which unmath commit each build has. The toy detector comes from the
+`models-v1` release.
 
-The app ships from this repository with [unmath](https://github.com/sealsbroken/unmath) only;
-the toy detector is the `models-v1` release. Secrets: `ASC_KEY_ID`, `ASC_ISSUER_ID`,
-`ASC_KEY_CONTENT` (sealsbroken organisation, App Store Connect API key) for iOS and macOS
-notarisation; `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD` (the Developer ID Application certificate);
-`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
-(the Play upload key) and `PLAY_SERVICE_ACCOUNT_JSON` (Google Play; the upload is skipped
-without it).
+Secrets:
+
+| Secret | For |
+|---|---|
+| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT` | The App Store Connect API key (sealsbroken organisation): iOS and macOS notarisation. |
+| `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD` | The Developer ID Application certificate. |
+| `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` | The Play upload key. |
+| `PLAY_SERVICE_ACCOUNT_JSON` | Google Play uploads and metadata. Without it, the Play upload is skipped. |
 
 ## Licence
 
-LGPL-3.0-or-later (`LICENSE`, with the GPL text it refers to in `LICENSE.GPL`). Third-party
-components: ONNX Runtime, `ort`, egui, nokhwa, cpal (MIT/Apache-2.0); sherpa-onnx, the
-Zipformer models (Apache-2.0); Whisper and Silero VAD (MIT); the Piper voices' training data has its own terms (Irina's, from
-RHVoice, is marked "Unknown" in its model card; check before shipping it);
+LGPL-3.0-or-later (`LICENSE`, with the GPL text it refers to in `LICENSE.GPL`).
+
+Third-party components:
+
+- ONNX Runtime, `ort`, egui, nokhwa, cpal: MIT/Apache-2.0.
+- sherpa-onnx and the Zipformer models: Apache-2.0.
+- Whisper and Silero VAD: MIT.
+- The Piper voices: their training data has its own terms. Irina's (from RHVoice) is marked
+  "Unknown" in its model card; check it before shipping it.
 
 The toy detector (`models/toys.onnx`) is not in this repository. Built with `tools/label.py` and
-`tools/train_detector.py` it is Apache-2.0 work: RF-DETR (Roboflow; code and the nano weights
-Apache-2.0), labelled by OWLv2 (Google, Apache-2.0) via Hugging Face Transformers (Apache-2.0).
-Photos from Open Images carry CC BY 2.0 (images) and CC BY 4.0 (annotations): credit them where the
-model is distributed. Models exported or trained with Ultralytics (`tools/export_detector.py`,
-`tools/teach.py`, YOLOE) are AGPL-3.0 instead, and a program shipped with one is a combined work
-under the AGPL; do not ship them in a closed or App Store product.
+`tools/train_detector.py`, it is Apache-2.0 work:
+
+- RF-DETR (Roboflow): the code and the nano weights are Apache-2.0.
+- OWLv2 (Google, Apache-2.0) labels the photos, via Hugging Face Transformers (Apache-2.0).
+- Open Images photos carry CC BY 2.0 (images) and CC BY 4.0 (annotations). Credit them wherever
+  the model is distributed.
+
+An app built on the detector can stay closed or go to the App Store.
 
 The desktop voice is not LGPL-compatible for closed products. The prebuilt sherpa-onnx library
-(`sherpa-onnx-c-api`, used by `un-speech` for Piper voices) contains espeak-ng, which is GPL-3.0:
-an app shipped with it is a combined work under the GPL, lessons included. The mobile libraries
-leave `un-speech` out and use the platform's speech, so they are not affected. A closed desktop
-product needs the system voice instead of Piper, or the voice in a separate GPL process.
+(`sherpa-onnx-c-api`, used by `un-speech` for the Piper voices) contains espeak-ng, which is
+GPL-3.0, so a desktop app shipped with it is a combined work under the GPL, lessons included. A
+closed desktop product needs the system voice instead of Piper, or the voice in a separate GPL
+process. The mobile libraries leave `un-speech` out and use the platform's speech, so they are
+not affected.

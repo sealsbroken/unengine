@@ -12,13 +12,13 @@ use crate::paths::ModelPaths;
 pub enum PerceptionError {
     #[error("{0}")]
     Vision(#[from] VisionError),
-    #[error("detector not found: {0}. Build one with tools/export_detector.py")]
+    #[error("detector not found: {0}. Build one with tools/label.py and tools/train_detector.py")]
     NoDetector(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct PerceptionConfig {
-    /// Detector name (`toys`, or one taught with tools/teach.py) or a path to an `.onnx`.
+    /// Detector name (`toys`, or one trained with tools/train_detector.py) or a path to an `.onnx`.
     pub detector: String,
     pub confidence: f32,
     pub provider: Provider,

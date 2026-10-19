@@ -1,6 +1,6 @@
 //! Object detector: an exported ONNX model, letterboxed input, decoded raw head, class-agnostic NMS.
 //!
-//! The `.json` sidecar next to the model (written by `tools/export_detector.py`) holds
+//! The `.json` sidecar next to the model (written by `tools/train_detector.py`) holds
 //! `labels` (one per class), `imgsz` (`[height, width]`) and optionally `head`.
 
 use std::path::{Path, PathBuf};

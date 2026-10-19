@@ -10,7 +10,7 @@ Sources (all Apache-2.0 / MIT):
   recognisers: sherpa-onnx Zipformer transducers (k2-fsa) and Silero VAD
   voices:      Piper voices packaged for sherpa-onnx (with espeak-ng-data), from the sherpa-onnx tts-models release
 
-The object detector is produced by tools/export_detector.py (it needs training weights).
+The toy detector is not downloaded: build it with tools/label.py and tools/train_detector.py.
 """
 
 from __future__ import annotations

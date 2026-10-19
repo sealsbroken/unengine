@@ -16,7 +16,7 @@
 //! ```
 //!
 //! A product that adds proprietary strategies links this crate plus the strategy crates into its
-//! own `cdylib`/`staticlib` (see the `unmethod` repository's `apps/mobile`); the strategies register
+//! own `cdylib`/`staticlib` (see `apps/mobile`, which links the unmath lessons); the strategies register
 //! themselves at link time.
 
 use std::collections::HashMap;
@@ -98,7 +98,7 @@ static REGISTRATIONS: Mutex<Vec<Registration>> = Mutex::new(Vec::new());
 ///
 /// Strategies also register themselves at link time, but a static library only keeps the
 /// objects something refers to, so a product library calls this from a function the app
-/// calls at startup (`unmethod_mobile_init`, say). Registering twice is harmless.
+/// calls at startup (`un_mobile_init` in `apps/mobile`). Registering twice is harmless.
 pub fn add_strategies(register: Registration) {
     let mut registrations = REGISTRATIONS.lock();
     if !registrations.contains(&register) {
