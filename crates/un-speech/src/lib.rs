@@ -30,11 +30,12 @@ use un_engine::SpeechError;
 
 pub const SAMPLE_RATE: u32 = 16_000;
 
-/// What `check_speech` says, per language: a number the lesson would accept.
+/// A short sentence gives the recogniser context; isolated "three" can sound like "read".
+/// Each phrase contains exactly one number the lesson would accept.
 pub fn check_phrase(language: Language) -> &'static str {
     match language {
-        Language::English => "three",
-        Language::Russian => "три",
+        Language::English => "There are three toys on the table.",
+        Language::Russian => "На столе три игрушки.",
     }
 }
 
@@ -54,8 +55,8 @@ pub fn check(models: &SpeechModels, language: Language) -> Result<(String, Strin
     Ok((said.to_string(), heard))
 }
 
-/// `check` plus the verdict: did the recogniser hear a three? The voice is random (VITS noise), and
-/// a lone word is sometimes misheard ("three" as "read"), so it gets three tries.
+/// `check` plus the verdict: did the recogniser hear a three? Synthesis is stochastic
+/// (VITS noise), so allow three round trips while still requiring a recognised number.
 pub fn check_ok(models: &SpeechModels, language: Language) -> Result<(String, String, bool), SpeechError> {
     let mut last = check(models, language)?;
     for _ in 0..2 {
