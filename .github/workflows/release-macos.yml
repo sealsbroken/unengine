@@ -74,6 +74,11 @@ jobs:
           path: unmath
 
       - uses: dtolnay/rust-toolchain@stable
+      - name: Record and test the lessons
+        run: |
+          echo "UNMATH=$(git -C unmath rev-parse HEAD)" >> "$GITHUB_ENV"
+          cargo test --manifest-path unmath/Cargo.toml
+
       # No build cache: a restored target dir once left ort-sys linking a missing cargs.lib.
       - name: Build
         run: cargo build --release --manifest-path unengine/apps/un/Cargo.toml
@@ -258,7 +263,7 @@ jobs:
           gh release upload "$TAG" "$zip" --clobber
           # The macOS line of the notes, replacing an older one (a re-run).
           gh release view "$TAG" --json body --jq .body | grep -v '^\*\*macOS (alpha)\*\*' > notes.md || true
-          printf '\n**macOS (alpha)**: Un-%s-macos-arm64-alpha.zip, Apple silicon, built and smoke-tested on a GitHub runner, Un.app signed with Developer ID and notarised (see its README).\n' "$VERSION" >> notes.md
+          printf '\n**macOS (alpha)**: Un-%s-macos-arm64-alpha.zip, Apple silicon, built and smoke-tested on a GitHub runner, Un.app signed with Developer ID and notarised (see its README), with sealsbroken/unmath@%s.\n' "$VERSION" "$UNMATH" >> notes.md
           gh release edit "$TAG" --notes-file notes.md
 
       - name: Remove the signing keychain
