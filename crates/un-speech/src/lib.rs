@@ -30,12 +30,12 @@ use un_engine::SpeechError;
 
 pub const SAMPLE_RATE: u32 = 16_000;
 
-/// A short sentence gives the recogniser context; isolated "three" can sound like "read".
-/// Each phrase contains exactly one number the lesson would accept.
+/// A count gives the recogniser context, with pauses between words. Isolated "three"
+/// can sound like "read", and a number in connected Russian speech can merge with a noun.
 pub fn check_phrase(language: Language) -> &'static str {
     match language {
-        Language::English => "There are three toys on the table.",
-        Language::Russian => "На столе три игрушки.",
+        Language::English => "One. Two. Three.",
+        Language::Russian => "Один. Два. Три.",
     }
 }
 
