@@ -242,11 +242,15 @@ platform :mac do
     PLIST
 
     begin
+      # Hosted runners have no reusable development key. Ad-hoc sign the temporary
+      # archive (as Xcode Cloud does), retaining its sandbox entitlements; export
+      # below applies the real App Store signature with cloud-managed certificates.
       sh("xcodebuild", "-project", PROJECT, "-scheme", "UnMac", "-configuration", "Release",
          "-destination", "generic/platform=macOS", "-archivePath", archive, *auth,
          "MARKETING_VERSION=#{ENV.fetch('MARKETING_VERSION')}",
          "CURRENT_PROJECT_VERSION=#{ENV.fetch('CURRENT_PROJECT_VERSION')}",
-         "DEVELOPMENT_TEAM=#{TEAM_ID}", "CODE_SIGN_STYLE=Automatic", "COMPILER_INDEX_STORE_ENABLE=NO",
+         "DEVELOPMENT_TEAM=#{TEAM_ID}", "CODE_SIGN_STYLE=Automatic", "CODE_SIGN_IDENTITY=-",
+         "AD_HOC_CODE_SIGNING_ALLOWED=YES", "COMPILER_INDEX_STORE_ENABLE=NO",
          "archive", "-quiet")
       sh("xcodebuild", "-exportArchive", "-archivePath", archive, "-exportOptionsPlist", options,
          "-exportPath", File.dirname(archive), *auth)
