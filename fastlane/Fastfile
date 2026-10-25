@@ -34,32 +34,38 @@ platform :ios do
     File.chmod(0o600, key_path)
     auth = [
       "-allowProvisioningUpdates",
-      "-authenticationKeyPath #{key_path}",
-      "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')}",
-      "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')}"
-    ].join(" ")
+      "-authenticationKeyPath", key_path,
+      "-authenticationKeyID", ENV.fetch("ASC_KEY_ID"),
+      "-authenticationKeyIssuerID", ENV.fetch("ASC_ISSUER_ID")
+    ]
+    archive = File.expand_path("../build/ios/Un.xcarchive", __dir__)
+    options = File.expand_path("../build/ios/ExportOptions.plist", __dir__)
+    FileUtils.mkdir_p(File.dirname(options))
+    File.write(options, <<~PLIST)
+      <?xml version="1.0" encoding="UTF-8"?>
+      <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+      <plist version="1.0">
+      <dict>
+        <key>method</key><string>app-store-connect</string>
+        <key>signingStyle</key><string>automatic</string>
+        <key>teamID</key><string>#{TEAM_ID}</string>
+        <key>manageAppVersionAndBuildNumber</key><false/>
+      </dict>
+      </plist>
+    PLIST
 
     begin
-      gym(
-        project: PROJECT,
-        scheme: "UnApp",
-        configuration: "Release",
-        destination: "generic/platform=iOS",
-        export_method: "app-store",
-        archive_path: "build/ios/Un.xcarchive",
-        export_options: { signingStyle: "automatic", teamID: TEAM_ID },
-        xcargs: [
-          auth,
-          "MARKETING_VERSION=#{ENV.fetch('MARKETING_VERSION')}",
-          "CURRENT_PROJECT_VERSION=#{ENV.fetch('CURRENT_PROJECT_VERSION')}",
-          "DEVELOPMENT_TEAM=#{TEAM_ID}",
-          "CODE_SIGN_STYLE=Automatic",
-          "COMPILER_INDEX_STORE_ENABLE=NO"
-        ].join(" "),
-        # gym passes `xcargs` to the export too: the key reaches -exportArchive without a second copy.
-        output_directory: "build/ios",
-        output_name: "Un.ipa"
-      )
+      # Hosted runners have no reusable development key, and each one Xcode would make counts
+      # against the account's certificate limit: archive unsigned (the app has no entitlements);
+      # the export signs it for the App Store with the cloud-managed distribution certificate.
+      sh("xcodebuild", "-project", PROJECT, "-scheme", "UnApp", "-configuration", "Release",
+         "-destination", "generic/platform=iOS", "-archivePath", archive,
+         "MARKETING_VERSION=#{ENV.fetch('MARKETING_VERSION')}",
+         "CURRENT_PROJECT_VERSION=#{ENV.fetch('CURRENT_PROJECT_VERSION')}",
+         "DEVELOPMENT_TEAM=#{TEAM_ID}", "CODE_SIGNING_ALLOWED=NO", "COMPILER_INDEX_STORE_ENABLE=NO",
+         "archive", "-quiet")
+      sh("xcodebuild", "-exportArchive", "-archivePath", archive, "-exportOptionsPlist", options,
+         "-exportPath", File.dirname(archive), *auth)
     ensure
       File.delete(key_path) if File.exist?(key_path)
     end
