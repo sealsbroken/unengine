@@ -159,7 +159,7 @@ data class LessonMeta(val number: Int, val title: String, val skill: String) {
     companion object {
         private val table = listOf(
             listOf("Three passengers", "Три пассажира", "Counting to 3", "Счёт до 3"),
-            listOf("Picnic baskets", "Корзинки для пикника", "Adding to 5", "Сложение до 5"),
+            listOf("The bus", "Автобус", "Adding to 5", "Сложение до 5"),
             listOf("Cave train", "Поезд в пещере", "Taking away", "Вычитание"),
             listOf("Bridge builders", "Строители мостов", "Comparing", "Сравнение"),
             listOf("Parcel detectives", "Детективы посылок", "Numbers and amounts", "Число и количество"),

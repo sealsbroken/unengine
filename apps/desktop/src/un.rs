@@ -297,7 +297,7 @@ pub struct LessonMeta {
 
 const LESSONS: [(&str, &str, &str, &str); 10] = [
     ("Three passengers", "Три пассажира", "Counting to 3", "Счёт до 3"),
-    ("Picnic baskets", "Корзинки для пикника", "Adding to 5", "Сложение до 5"),
+    ("The bus", "Автобус", "Adding to 5", "Сложение до 5"),
     ("Cave train", "Поезд в пещере", "Taking away", "Вычитание"),
     ("Bridge builders", "Строители мостов", "Comparing", "Сравнение"),
     ("Parcel detectives", "Детективы посылок", "Numbers and amounts", "Число и количество"),
