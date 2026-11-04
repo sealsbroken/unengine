@@ -631,6 +631,9 @@ impl Inner {
     /// `barge`: the child spoke over the tutor. When the strategy answers it, the line being
     /// said stops and the lines and listens queued before are dropped.
     fn dispatch_from(&self, event: Event, barge: bool) {
+        // Assigned inside the lock block below, on every path that reaches the use: the early
+        // returns leave the function, so the compiler sees it as initialised.
+        let step;
         let queued: Vec<Effect> = {
             let mut state = self.state.lock();
             if state.closed {
@@ -646,6 +649,9 @@ impl Inner {
                 }
                 state.table_seen = Some(observation);
             }
+            // The lesson's own name for the step the event lands on, so a log says where the
+            // child was (Comments_2.3, point 9: node_id on every transition).
+            step = state.strategy.snapshot().task;
             let mut effects = state.strategy.handle(event);
             // Replay pre-start perception under the same strategy lock, so a
             // concurrent newer table cannot be overwritten by an older replay.
@@ -682,6 +688,9 @@ impl Inner {
             }
             queued
         };
+        if let Some(step) = step {
+            self.log(&format!("step: {step}"));
+        }
         let batch = self.batch.fetch_add(1, Ordering::SeqCst) + 1;
         let interrupt = barge && !queued.is_empty();
         if interrupt {
