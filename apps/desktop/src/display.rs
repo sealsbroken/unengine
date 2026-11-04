@@ -17,8 +17,16 @@ pub fn event_loop_hook() -> Option<eframe::EventLoopBuilderHook> {
     let wayland = set("WAYLAND_DISPLAY") || set("WAYLAND_SOCKET");
     let x11 = set("DISPLAY");
     match std::env::var("UN_DISPLAY").as_deref() {
-        Ok("x11") => return Some(Box::new(|builder| { builder.with_x11(); })),
-        Ok("wayland") => return Some(Box::new(|builder| { builder.with_wayland(); })),
+        Ok("x11") => {
+            return Some(Box::new(|builder| {
+                builder.with_x11();
+            }))
+        }
+        Ok("wayland") => {
+            return Some(Box::new(|builder| {
+                builder.with_wayland();
+            }))
+        }
         _ => {}
     }
     if !wayland || loads("libwayland-client.so.0") {
@@ -26,7 +34,9 @@ pub fn event_loop_hook() -> Option<eframe::EventLoopBuilderHook> {
     }
     if x11 {
         log::warn!("the Wayland client library (libwayland-client.so.0) is missing: the window opens on X11");
-        return Some(Box::new(|builder| { builder.with_x11(); }));
+        return Some(Box::new(|builder| {
+            builder.with_x11();
+        }));
     }
     eprintln!(
         "Un needs the Wayland client library for its window: install libwayland-client0 \

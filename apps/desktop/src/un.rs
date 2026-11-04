@@ -6,8 +6,8 @@ use std::f32::consts::PI;
 use std::sync::Arc;
 
 use egui::{
-    Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Pos2, Rect, Response, Sense, Shape,
-    Stroke, StrokeKind, Ui, Vec2,
+    Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Pos2, Rect, Response, Sense, Shape, Stroke,
+    StrokeKind, Ui, Vec2,
 };
 use un_core::Language;
 
@@ -115,22 +115,34 @@ pub fn install_fonts(ctx: &egui::Context) {
         chain.extend(defaults.clone());
         fonts.families.insert(FontFamily::Name(name.into()), chain);
     };
-    family("inter-400", [
-        ("inter-400-latin", include_bytes!("../fonts/inter-400-latin.ttf")),
-        ("inter-400-cyrillic", include_bytes!("../fonts/inter-400-cyrillic.ttf")),
-    ]);
-    family("inter-600", [
-        ("inter-600-latin", include_bytes!("../fonts/inter-600-latin.ttf")),
-        ("inter-600-cyrillic", include_bytes!("../fonts/inter-600-cyrillic.ttf")),
-    ]);
-    family("inter-700", [
-        ("inter-700-latin", include_bytes!("../fonts/inter-700-latin.ttf")),
-        ("inter-700-cyrillic", include_bytes!("../fonts/inter-700-cyrillic.ttf")),
-    ]);
-    family("nunito-900", [
-        ("nunito-900-latin", include_bytes!("../fonts/nunito-900-latin.ttf")),
-        ("nunito-900-cyrillic", include_bytes!("../fonts/nunito-900-cyrillic.ttf")),
-    ]);
+    family(
+        "inter-400",
+        [
+            ("inter-400-latin", include_bytes!("../fonts/inter-400-latin.ttf")),
+            ("inter-400-cyrillic", include_bytes!("../fonts/inter-400-cyrillic.ttf")),
+        ],
+    );
+    family(
+        "inter-600",
+        [
+            ("inter-600-latin", include_bytes!("../fonts/inter-600-latin.ttf")),
+            ("inter-600-cyrillic", include_bytes!("../fonts/inter-600-cyrillic.ttf")),
+        ],
+    );
+    family(
+        "inter-700",
+        [
+            ("inter-700-latin", include_bytes!("../fonts/inter-700-latin.ttf")),
+            ("inter-700-cyrillic", include_bytes!("../fonts/inter-700-cyrillic.ttf")),
+        ],
+    );
+    family(
+        "nunito-900",
+        [
+            ("nunito-900-latin", include_bytes!("../fonts/nunito-900-latin.ttf")),
+            ("nunito-900-cyrillic", include_bytes!("../fonts/nunito-900-cyrillic.ttf")),
+        ],
+    );
     // Plain proportional text (egui's own widgets) in Inter too.
     let mut body = vec!["inter-400-latin".to_string(), "inter-400-cyrillic".to_string()];
     body.extend(defaults);
@@ -500,12 +512,8 @@ pub fn focus_ring(ui: &Ui, response: &Response, rect: Rect, radius: f32) {
 
 /// A soft drop shadow under `rect`.
 pub fn shadow(painter: &egui::Painter, rect: Rect, radius: f32, dark: bool) {
-    let shadow = egui::Shadow {
-        offset: [0, 10],
-        blur: 30,
-        spread: 0,
-        color: Color32::from_black_alpha(if dark { 110 } else { 40 }),
-    };
+    let shadow =
+        egui::Shadow { offset: [0, 10], blur: 30, spread: 0, color: Color32::from_black_alpha(if dark { 110 } else { 40 }) };
     painter.add(shadow.as_shape(rect, CornerRadius::same(radius as u8)));
 }
 
@@ -570,13 +578,7 @@ pub fn language_switch(ui: &mut Ui, language: &mut Language) -> bool {
         if on {
             ui.painter().rect_filled(rect, 16.0, theme.surface2);
         }
-        ui.painter().text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            label,
-            semibold(13.0),
-            if on { theme.text } else { theme.text2 },
-        );
+        ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, semibold(13.0), if on { theme.text } else { theme.text2 });
         focus_ring(ui, &response, rect, 16.0);
         if response.clicked() && !on {
             *language = lang;

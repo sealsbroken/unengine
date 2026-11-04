@@ -81,10 +81,12 @@ mod linux {
         command.args(args).env("LD_LIBRARY_PATH", joined).env(RESTARTED, "1");
         // The keyboard layouts and the X11 locale data (dead keys), where the system has none at
         // xkbcommon's built-in places.
-        if std::env::var_os("XKB_CONFIG_ROOT").is_none() && !Path::new("/usr/share/X11/xkb").is_dir() && dir.join("xkb").is_dir() {
+        if std::env::var_os("XKB_CONFIG_ROOT").is_none() && !Path::new("/usr/share/X11/xkb").is_dir() && dir.join("xkb").is_dir()
+        {
             command.env("XKB_CONFIG_ROOT", dir.join("xkb"));
         }
-        if std::env::var_os("XLOCALEDIR").is_none() && !Path::new("/usr/share/X11/locale").is_dir() && dir.join("locale").is_dir() {
+        if std::env::var_os("XLOCALEDIR").is_none() && !Path::new("/usr/share/X11/locale").is_dir() && dir.join("locale").is_dir()
+        {
             command.env("XLOCALEDIR", dir.join("locale"));
         }
         if use_gl {

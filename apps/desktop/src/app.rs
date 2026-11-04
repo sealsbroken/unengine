@@ -647,25 +647,34 @@ impl UnApp {
         let left = full.center().x - column / 2.0;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             ui.add_space(20.0);
-            let row = ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_min_size(Pos2::new(left, ui.cursor().top()), Vec2::new(column, 40.0))), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Un").font(rounded(30.0)).color(theme.orange));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if un::circle_button(ui, Icon::Gear, 38.0, theme.surface2, t(ru, "settings.title")).clicked() {
-                            self.toggle_settings();
-                        }
-                        ui.add_space(8.0);
-                        let mut language = self.setup.language;
-                        if un::language_switch(ui, &mut language) {
-                            self.set_language(language);
-                        }
+            let row = ui.scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(Pos2::new(left, ui.cursor().top()), Vec2::new(column, 40.0))),
+                |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Un").font(rounded(30.0)).color(theme.orange));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if un::circle_button(ui, Icon::Gear, 38.0, theme.surface2, t(ru, "settings.title")).clicked() {
+                                self.toggle_settings();
+                            }
+                            ui.add_space(8.0);
+                            let mut language = self.setup.language;
+                            if un::language_switch(ui, &mut language) {
+                                self.set_language(language);
+                            }
+                        });
                     });
-                });
-            });
+                },
+            );
             let _ = row;
             ui.add_space(14.0);
             let title_rect = ui.allocate_space(Vec2::new(full.width(), 44.0)).1;
-            ui.painter().text(Pos2::new(left, title_rect.center().y), Align2::LEFT_CENTER, t(ru, "children.title"), bold(34.0), theme.text);
+            ui.painter().text(
+                Pos2::new(left, title_rect.center().y),
+                Align2::LEFT_CENTER,
+                t(ru, "children.title"),
+                bold(34.0),
+                theme.text,
+            );
             ui.add_space(14.0);
             self.status_card(ui, left, column);
             let children: Vec<Profile> = self.profiles.list().to_vec();
@@ -693,7 +702,13 @@ impl UnApp {
                     overlay::dashed_rounded(ui.painter(), r.shrink(1.0), 14.0, theme.text3);
                     ui.painter().circle_filled(r.center() - Vec2::new(0.0, 16.0), 24.0, theme.blue.gamma_multiply(0.14));
                     icon(ui.painter(), Icon::Plus, r.center() - Vec2::new(0.0, 16.0), 22.0, theme.blue);
-                    ui.painter().text(r.center() + Vec2::new(0.0, 26.0), Align2::CENTER_CENTER, t(ru, "children.add"), semibold(16.0), theme.blue);
+                    ui.painter().text(
+                        r.center() + Vec2::new(0.0, 26.0),
+                        Align2::CENTER_CENTER,
+                        t(ru, "children.add"),
+                        semibold(16.0),
+                        theme.blue,
+                    );
                     un::focus_ring(ui, &response, r, 14.0);
                     if response.clicked() {
                         self.adding = Some(String::new());
@@ -739,7 +754,13 @@ impl UnApp {
         painter.circle_filled(avatar, 22.0, accent.gamma_multiply(0.16));
         let initial: String = child.name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
         painter.text(avatar, Align2::CENTER_CENTER, initial, rounded(22.0), accent);
-        painter.text(Pos2::new(head.left() + 56.0, head.top() + 13.0), Align2::LEFT_CENTER, &child.name, semibold(22.0), theme.text);
+        painter.text(
+            Pos2::new(head.left() + 56.0, head.top() + 13.0),
+            Align2::LEFT_CENTER,
+            &child.name,
+            semibold(22.0),
+            theme.text,
+        );
         painter.text(
             Pos2::new(head.left() + 56.0, head.top() + 35.0),
             Align2::LEFT_CENTER,
@@ -756,7 +777,11 @@ impl UnApp {
         // "…": a menu with Open adventures / Remove….
         let more = Rect::from_center_size(Pos2::new(r.right() - 34.0, head.center().y), Vec2::splat(36.0));
         let more_response = ui.interact(more, Id::new(("more", &child.id)), Sense::click());
-        painter.circle_filled(more.center(), 18.0, if more_response.hovered() { theme.surface3.gamma_multiply(1.2) } else { theme.surface3 });
+        painter.circle_filled(
+            more.center(),
+            18.0,
+            if more_response.hovered() { theme.surface3.gamma_multiply(1.2) } else { theme.surface3 },
+        );
         icon(&painter, Icon::Ellipsis, more.center(), 18.0, theme.text2);
         un::focus_ring(ui, &more_response, more, 18.0);
         if more_response.clicked() {
@@ -783,15 +808,27 @@ impl UnApp {
             let y = seg_top + 6.0 + 12.0 + 11.0;
             let dot = Pos2::new(r.left() + 16.0 + 11.0, y);
             painter.circle_filled(dot, 11.0, if paused { theme.orange } else { accent.gamma_multiply(0.16) });
-            painter.text(dot, Align2::CENTER_CENTER, meta.number.to_string(), rounded(12.0), if paused { Color32::WHITE } else { accent });
+            painter.text(
+                dot,
+                Align2::CENTER_CENTER,
+                meta.number.to_string(),
+                rounded(12.0),
+                if paused { Color32::WHITE } else { accent },
+            );
             let label = if paused {
                 tf(ru, "children.resume", &[("lesson", &meta.title)])
             } else {
                 tf(ru, "children.next", &[("lesson", &meta.title)])
             };
             painter.text(Pos2::new(dot.x + 19.0, y), Align2::LEFT_CENTER, label, semibold(15.0), theme.text);
-            let button = Rect::from_min_size(Pos2::new(r.left() + 16.0, r.bottom() - 16.0 - 50.0), Vec2::new(r.width() - 32.0, 50.0));
-            let clicked = ui.scope_builder(egui::UiBuilder::new().max_rect(button), |ui| un::primary_button(ui, t(ru, "children.cont"), button.width(), None)).inner.clicked();
+            let button =
+                Rect::from_min_size(Pos2::new(r.left() + 16.0, r.bottom() - 16.0 - 50.0), Vec2::new(r.width() - 32.0, 50.0));
+            let clicked = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(button), |ui| {
+                    un::primary_button(ui, t(ru, "children.cont"), button.width(), None)
+                })
+                .inner
+                .clicked();
             if clicked {
                 self.setup.child = Some(child.id.clone());
                 self.start_lesson(Some(child.id.clone()), next);
@@ -808,7 +845,13 @@ impl UnApp {
             return;
         }
         let body = t(ru, if failed { "error.body" } else { "prep.body" });
-        let h = 16.0 + 26.0 + 8.0 + un::text_height(ui, body, regular(15.0), width - 40.0) + 16.0 + if failed { 50.0 + 4.0 } else { 6.0 + 26.0 } + 16.0;
+        let h = 16.0
+            + 26.0
+            + 8.0
+            + un::text_height(ui, body, regular(15.0), width - 40.0)
+            + 16.0
+            + if failed { 50.0 + 4.0 } else { 6.0 + 26.0 }
+            + 16.0;
         let (space, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h + 16.0), Sense::hover());
         let r = Rect::from_min_size(Pos2::new(left, space.top()), Vec2::new(width, h));
         self.status_body(ui, r, &theme, false);
@@ -834,14 +877,31 @@ impl UnApp {
         y += un::text_block(&painter, Pos2::new(r.left() + 20.0, y), body, regular(15.0), theme.text2, r.width() - 40.0) + 12.0;
         if failed {
             let button = Rect::from_min_size(Pos2::new(r.left() + 20.0, y), Vec2::new((r.width() - 40.0).min(320.0), 50.0));
-            let clicked = ui.scope_builder(egui::UiBuilder::new().max_rect(button), |ui| un::primary_button(ui, t(ru, "error.retry"), button.width(), None)).inner.clicked();
+            let clicked = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(button), |ui| {
+                    un::primary_button(ui, t(ru, "error.retry"), button.width(), None)
+                })
+                .inner
+                .clicked();
             if clicked {
                 self.start_camera();
             }
         } else {
             let time = ui.input(|i| i.time);
-            un::shimmer(&painter, Rect::from_min_size(Pos2::new(r.left() + 20.0, y), Vec2::new(r.width() - 40.0, 6.0)), theme, time, self.setup.reduce_motion);
-            painter.text(Pos2::new(r.left() + 20.0, y + 20.0), Align2::LEFT_CENTER, t(ru, "prep.step"), regular(12.5), theme.text2);
+            un::shimmer(
+                &painter,
+                Rect::from_min_size(Pos2::new(r.left() + 20.0, y), Vec2::new(r.width() - 40.0, 6.0)),
+                theme,
+                time,
+                self.setup.reduce_motion,
+            );
+            painter.text(
+                Pos2::new(r.left() + 20.0, y + 20.0),
+                Align2::LEFT_CENTER,
+                t(ru, "prep.step"),
+                regular(12.5),
+                theme.text2,
+            );
             ui.ctx().request_repaint();
         }
     }
@@ -862,7 +922,13 @@ impl UnApp {
         let done = self.lessons.iter().filter(|(id, _)| child.completed.contains(id)).count();
         // Header: "‹ Children", the name and progress, the gear.
         let header = Rect::from_min_size(full.min, Vec2::new(full.width(), 72.0));
-        ui.painter().text(Pos2::new(header.center().x, header.top() + 26.0), Align2::CENTER_CENTER, &child.name, semibold(17.0), theme.text);
+        ui.painter().text(
+            Pos2::new(header.center().x, header.top() + 26.0),
+            Align2::CENTER_CENTER,
+            &child.name,
+            semibold(17.0),
+            theme.text,
+        );
         ui.painter().text(
             Pos2::new(header.center().x, header.top() + 46.0),
             Align2::CENTER_CENTER,
@@ -871,17 +937,20 @@ impl UnApp {
             theme.text2,
         );
         let back = ui
-            .scope_builder(egui::UiBuilder::new().max_rect(Rect::from_min_size(header.min + Vec2::new(24.0, 16.0), Vec2::new(200.0, 40.0))), |ui| {
-                un::pill_button(ui, Some(Icon::ChevronLeft), t(ru, "cur.back"), theme.surface2, theme.text)
-            })
+            .scope_builder(
+                egui::UiBuilder::new().max_rect(Rect::from_min_size(header.min + Vec2::new(24.0, 16.0), Vec2::new(200.0, 40.0))),
+                |ui| un::pill_button(ui, Some(Icon::ChevronLeft), t(ru, "cur.back"), theme.surface2, theme.text),
+            )
             .inner;
         if back.clicked() {
             self.screen = Screen::Children;
         }
         let gear = ui
-            .scope_builder(egui::UiBuilder::new().max_rect(Rect::from_min_size(Pos2::new(header.right() - 62.0, header.top() + 17.0), Vec2::splat(38.0))), |ui| {
-                un::circle_button(ui, Icon::Gear, 38.0, theme.surface2, t(ru, "settings.title"))
-            })
+            .scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(Rect::from_min_size(Pos2::new(header.right() - 62.0, header.top() + 17.0), Vec2::splat(38.0))),
+                |ui| un::circle_button(ui, Icon::Gear, 38.0, theme.surface2, t(ru, "settings.title")),
+            )
             .inner;
         if gear.clicked() {
             self.toggle_settings();
@@ -901,9 +970,20 @@ impl UnApp {
                     let hero = Rect::from_min_size(Pos2::new(left, space.top()), Vec2::new(column, 96.0));
                     let response = ui.interact(hero, Id::new("hero"), Sense::click());
                     un::card(ui.painter(), hero, &theme, 14.0, false);
-                    lesson_art(ui.painter(), Rect::from_min_size(hero.min + Vec2::new(16.0, 16.0), Vec2::splat(64.0)), meta.number, &theme);
+                    lesson_art(
+                        ui.painter(),
+                        Rect::from_min_size(hero.min + Vec2::new(16.0, 16.0), Vec2::splat(64.0)),
+                        meta.number,
+                        &theme,
+                    );
                     let x = hero.left() + 96.0;
-                    ui.painter().text(Pos2::new(x, hero.top() + 26.0), Align2::LEFT_CENTER, t(ru, if paused { "cur.pausedLabel" } else { "cur.nextLabel" }).to_uppercase(), semibold(12.0), theme.text2);
+                    ui.painter().text(
+                        Pos2::new(x, hero.top() + 26.0),
+                        Align2::LEFT_CENTER,
+                        t(ru, if paused { "cur.pausedLabel" } else { "cur.nextLabel" }).to_uppercase(),
+                        semibold(12.0),
+                        theme.text2,
+                    );
                     ui.painter().text(Pos2::new(x, hero.top() + 50.0), Align2::LEFT_CENTER, &meta.title, bold(22.0), theme.text);
                     ui.painter().text(
                         Pos2::new(x, hero.top() + 74.0),
@@ -927,7 +1007,13 @@ impl UnApp {
         let bar = Rect::from_min_max(Pos2::new(full.left(), full.bottom() - bar_h), full.max);
         ui.painter().rect_filled(bar, 0.0, theme.surface);
         ui.painter().line_segment([bar.left_top(), bar.right_top()], Stroke::new(1.0, theme.hairline_strong));
-        ui.painter().text(Pos2::new(bar.center().x, bar.top() + 22.0), Align2::CENTER_CENTER, t(ru, "cur.hint"), regular(12.5), theme.text2);
+        ui.painter().text(
+            Pos2::new(bar.center().x, bar.top() + 22.0),
+            Align2::CENTER_CENTER,
+            t(ru, "cur.hint"),
+            regular(12.5),
+            theme.text2,
+        );
         if let Some(next) = &next {
             let meta = LessonMeta::of(next, &self.lessons, ru);
             let w = 450.0f32.min(bar.width() - 48.0);
@@ -996,7 +1082,11 @@ impl UnApp {
             let response = ui.interact(hit, Id::new(("node", id)), Sense::click());
             if (state == 1 || state == 2) && !self.setup.reduce_motion {
                 let phase = (time % 1.8 / 1.8) as f32;
-                painter.circle_stroke(c, 36.0 + phase * 16.0, Stroke::new(10.0 * (1.0 - phase), theme.orange.gamma_multiply(0.5 * (1.0 - phase))));
+                painter.circle_stroke(
+                    c,
+                    36.0 + phase * 16.0,
+                    Stroke::new(10.0 * (1.0 - phase), theme.orange.gamma_multiply(0.5 * (1.0 - phase))),
+                );
                 ui.ctx().request_repaint();
             }
             match state {
@@ -1088,7 +1178,8 @@ impl UnApp {
             }
             // Under the lesson chip, clear of the tutor panel: the picture is not real.
             let galley = painter.layout_no_wrap(t(ru, "lesson.sim").to_string(), semibold(13.0), Color32::BLACK);
-            let chip = Rect::from_min_size(Pos2::new(area.left() + 16.0, area.top() + 72.0), Vec2::new(galley.size().x + 28.0, 30.0));
+            let chip =
+                Rect::from_min_size(Pos2::new(area.left() + 16.0, area.top() + 72.0), Vec2::new(galley.size().x + 28.0, 30.0));
             painter.rect_filled(chip, 15.0, crate::un::overlay_colors::BADGE_LIT);
             painter.galley(chip.center() - galley.size() / 2.0, galley, Color32::BLACK);
         }
@@ -1118,10 +1209,19 @@ impl UnApp {
             let chip = Rect::from_min_size(area.min + Vec2::new(16.0 + 52.0, 16.0), Vec2::new(galley.size().x + 56.0, 44.0));
             un::card(&painter, chip, &theme, 22.0, true);
             painter.circle_filled(Pos2::new(chip.left() + 22.0, chip.center().y), 13.0, theme.orange);
-            painter.text(Pos2::new(chip.left() + 22.0, chip.center().y), Align2::CENTER_CENTER, meta.number.to_string(), rounded(14.0), Color32::WHITE);
+            painter.text(
+                Pos2::new(chip.left() + 22.0, chip.center().y),
+                Align2::CENTER_CENTER,
+                meta.number.to_string(),
+                rounded(14.0),
+                Color32::WHITE,
+            );
             painter.galley(Pos2::new(chip.left() + 42.0, chip.center().y - galley.size().y / 2.0), galley, theme.text);
         }
-        let bar = Rect::from_min_size(Pos2::new(area.right() - 16.0 - 5.0 * 44.0 - 8.0, area.top() + 16.0), Vec2::new(5.0 * 44.0 + 8.0, 44.0));
+        let bar = Rect::from_min_size(
+            Pos2::new(area.right() - 16.0 - 5.0 * 44.0 - 8.0, area.top() + 16.0),
+            Vec2::new(5.0 * 44.0 + 8.0, 44.0),
+        );
         un::card(&painter, bar, &theme, 22.0, true);
         let tools = [
             (Icon::Pause, if paused { "lesson.resume" } else { "lesson.pause" }, "P"),
@@ -1170,8 +1270,16 @@ impl UnApp {
             self.paused_card(ui, area, &theme);
         } else if self.preparing() || self.error.is_some() {
             let body = t(ru, if self.error.is_some() { "error.body" } else { "prep.body" });
-            let h = 18.0 + 34.0 + un::text_height(ui, body, regular(15.0), panel_w - 40.0) + 12.0 + if self.error.is_some() { 54.0 } else { 34.0 } + 16.0;
-            let r = Rect::from_min_size(Pos2::new(area.center().x - panel_w / 2.0, picture.bottom().min(area.bottom()) - 16.0 - h), Vec2::new(panel_w, h));
+            let h = 18.0
+                + 34.0
+                + un::text_height(ui, body, regular(15.0), panel_w - 40.0)
+                + 12.0
+                + if self.error.is_some() { 54.0 } else { 34.0 }
+                + 16.0;
+            let r = Rect::from_min_size(
+                Pos2::new(area.center().x - panel_w / 2.0, picture.bottom().min(area.bottom()) - 16.0 - h),
+                Vec2::new(panel_w, h),
+            );
             self.status_body(ui, r, &theme, true);
         } else if let Some(snapshot) = self.snapshot.clone() {
             let top = self.tutor_panel(ui, &snapshot, state, area, picture, panel_w, &theme);
@@ -1192,12 +1300,31 @@ impl UnApp {
         ];
         let widths: Vec<f32> = hints
             .iter()
-            .map(|(k, v)| painter.layout_no_wrap(k.to_string(), semibold(11.5), Color32::WHITE).size().x + 12.0 + 8.0 + painter.layout_no_wrap(v.to_string(), regular(12.5), Color32::WHITE).size().x + 28.0)
+            .map(|(k, v)| {
+                painter.layout_no_wrap(k.to_string(), semibold(11.5), Color32::WHITE).size().x
+                    + 12.0
+                    + 8.0
+                    + painter.layout_no_wrap(v.to_string(), regular(12.5), Color32::WHITE).size().x
+                    + 28.0
+            })
             .collect();
         let mut x = strip.center().x - widths.iter().sum::<f32>() / 2.0;
         for (i, (k, v)) in hints.iter().enumerate() {
-            let w = un::key_cap(&painter, Pos2::new(x, strip.center().y), k, Color32::from_white_alpha(14), Color32::from_white_alpha(46), Color32::WHITE);
-            painter.text(Pos2::new(x + w + 8.0, strip.center().y), Align2::LEFT_CENTER, *v, regular(12.5), Color32::from_white_alpha(180));
+            let w = un::key_cap(
+                &painter,
+                Pos2::new(x, strip.center().y),
+                k,
+                Color32::from_white_alpha(14),
+                Color32::from_white_alpha(46),
+                Color32::WHITE,
+            );
+            painter.text(
+                Pos2::new(x + w + 8.0, strip.center().y),
+                Align2::LEFT_CENTER,
+                *v,
+                regular(12.5),
+                Color32::from_white_alpha(180),
+            );
             x += widths[i];
         }
         if let Some(end) = end {
@@ -1215,7 +1342,16 @@ impl UnApp {
     /// The tutor panel: the orb, the state label (with mic bars), the tutor's line (it wraps and
     /// the panel grows upwards), "Heard: «…»". Returns its top edge.
     #[allow(clippy::too_many_arguments)]
-    fn tutor_panel(&self, ui: &mut Ui, s: &EngineSnapshot, state: TutorState, area: Rect, picture: Rect, width: f32, theme: &Theme) -> f32 {
+    fn tutor_panel(
+        &self,
+        ui: &mut Ui,
+        s: &EngineSnapshot,
+        state: TutorState,
+        area: Rect,
+        picture: Rect,
+        width: f32,
+        theme: &Theme,
+    ) -> f32 {
         let ru = self.ru();
         let painter = ui.painter().clone();
         let orb = 84.0;
@@ -1228,7 +1364,16 @@ impl UnApp {
         let r = Rect::from_min_size(Pos2::new(area.center().x - width / 2.0, bottom - h), Vec2::new(width, h));
         un::card(&painter, r, theme, 22.0, true);
         let time = ui.input(|i| i.time);
-        tutor_orb(&painter, Pos2::new(r.left() + 24.0 + orb / 2.0, r.center().y), orb, state, s.mic_level, time, self.setup.reduce_motion, theme);
+        tutor_orb(
+            &painter,
+            Pos2::new(r.left() + 24.0 + orb / 2.0, r.center().y),
+            orb,
+            state,
+            s.mic_level,
+            time,
+            self.setup.reduce_motion,
+            theme,
+        );
         let x = r.left() + 24.0 + orb + 20.0;
         let mut y = r.top() + 24.0;
         let (label, color) = match state {
@@ -1253,7 +1398,13 @@ impl UnApp {
         y += 24.0;
         y += un::text_block(&painter, Pos2::new(x, y), line, bold(30.0), theme.text, text_w) + 6.0;
         if let Some(heard) = heard {
-            painter.text(Pos2::new(x, y + 8.0), Align2::LEFT_CENTER, format!("{}: «{}»", t(ru, "lesson.heard"), heard), regular(15.0), theme.text2);
+            painter.text(
+                Pos2::new(x, y + 8.0),
+                Align2::LEFT_CENTER,
+                format!("{}: «{}»", t(ru, "lesson.heard"), heard),
+                regular(15.0),
+                theme.text2,
+            );
         }
         r.top()
     }
@@ -1264,9 +1415,18 @@ impl UnApp {
         let n = 11.0;
         let key = 60.0f32;
         let w = n * key + (n - 1.0) * 8.0 + 32.0;
-        let r = Rect::from_min_size(Pos2::new(bottom_center.x - w / 2.0, bottom_center.y - key - 32.0 - 24.0), Vec2::new(w, key + 32.0 + 24.0));
+        let r = Rect::from_min_size(
+            Pos2::new(bottom_center.x - w / 2.0, bottom_center.y - key - 32.0 - 24.0),
+            Vec2::new(w, key + 32.0 + 24.0),
+        );
         un::card(ui.painter(), r, theme, 22.0, true);
-        ui.painter().text(Pos2::new(r.center().x, r.top() + 18.0), Align2::CENTER_CENTER, t(ru, "lesson.numpadHint"), semibold(13.0), theme.text2);
+        ui.painter().text(
+            Pos2::new(r.center().x, r.top() + 18.0),
+            Align2::CENTER_CENTER,
+            t(ru, "lesson.numpadHint"),
+            semibold(13.0),
+            theme.text2,
+        );
         for i in 0..=10u32 {
             let k = Rect::from_min_size(Pos2::new(r.left() + 16.0 + i as f32 * (key + 8.0), r.top() + 36.0), Vec2::splat(key));
             let response = ui.interact(k, Id::new(("pad", i)), Sense::click());
@@ -1285,10 +1445,26 @@ impl UnApp {
         let r = Rect::from_center_size(area.center(), Vec2::new(420.0, 220.0));
         un::card(ui.painter(), r, theme, 22.0, true);
         icon(ui.painter(), Icon::Pause, Pos2::new(r.center().x, r.top() + 36.0), 28.0, theme.orange);
-        ui.painter().text(Pos2::new(r.center().x, r.top() + 72.0), Align2::CENTER_CENTER, t(ru, "lesson.pausedTitle"), bold(24.0), theme.text);
-        ui.painter().text(Pos2::new(r.center().x, r.top() + 100.0), Align2::CENTER_CENTER, t(ru, "lesson.pausedBody"), regular(15.0), theme.text2);
+        ui.painter().text(
+            Pos2::new(r.center().x, r.top() + 72.0),
+            Align2::CENTER_CENTER,
+            t(ru, "lesson.pausedTitle"),
+            bold(24.0),
+            theme.text,
+        );
+        ui.painter().text(
+            Pos2::new(r.center().x, r.top() + 100.0),
+            Align2::CENTER_CENTER,
+            t(ru, "lesson.pausedBody"),
+            regular(15.0),
+            theme.text2,
+        );
         let button = Rect::from_min_size(Pos2::new(r.left() + 24.0, r.top() + 124.0), Vec2::new(r.width() - 48.0, 50.0));
-        let resume = ui.scope_builder(egui::UiBuilder::new().max_rect(button), |ui| un::primary_button(ui, &format!("{}  (P)", t(ru, "lesson.resume")), button.width(), None)).inner;
+        let resume = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(button), |ui| {
+                un::primary_button(ui, &format!("{}  (P)", t(ru, "lesson.resume")), button.width(), None)
+            })
+            .inner;
         if resume.clicked() {
             self.resume();
         }
@@ -1308,7 +1484,13 @@ impl UnApp {
         // The end covers the window and takes its clicks.
         let _ = ui.interact(full, Id::new("end-cover"), Sense::click());
         painter.rect_filled(full, 0.0, theme.surface);
-        let name = self.run.as_ref().and_then(|r| r.child.as_ref()).and_then(|c| self.profiles.get(c)).map(|p| p.name.clone()).unwrap_or_default();
+        let name = self
+            .run
+            .as_ref()
+            .and_then(|r| r.child.as_ref())
+            .and_then(|c| self.profiles.get(c))
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
         let meta = self.run.as_ref().map(|r| LessonMeta::of(&r.lesson, &self.lessons, ru));
         let c = full.center();
         let time = ui.input(|i| i.time);
@@ -1316,21 +1498,46 @@ impl UnApp {
             EndPhase::Celebrate => {
                 if let Some(meta) = &meta {
                     star_ticket(&painter, c - Vec2::new(0.0, 90.0), meta, theme, time, self.setup.reduce_motion);
-                    painter.text(c + Vec2::new(0.0, 40.0), Align2::CENTER_CENTER, tf(ru, "end.hooray", &[("name", &name)]), rounded(52.0), theme.text);
-                    painter.text(c + Vec2::new(0.0, 88.0), Align2::CENTER_CENTER, tf(ru, "end.done", &[("lesson", &meta.title)]), regular(17.0), theme.text2);
+                    painter.text(
+                        c + Vec2::new(0.0, 40.0),
+                        Align2::CENTER_CENTER,
+                        tf(ru, "end.hooray", &[("name", &name)]),
+                        rounded(52.0),
+                        theme.text,
+                    );
+                    painter.text(
+                        c + Vec2::new(0.0, 88.0),
+                        Align2::CENTER_CENTER,
+                        tf(ru, "end.done", &[("lesson", &meta.title)]),
+                        regular(17.0),
+                        theme.text2,
+                    );
                     let child = self.run.as_ref().and_then(|r| r.child.as_ref()).and_then(|c| self.profiles.get(c)).cloned();
                     let n = self.lessons.len();
                     let mut x = c.x - (n as f32 * 16.0) / 2.0;
                     for (id, _) in &self.lessons {
                         let done = child.as_ref().is_some_and(|ch| ch.completed.contains(id));
                         let w = if done { 22.0 } else { 10.0 };
-                        painter.rect_filled(Rect::from_min_size(Pos2::new(x, c.y + 120.0), Vec2::new(w, 10.0)), 5.0, if done { theme.green } else { theme.surface3 });
+                        painter.rect_filled(
+                            Rect::from_min_size(Pos2::new(x, c.y + 120.0), Vec2::new(w, 10.0)),
+                            5.0,
+                            if done { theme.green } else { theme.surface3 },
+                        );
                         x += w + 6.0;
                     }
                 }
             }
             EndPhase::Ask => {
-                tutor_orb(&painter, c - Vec2::new(0.0, 170.0), 84.0, TutorState::Listening, 0.0, time, self.setup.reduce_motion, theme);
+                tutor_orb(
+                    &painter,
+                    c - Vec2::new(0.0, 170.0),
+                    84.0,
+                    TutorState::Listening,
+                    0.0,
+                    time,
+                    self.setup.reduce_motion,
+                    theme,
+                );
                 painter.text(c - Vec2::new(0.0, 80.0), Align2::CENTER_CENTER, t(ru, "end.ask"), rounded(52.0), theme.text);
                 for (i, (yes, key)) in [(true, "Y"), (false, "N")].into_iter().enumerate() {
                     let r = Rect::from_min_size(Pos2::new(c.x - 250.0 + i as f32 * 260.0, c.y - 20.0), Vec2::new(240.0, 220.0));
@@ -1340,9 +1547,28 @@ impl UnApp {
                     let tint = if yes { theme.green } else { Color32::from_rgb(0x8E, 0x8E, 0x93) };
                     un::shadow(&painter, r, 22.0, theme.dark);
                     painter.rect_filled(r, 22.0, tint);
-                    icon(&painter, if yes { Icon::Check } else { Icon::Moon }, r.center() - Vec2::new(0.0, 34.0), 56.0, Color32::WHITE);
-                    painter.text(r.center() + Vec2::new(0.0, 36.0), Align2::CENTER_CENTER, t(ru, if yes { "end.yes" } else { "end.no" }), rounded(30.0), Color32::WHITE);
-                    un::key_cap(&painter, Pos2::new(r.right() - 34.0, r.top() + 22.0), key, Color32::from_white_alpha(40), Color32::from_white_alpha(90), Color32::WHITE);
+                    icon(
+                        &painter,
+                        if yes { Icon::Check } else { Icon::Moon },
+                        r.center() - Vec2::new(0.0, 34.0),
+                        56.0,
+                        Color32::WHITE,
+                    );
+                    painter.text(
+                        r.center() + Vec2::new(0.0, 36.0),
+                        Align2::CENTER_CENTER,
+                        t(ru, if yes { "end.yes" } else { "end.no" }),
+                        rounded(30.0),
+                        Color32::WHITE,
+                    );
+                    un::key_cap(
+                        &painter,
+                        Pos2::new(r.right() - 34.0, r.top() + 22.0),
+                        key,
+                        Color32::from_white_alpha(40),
+                        Color32::from_white_alpha(90),
+                        Color32::WHITE,
+                    );
                     un::focus_ring(ui, &response, r, 22.0);
                     if response.clicked() {
                         self.answer_next(yes);
@@ -1351,14 +1577,30 @@ impl UnApp {
             }
             EndPhase::Bye => {
                 icon(&painter, Icon::Moon, c - Vec2::new(0.0, 120.0), 72.0, theme.purple);
-                painter.text(c - Vec2::new(0.0, 30.0), Align2::CENTER_CENTER, tf(ru, "end.bye", &[("name", &name)]), rounded(40.0), theme.text);
+                painter.text(
+                    c - Vec2::new(0.0, 30.0),
+                    Align2::CENTER_CENTER,
+                    tf(ru, "end.bye", &[("name", &name)]),
+                    rounded(40.0),
+                    theme.text,
+                );
                 let next = self.run.as_ref().and_then(|r| r.child.clone()).and_then(|c| self.next_for(&c));
                 if let Some(next) = next {
                     let m = LessonMeta::of(&next, &self.lessons, ru);
-                    painter.text(c + Vec2::new(0.0, 14.0), Align2::CENTER_CENTER, tf(ru, "end.nextTime", &[("lesson", &m.title)]), regular(17.0), theme.text2);
+                    painter.text(
+                        c + Vec2::new(0.0, 14.0),
+                        Align2::CENTER_CENTER,
+                        tf(ru, "end.nextTime", &[("lesson", &m.title)]),
+                        regular(17.0),
+                        theme.text2,
+                    );
                 }
                 let button = Rect::from_min_size(Pos2::new(c.x - 180.0, c.y + 50.0), Vec2::new(360.0, 50.0));
-                let home = ui.scope_builder(egui::UiBuilder::new().max_rect(button), |ui| un::primary_button(ui, t(ru, "end.home"), 360.0, None)).inner;
+                let home = ui
+                    .scope_builder(egui::UiBuilder::new().max_rect(button), |ui| {
+                        un::primary_button(ui, t(ru, "end.home"), 360.0, None)
+                    })
+                    .inner;
                 if home.clicked() {
                     self.stop_session();
                     self.run = None;
@@ -1373,7 +1615,8 @@ impl UnApp {
     fn dialogs(&mut self, ctx: &egui::Context) {
         let theme = Theme::new(ctx.theme() == egui::Theme::Dark);
         let ru = self.ru();
-        let frame = Frame::new().fill(theme.surface2).corner_radius(14).inner_margin(24).stroke(Stroke::new(1.0, theme.hairline_strong));
+        let frame =
+            Frame::new().fill(theme.surface2).corner_radius(14).inner_margin(24).stroke(Stroke::new(1.0, theme.hairline_strong));
         if let Some(name) = self.adding.clone() {
             let mut name = name;
             let mut done = None;
@@ -1381,7 +1624,13 @@ impl UnApp {
                 ui.set_width(420.0);
                 ui.label(egui::RichText::new(t(ru, "add.title")).font(bold(22.0)).color(theme.text));
                 ui.add_space(14.0);
-                let field = ui.add(egui::TextEdit::singleline(&mut name).hint_text(t(ru, "add.placeholder")).font(regular(17.0)).desired_width(f32::INFINITY).margin(Vec2::new(12.0, 12.0)));
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut name)
+                        .hint_text(t(ru, "add.placeholder"))
+                        .font(regular(17.0))
+                        .desired_width(f32::INFINITY)
+                        .margin(Vec2::new(12.0, 12.0)),
+                );
                 field.request_focus();
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new(t(ru, "add.helper")).font(regular(12.5)).color(theme.text2));
@@ -1444,25 +1693,36 @@ impl UnApp {
         }
         if let Some((id, pos)) = self.menu.clone() {
             let area = egui::Area::new(Id::new("child-menu")).fixed_pos(pos).order(egui::Order::Foreground).show(ctx, |ui| {
-                Frame::new().fill(theme.surface2).corner_radius(12).stroke(Stroke::new(1.0, theme.hairline_strong)).inner_margin(6).show(ui, |ui| {
-                    ui.set_width(180.0);
-                    for (label, remove) in [(t(ru, "children.open"), false), (t(ru, "children.remove"), true)] {
-                        let (r, response) = ui.allocate_exact_size(Vec2::new(180.0, 38.0), Sense::click());
-                        if response.hovered() {
-                            ui.painter().rect_filled(r, 8.0, theme.surface3);
-                        }
-                        ui.painter().text(r.left_center() + Vec2::new(12.0, 0.0), Align2::LEFT_CENTER, label, regular(15.0), if remove { theme.red } else { theme.text });
-                        if response.clicked() {
-                            self.menu = None;
-                            if remove {
-                                self.removing = Some(id.clone());
-                            } else {
-                                self.setup.child = Some(id.clone());
-                                self.screen = Screen::Trail(id.clone());
+                Frame::new()
+                    .fill(theme.surface2)
+                    .corner_radius(12)
+                    .stroke(Stroke::new(1.0, theme.hairline_strong))
+                    .inner_margin(6)
+                    .show(ui, |ui| {
+                        ui.set_width(180.0);
+                        for (label, remove) in [(t(ru, "children.open"), false), (t(ru, "children.remove"), true)] {
+                            let (r, response) = ui.allocate_exact_size(Vec2::new(180.0, 38.0), Sense::click());
+                            if response.hovered() {
+                                ui.painter().rect_filled(r, 8.0, theme.surface3);
+                            }
+                            ui.painter().text(
+                                r.left_center() + Vec2::new(12.0, 0.0),
+                                Align2::LEFT_CENTER,
+                                label,
+                                regular(15.0),
+                                if remove { theme.red } else { theme.text },
+                            );
+                            if response.clicked() {
+                                self.menu = None;
+                                if remove {
+                                    self.removing = Some(id.clone());
+                                } else {
+                                    self.setup.child = Some(id.clone());
+                                    self.screen = Screen::Trail(id.clone());
+                                }
                             }
                         }
-                    }
-                });
+                    });
             });
             if area.response.clicked_elsewhere() {
                 self.menu = None;
@@ -1479,7 +1739,9 @@ impl UnApp {
         let width = 440.0;
         let rect = Rect::from_min_max(Pos2::new(screen.right() - width, screen.top()), screen.max);
         egui::Area::new(Id::new("settings")).fixed_pos(rect.min).order(egui::Order::Foreground).show(ctx, |ui| {
-            ui.painter().add(egui::Shadow { offset: [-8, 0], blur: 40, spread: 0, color: Color32::from_black_alpha(60) }.as_shape(rect, 0));
+            ui.painter().add(
+                egui::Shadow { offset: [-8, 0], blur: 40, spread: 0, color: Color32::from_black_alpha(60) }.as_shape(rect, 0),
+            );
             ui.painter().rect_filled(rect, 0.0, theme.surface);
             ui.painter().line_segment([rect.left_top(), rect.left_bottom()], Stroke::new(1.0, theme.hairline_strong));
             ui.set_min_size(rect.size());
@@ -1506,7 +1768,12 @@ impl UnApp {
                     let mut restart = false;
                     settings_card(ui, &theme, |ui| {
                         row(ui, &theme, t(ru, "settings.camera"), |ui| {
-                            let shown = self.setup.cameras.get(self.setup.camera as usize).cloned().unwrap_or_else(|| format!("#{}", self.setup.camera));
+                            let shown = self
+                                .setup
+                                .cameras
+                                .get(self.setup.camera as usize)
+                                .cloned()
+                                .unwrap_or_else(|| format!("#{}", self.setup.camera));
                             egui::ComboBox::from_id_salt("camera").selected_text(shown).width(220.0).show_ui(ui, |ui| {
                                 for (i, name) in self.setup.cameras.iter().enumerate() {
                                     if ui.selectable_value(&mut self.setup.camera, i as u32, name).changed() {
@@ -1535,18 +1802,27 @@ impl UnApp {
                                 VoiceChoice::Off => t(ru, "settings.voiceOff"),
                                 _ => t(ru, "settings.voiceAuto"),
                             };
-                            egui::ComboBox::from_id_salt("voice").selected_text(label(self.setup.voice)).width(220.0).show_ui(ui, |ui| {
-                                for v in [VoiceChoice::Auto, VoiceChoice::Console, VoiceChoice::Off] {
-                                    ui.selectable_value(&mut self.setup.voice, v, label(v));
-                                }
-                            });
+                            egui::ComboBox::from_id_salt("voice").selected_text(label(self.setup.voice)).width(220.0).show_ui(
+                                ui,
+                                |ui| {
+                                    for v in [VoiceChoice::Auto, VoiceChoice::Console, VoiceChoice::Off] {
+                                        ui.selectable_value(&mut self.setup.voice, v, label(v));
+                                    }
+                                },
+                            );
                         });
                     });
                     section(ui, &theme, t(ru, "settings.area"));
                     settings_card(ui, &theme, |ui| self.area_editor(ui, &theme));
                     section(ui, &theme, "");
                     settings_card(ui, &theme, |ui| {
-                        toggle_row(ui, &theme, t(ru, "settings.motion"), t(ru, "settings.motionHint"), &mut self.setup.reduce_motion);
+                        toggle_row(
+                            ui,
+                            &theme,
+                            t(ru, "settings.motion"),
+                            t(ru, "settings.motionHint"),
+                            &mut self.setup.reduce_motion,
+                        );
                         let before = self.setup.simulated;
                         toggle_row(ui, &theme, t(ru, "settings.sim"), t(ru, "settings.simHint"), &mut self.setup.simulated);
                         if before != self.setup.simulated {
@@ -1578,8 +1854,21 @@ impl UnApp {
                             ("0–9", t(ru, "lesson.muted")),
                         ] {
                             let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
-                            let w = un::key_cap(ui.painter(), Pos2::new(r.left(), r.center().y), k, theme.surface3, theme.hairline_strong, theme.text);
-                            ui.painter().text(Pos2::new(r.left() + w.max(56.0) + 12.0, r.center().y), Align2::LEFT_CENTER, v, regular(14.0), theme.text2);
+                            let w = un::key_cap(
+                                ui.painter(),
+                                Pos2::new(r.left(), r.center().y),
+                                k,
+                                theme.surface3,
+                                theme.hairline_strong,
+                                theme.text,
+                            );
+                            ui.painter().text(
+                                Pos2::new(r.left() + w.max(56.0) + 12.0, r.center().y),
+                                Align2::LEFT_CENTER,
+                                v,
+                                regular(14.0),
+                                theme.text2,
+                            );
                         }
                     });
                     ui.add_space(20.0);
@@ -1603,7 +1892,9 @@ impl UnApp {
         let (rect, response) = ui.allocate_exact_size(Vec2::new(w, h), Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         match &self.texture {
-            Some(texture) => painter.image(texture.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE),
+            Some(texture) => {
+                painter.image(texture.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE)
+            }
             None => painter.rect_filled(rect, 10.0, Color32::from_rgb(0x2A, 0x2A, 0x2E)),
         };
         let map = Mapper { rect };
@@ -1723,7 +2014,10 @@ fn lesson_art(painter: &egui::Painter, r: Rect, number: usize, theme: &Theme) {
     let clip = painter.with_clip_rect(r);
     let mut x = r.left() - r.height();
     while x < r.right() {
-        clip.line_segment([Pos2::new(x, r.bottom()), Pos2::new(x + r.height(), r.top())], Stroke::new(5.0, theme.text3.gamma_multiply(0.35)));
+        clip.line_segment(
+            [Pos2::new(x, r.bottom()), Pos2::new(x + r.height(), r.top())],
+            Stroke::new(5.0, theme.text3.gamma_multiply(0.35)),
+        );
         x += 12.0;
     }
     painter.text(r.center(), Align2::CENTER_CENTER, number.to_string(), rounded(26.0), theme.orange);
@@ -1786,11 +2080,26 @@ fn count_ticket(painter: &egui::Painter, c: Pos2, count: u32, time: f64, still: 
     let r = Rect::from_center_size(c, Vec2::new(240.0, 220.0));
     painter.add(egui::Shadow { offset: [0, 10], blur: 30, spread: 0, color: Color32::from_black_alpha(90) }.as_shape(r, 22));
     painter.rect_filled(r, 22.0, Color32::WHITE);
-    painter.text(c - Vec2::new(0.0, 22.0), Align2::CENTER_CENTER, count.to_string(), rounded(132.0), crate::un::overlay_colors::BADGE_CORRECT);
-    painter.extend(egui::Shape::dashed_line(&[Pos2::new(r.left() + 16.0, c.y + 52.0), Pos2::new(r.right() - 16.0, c.y + 52.0)], Stroke::new(1.5, Color32::from_black_alpha(40)), 5.0, 5.0));
+    painter.text(
+        c - Vec2::new(0.0, 22.0),
+        Align2::CENTER_CENTER,
+        count.to_string(),
+        rounded(132.0),
+        crate::un::overlay_colors::BADGE_CORRECT,
+    );
+    painter.extend(egui::Shape::dashed_line(
+        &[Pos2::new(r.left() + 16.0, c.y + 52.0), Pos2::new(r.right() - 16.0, c.y + 52.0)],
+        Stroke::new(1.5, Color32::from_black_alpha(40)),
+        5.0,
+        5.0,
+    ));
     for (i, color) in [0xD8402Fu32, 0xF2BF2A, 0x3A6CD0].into_iter().enumerate() {
         let x = c.x - 34.0 + i as f32 * 34.0;
-        painter.rect_filled(Rect::from_center_size(Pos2::new(x, c.y + 80.0), Vec2::new(24.0, 16.0)), 5.0, Color32::from_rgb((color >> 16) as u8, (color >> 8) as u8, color as u8));
+        painter.rect_filled(
+            Rect::from_center_size(Pos2::new(x, c.y + 80.0), Vec2::new(24.0, 16.0)),
+            5.0,
+            Color32::from_rgb((color >> 16) as u8, (color >> 8) as u8, color as u8),
+        );
     }
     let stamp = Pos2::new(r.right() - 32.0, r.top() + 32.0);
     painter.circle_stroke(stamp, 20.0, Stroke::new(2.5, Color32::from_rgb(0xE8, 0x5F, 0x2A)));
@@ -1804,13 +2113,28 @@ fn star_ticket(painter: &egui::Painter, c: Pos2, meta: &LessonMeta, theme: &Them
     un::shadow(painter, r, 22.0, theme.dark);
     painter.rect_filled(r, 22.0, Color32::WHITE);
     for (i, size) in [36.0f32, 46.0, 36.0].into_iter().enumerate() {
-        painter.add(un::star(Pos2::new(c.x - 56.0 + i as f32 * 56.0, r.top() + 40.0), size / 2.0, Color32::from_rgb(0xFF, 0xC9, 0x3C)));
+        painter.add(un::star(
+            Pos2::new(c.x - 56.0 + i as f32 * 56.0, r.top() + 40.0),
+            size / 2.0,
+            Color32::from_rgb(0xFF, 0xC9, 0x3C),
+        ));
     }
-    painter.extend(egui::Shape::dashed_line(&[Pos2::new(r.left() + 16.0, r.top() + 76.0), Pos2::new(r.right() - 16.0, r.top() + 76.0)], Stroke::new(1.5, Color32::from_black_alpha(40)), 5.0, 5.0));
+    painter.extend(egui::Shape::dashed_line(
+        &[Pos2::new(r.left() + 16.0, r.top() + 76.0), Pos2::new(r.right() - 16.0, r.top() + 76.0)],
+        Stroke::new(1.5, Color32::from_black_alpha(40)),
+        5.0,
+        5.0,
+    ));
     let chip = Pos2::new(c.x - 70.0, r.top() + 102.0);
     painter.circle_filled(chip, 12.0, theme.orange);
     painter.text(chip, Align2::CENTER_CENTER, meta.number.to_string(), rounded(13.0), Color32::WHITE);
-    painter.text(chip + Vec2::new(20.0, 0.0), Align2::LEFT_CENTER, &meta.title, semibold(15.0), Color32::from_rgba_unmultiplied(10, 10, 12, 180));
+    painter.text(
+        chip + Vec2::new(20.0, 0.0),
+        Align2::LEFT_CENTER,
+        &meta.title,
+        semibold(15.0),
+        Color32::from_rgba_unmultiplied(10, 10, 12, 180),
+    );
 }
 
 /// Sixteen pieces flying out over 2.4 s (none with Reduce motion).
@@ -1824,7 +2148,11 @@ fn confetti(painter: &egui::Painter, c: Pos2, time: f64, still: bool) {
         let a = (i as f32 * 22.5 + (i % 2) as f32 * 7.0).to_radians();
         let pos = c + Vec2::angled(a) * 230.0 * p;
         let col = colors[i % 6];
-        let color = Color32::from_rgb((col >> 16) as u8, (col >> 8) as u8, col as u8).gamma_multiply(if p < 0.7 { 1.0 } else { (1.0 - p) / 0.3 });
+        let color = Color32::from_rgb((col >> 16) as u8, (col >> 8) as u8, col as u8).gamma_multiply(if p < 0.7 {
+            1.0
+        } else {
+            (1.0 - p) / 0.3
+        });
         let h = if i % 3 == 0 { 24.0 } else { 14.0 };
         let rot = p * 2.8;
         let d = Vec2::angled(rot) * h / 2.0;
@@ -1866,7 +2194,11 @@ fn lesson_logger() -> Option<un_engine::Logger> {
     let file = std::fs::OpenOptions::new().append(true).create(true).open(&path).ok()?;
     let file = std::sync::Mutex::new(file);
     let started = Instant::now();
-    let _ = writeln!(file.lock().unwrap(), "--- session {}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
+    let _ = writeln!(
+        file.lock().unwrap(),
+        "--- session {}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    );
     Some(Arc::new(move |line: &str| {
         if let Ok(mut f) = file.lock() {
             let _ = writeln!(f, "{:8.2}  {line}", started.elapsed().as_secs_f64());

@@ -200,8 +200,10 @@ impl NumberParser {
             let token = &tokens[i];
             // In "ещё раз" and similar frequency phrases, раз is not the
             // beginning of a count. Keep standalone "раз" and repeated counts.
-            if language == Language::Russian && token == "раз"
-                && i > 0 && matches!(tokens[i - 1].as_str(), "еще" | "этот" | "каждый" | "первый" | "второй" | "последний")
+            if language == Language::Russian
+                && token == "раз"
+                && i > 0
+                && matches!(tokens[i - 1].as_str(), "еще" | "этот" | "каждый" | "первый" | "второй" | "последний")
             {
                 i += 1;
                 continue;
