@@ -1,0 +1,93 @@
+# The gate the release workflows never ran: formatting, lints and tests. Each job calls the same
+# script a developer runs locally (tools/check.sh), so a green pull request and a green local run
+# mean the same thing. Formatting is its own job because it needs no system libraries and fails in
+# seconds.
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  format:
+    name: Formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unengine
+
+      - uses: actions/checkout@v4
+        with:
+          repository: sealsbroken/unmath
+          path: unmath
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      # The root workspace, the mobile library and the desktop product are three separate
+      # workspaces: `cargo fmt` in one never reaches the others, so all of them are checked.
+      - name: rustfmt
+        working-directory: unengine
+        run: |
+          set -euo pipefail
+          for ws in . apps/mobile apps/un; do
+            ( cd "$ws" && cargo fmt --all --check ) || { echo "::error::$ws is not formatted"; exit 1; }
+          done
+          ( cd ../unmath && cargo fmt --all --check ) || { echo "::error::unmath is not formatted"; exit 1; }
+
+  lints-and-tests:
+    name: Lints and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unengine
+
+      - uses: actions/checkout@v4
+        with:
+          repository: sealsbroken/unmath
+          path: unmath
+
+      - name: System libraries
+        # The same list as release-linux.yml: ALSA, V4L2 and udev for capture, X11/Wayland/GL for
+        # the window, OpenSSL for ort's download, libclang for bindgen.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libclang-dev libasound2-dev libudev-dev libv4l-dev libssl-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev libxcursor-dev libxrandr-dev \
+            libxi-dev libxinerama-dev libgl1-mesa-dev libegl1 libegl-mesa0 libglx-mesa0 libgbm1 libgl1-mesa-dri xkb-data libx11-data
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Models
+        # The detector and the voices come from the same release the bundles use; tests that need
+        # them skip themselves when they are absent, and the smoke runs want them present.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download models-v1 -R ${{ github.repository }} -p 'toys.*' -D unengine/models --clobber
+          python3 unengine/tools/fetch_models.py --whisper small
+
+      - name: Check
+        working-directory: unengine
+        run: bash tools/check.sh

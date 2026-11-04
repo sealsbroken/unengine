@@ -98,6 +98,7 @@
             echo "    engine tests:  cargo test --workspace   (in unengine)"
             echo "    lesson tests:  cargo test               (in unmath, same shell)"
             echo "    from unmath:   nix develop ../unengine -c bash -c 'cargo test'"
+            echo "    the gate:      bash tools/check.sh   (fmt, clippy and tests: every workspace + unmath)"
           '';
         };
 

@@ -190,9 +190,15 @@ See `docs/architecture.md` for the reasoning behind each choice.
 ## Tests
 
 ```sh
+bash tools/check.sh               # the gate, and what CI runs: rustfmt, clippy -D warnings and the
+                                  # tests of all three workspaces here, plus unmath next to them
 cargo test --workspace            # state machines, parsers, decoders, the runtime end to end
 cargo run -p un-cli -- check-speech
 ```
+
+Three workspaces live in this checkout — the engine, `apps/mobile` and `apps/un` — and `cargo fmt`
+or `cargo test` at the root reaches only the first. `tools/check.sh` walks all of them, so a green
+run locally means a green run in the `Checks` workflow.
 
 ## Releases
 
