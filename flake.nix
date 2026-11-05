@@ -65,6 +65,106 @@
         includeEmulator = false;
       };
       androidHome = "${androidSdk.androidsdk}/libexec/android-sdk";
+
+      # What a plain script (not the dev shell) must export: pkg-config for the build, the .so
+      # paths for running the window, a CA bundle for ort's and sherpa-rs' downloads.
+      nativeEnv = ''
+        export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+        export PKG_CONFIG_PATH="${pkgs.lib.makeSearchPathOutput "dev" "lib/pkgconfig" systemLibs}"
+        export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+      '';
+
+      # One command each, working on the checkout they are run from ($PWD), never on the store
+      # copy of this flake: in unengine `nix run .#build`, from unmath `nix run ../unengine#build`.
+      build = pkgs.writeShellApplication {
+        name = "un-build";
+        runtimeInputs = with pkgs; [ rustc cargo pkg-config clang cmake git ];
+        text = ''
+          here="''${1:-$PWD}"
+          [ "$#" -gt 0 ] && shift
+          [ -f "$here/apps/un/Cargo.toml" ] || { echo "no apps/un/Cargo.toml in $here: run this from the unengine checkout" >&2; exit 2; }
+          [ -d "$here/../unmath" ] || { echo "the unmath lessons are missing: clone sealsbroken/unmath next to this repository (../unmath)" >&2; exit 2; }
+          ${nativeEnv}
+          export CARGO_TARGET_DIR="$here/apps/un/target"
+          cd "$here"
+          cargo build --release --manifest-path apps/un/Cargo.toml "$@"
+          [ -x "$CARGO_TARGET_DIR/release/un" ] || { echo "the build produced no $CARGO_TARGET_DIR/release/un" >&2; exit 1; }
+          echo "built: $CARGO_TARGET_DIR/release/un and .../un-cli"
+        '';
+      };
+
+      models = pkgs.writeShellApplication {
+        name = "un-models";
+        runtimeInputs = with pkgs; [ curl python3 cacert ];
+        text = ''
+          here="''${1:-$PWD}"
+          [ "$#" -gt 0 ] && shift
+          [ -f "$here/tools/fetch_models.py" ] || { echo "no tools/fetch_models.py in $here: run this from the unengine checkout" >&2; exit 2; }
+          export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+          mkdir -p "$here/models"
+          for file in toys.onnx toys.json; do
+            [ -s "$here/models/$file" ] && continue
+            curl -fL --retry 3 -o "$here/models/$file" \
+              "https://github.com/sealsbroken/unengine/releases/download/models-v1/$file"
+          done
+          python3 "$here/tools/fetch_models.py" --dest "$here/models" "$@"
+        '';
+      };
+
+      run = pkgs.writeShellApplication {
+        name = "un-run";
+        text = ''
+          here="''${1:-$PWD}"
+          [ "$#" -gt 0 ] && shift
+          app="$here/apps/un/target/release/un"
+          [ -x "$app" ] || { echo "nothing built in $here: nix run .#build first" >&2; exit 2; }
+          ${nativeEnv}
+          # Models: UN_MODELS if set, else models/ next to the working directory.
+          export UN_MODELS="''${UN_MODELS:-$here/models}"
+          cd "$here"
+          exec "$app" "$@"
+        '';
+      };
+
+      # The release workflow's checks, minus the ones that need a camera, a microphone or a screen.
+      smoke = pkgs.writeShellApplication {
+        name = "un-smoke";
+        runtimeInputs = with pkgs; [ imagemagick coreutils ];
+        text = ''
+          here="''${1:-$PWD}"
+          bin="$here/apps/un/target/release"
+          models="''${UN_MODELS:-$here/models}"
+          [ -x "$bin/un-cli" ] || { echo "nothing built in $here: nix run .#build first" >&2; exit 2; }
+          [ -f "$models/toys.onnx" ] || { echo "no toys.onnx in $models: nix run .#models" >&2; exit 2; }
+          ${nativeEnv}
+          cd "$bin"
+          echo "== strategies =="
+          out=$(./un-cli --models "$models" strategies)
+          printf '%s\n' "$out"
+          grep -q '^unmath-count-to-three' <<<"$out" || { echo "the unmath lessons are not registered" >&2; exit 1; }
+          echo "== a scripted lesson on a drawn table, no camera and no microphone =="
+          lesson=$(./un-cli --models "$models" lesson --sim 1 --strategy unmath-count-to-three --language ru \
+            --voice console --mic off --answers "лес,один" --frames 120 2>&1)
+          grep -m4 -E '^(labels|\[tutor\])' <<<"$lesson" || true
+          grep -q '^\[tutor\] ' <<<"$lesson" || { echo "the tutor said nothing" >&2; exit 1; }
+          echo "== the tutor's voice into the recogniser, RU then EN =="
+          ./un-cli --models "$models" check-speech --language ru
+          ./un-cli --models "$models" check-speech --language en
+          echo "== the toy detector on a picture =="
+          convert -size 640x480 xc:BurlyWood -fill Gold -draw "circle 310,240 370,240" table.jpg
+          detected=$(./un-cli --models "$models" run --source table.jpg --frames 3 2>&1)
+          grep -m1 '"raw"' <<<"$detected"
+          rm -f table.jpg
+          echo "== the window =="
+          if [ -n "''${WAYLAND_DISPLAY:-}''${DISPLAY:-}" ]; then
+            timeout 10 ./un >/dev/null 2>&1 && echo "the window exited at once" || echo "the window kept running (timeout killed it)"
+          else
+            echo "no DISPLAY or WAYLAND_DISPLAY here: skipped; on a desktop: nix run .#run"
+          fi
+          echo "smoke test: OK"
+        '';
+      };
     in {
       devShells.${system} = {
         # The engine and the lessons: build, test, clippy, fmt, the model tools.
@@ -82,6 +182,9 @@
             llvmPackages.libclang      # bindgen crates (alsa-sys and friends)
             python3                    # tools/fetch_models.py
             uv                         # tools/label.py, tools/train_detector.py
+            curl                       # nix run .#models: the models-v1 release
+            cacert
+            imagemagick                # the smoke test's drawn table
           ];
 
           buildInputs = systemLibs;
@@ -99,6 +202,8 @@
             echo "    lesson tests:  cargo test               (in unmath, same shell)"
             echo "    from unmath:   nix develop ../unengine -c bash -c 'cargo test'"
             echo "    the gate:      bash tools/check.sh   (fmt, clippy and tests: every workspace + unmath)"
+            echo "    the app:       nix run .#build, then nix run .#run"
+            echo "    models:        nix run .#models    smoke test: nix run .#smoke"
           '';
         };
 
@@ -166,6 +271,21 @@
             export -f un-aab 2>/dev/null || true
           '';
         };
+      };
+
+      packages.${system} = {
+        un-build = build;
+        un-models = models;
+        un-run = run;
+        un-smoke = smoke;
+      };
+
+      apps.${system} = {
+        build = { type = "app"; program = "${build}/bin/un-build"; };
+        models = { type = "app"; program = "${models}/bin/un-models"; };
+        run = { type = "app"; program = "${run}/bin/un-run"; };
+        smoke = { type = "app"; program = "${smoke}/bin/un-smoke"; };
+        default = { type = "app"; program = "${build}/bin/un-build"; };
       };
     };
 }
